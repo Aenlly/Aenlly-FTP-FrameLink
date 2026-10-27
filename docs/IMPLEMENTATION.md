@@ -28,9 +28,10 @@
 | 层级 | 结果 | 证据 |
 |---|---|---|
 | Android构建 | 通过；app.framelink.camera，min26/target36，arm64/x86_64 | build-logs/android-tests-build.log |
-| Android JVM | 5项通过：格式目标、非照片、空配置、中文路径、非法路径与命令注入拦截 | android/app/build/test-results/testDebugUnitTest/ |
+| Android JVM | 9项通过：原有5项，另加FTP流的多块与尾块、短读取、空文件、取消与失败、原始字节及摘要 | android/app/build/test-results/testDebugUnitTest/ |
 | Android安装运行 | Android15/API35、arm64独立FrameLinkQA模拟器 | build-logs/android-instrument.log |
 | Android验收 | 9项通过：原有6项，加FTP客户端协议、持久化队列与重试、实际界面连接到下载及大图 | OK (9 tests) |
+| FTP数据流对照 | 同一32MiB＋73字节文件，预热后每条路径7轮；输出write调用4097→129，字节与摘要均通过 | [条件与逐轮数据](FTP_PERFORMANCE.md)；build-logs/ftp-benchmark.log |
 | 0.1.1小屏记录 | 360×640dp、字体120%，FTP连接下载到大图流程通过，四个主要入口首屏可见；本行是上一版记录 | build-logs/android-instrument-small-font.log；artifacts/android-home-small-large-font.png |
 | 0.1.2摄影界面 | 3项通过：默认屏、小屏120%字体、手势导航；授权真实样片、六个入口、多选、完整比较、大图缩放像素、末张照片与系统区域 | build-logs/android-visual-phone.log、android-visual-small.log、android-visual-gesture.log |
 | Go桥 | 3项通过，含5MiB RAW/JPEG分组与字节一致性、不锁机身模式 | build-logs/bridge.log |
@@ -43,7 +44,7 @@
 
 测试使用本地合成图片和测试账号，没有真实客户照片、联系人或机身密码。完整成功与失败日志保存在build-logs，失败日志按时间归档
 
-0.1.2修改集中在Android界面、可访问加载反馈、摄影样片验收与中英日README。核心数据模型、相机和FTP协议、云端权限接口没有变更。云端、网页与Go的上述结果沿用本次会话前一轮验证，未因界面修改重复执行；冻结清单分别记录各检查日志时间。FTP对应关系见[FTP记录](FTP_AND_UI.md)，当前设计、来源与验证方法见[视觉验收](VISUAL_QA.md)
+0.1.2包含Android界面、可访问加载反馈、摄影样片验收、中英日README，以及后续FTP数据流优化。FTP接收输出缓冲和客户端下载校验的实现与对照见[FTP性能记录](FTP_PERFORMANCE.md)，文件身份与任务状态规则保持兼容。核心数据模型、相机和云端权限接口没有变更。云端、网页、Go与三种规格视觉验收沿用前一轮验证，本轮重跑Android构建、JVM、安装回归和lint；冻结清单分别记录各检查日志时间。FTP功能对应关系见[FTP记录](FTP_AND_UI.md)，界面规则与验证方法见[视觉验收](VISUAL_QA.md)
 
 本机JDK17.0.8的C1编译器在lint分析Kotlin UAST时两次触发`assembler_aarch64.hpp:267 / Field too big for insn`。仅对lint检查进程排除该分析方法的JIT编译后通过，未关闭lint规则或更改APK编译参数。诊断保留在`android/hs_err_pid39027.log`与`android/hs_err_pid41218.log`，这些日志不提交。复现同类JDK错误时可临时运行：
 

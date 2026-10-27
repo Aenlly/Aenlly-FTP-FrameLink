@@ -52,8 +52,10 @@ class FtpClientAcceptanceTest {
                 val entry = ftp.list("/").single { it.name == "中文 原文件.bin" }
                 assertEquals(bytes.size.toLong(), entry.size)
                 val saved = ByteArrayOutputStream()
-                ftp.download(entry.path, saved) {}
+                val receipt = ftp.download(entry.path, saved) {}
                 assertArrayEquals(bytes, saved.toByteArray())
+                assertEquals(bytes.size.toLong(), receipt.bytes)
+                assertEquals(MediaFiles.digest(bytes.inputStream()), receipt.sha256)
                 ftp.makeDirectory("/交付")
                 ftp.upload("/交付/中文 成片.bin", UUID.randomUUID().toString(), bytes.inputStream()) {}
                 assertArrayEquals(bytes, File(server.root, "交付/中文 成片.bin").readBytes())

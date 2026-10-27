@@ -10,7 +10,7 @@ import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-visual-phone','android-visual-small','android-visual-gesture']
+checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-visual-phone','android-visual-small','android-visual-gesture','ftp-benchmark']
 for name in checks:
     result=root/'build-logs'/f'{name}.exit'
     if not result.exists() or result.read_text().strip()!='0': raise SystemExit(f'检查尚未通过：{name}')

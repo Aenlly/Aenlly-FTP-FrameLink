@@ -113,7 +113,7 @@ class FtpConnection(private val profile: FtpProfile) : Closeable {
         client.controlEncoding = profile.encoding
         client.autodetectUTF8 = profile.encoding == "UTF-8"
         client.setDataTimeout(Duration.ofSeconds(20))
-        client.bufferSize = 65536
+        client.bufferSize = FtpTransferIo.BUFFER_BYTES
         client.setControlKeepAliveTimeout(Duration.ofSeconds(30))
         if (client is FTPSClient) client.setEndpointCheckingEnabled(true)
         client.connect(profile.host, profile.port)
@@ -157,16 +157,18 @@ class FtpConnection(private val profile: FtpProfile) : Closeable {
         }
     }
 
-    fun download(path: String, output: OutputStream, progress: (Long) -> Unit) {
-        client.retrieveFileStream(FtpPaths.normalize(path))?.use { input ->
-            transferStream = input
-            try {
-                copy(input, output, progress)
-            } finally {
-                transferStream = null
-            }
-        } ?: error("无法下载文件，请检查文件是否存在及读取权限（${client.replyCode}）")
+    fun download(path: String, output: OutputStream, progress: (Long) -> Unit): FtpTransferReceipt {
+        val receipt =
+            client.retrieveFileStream(FtpPaths.normalize(path))?.use { input ->
+                transferStream = input
+                try {
+                    FtpTransferIo.copy(input, output, fingerprint = true, progress = progress)
+                } finally {
+                    transferStream = null
+                }
+            } ?: error("无法下载文件，请检查文件是否存在及读取权限（${client.replyCode}）")
         check(client.completePendingCommand()) { "服务器未确认下载完成，请重试（${client.replyCode}）" }
+        return receipt
     }
 
     /** 使用任务专属暂存文件，成功后再改名，避免半文件被误认为已完成 */
@@ -180,7 +182,7 @@ class FtpConnection(private val profile: FtpProfile) : Closeable {
             client.storeFileStream(temporary)?.use { output ->
                 transferStream = output
                 try {
-                    copy(input, output, progress)
+                    FtpTransferIo.copy(input, output, progress = progress)
                 } finally {
                     transferStream = null
                 }
@@ -192,20 +194,6 @@ class FtpConnection(private val profile: FtpProfile) : Closeable {
             runCatching { client.deleteFile(temporary) }
             throw error
         }
-    }
-
-    private fun copy(input: InputStream, output: OutputStream, progress: (Long) -> Unit) {
-        val bytes = ByteArray(65536)
-        var done = 0L
-        while (true) {
-            val count = input.read(bytes)
-            if (count < 0) break
-            output.write(bytes, 0, count)
-            done += count
-            progress(done)
-        }
-        output.flush()
-        progress(done)
     }
 
     override fun close() {
@@ -447,6 +435,7 @@ class FtpClientController(private val runtime: CameraRuntime) {
                 val name = data.getString("name")
                 val file = File(runtime.context.filesDir, "media/ftp-client/${task.id}/$name")
                 file.parentFile!!.mkdirs()
+                var sha256: String? = null
                 if (!file.isFile) {
                     val entry =
                         connection.list(FtpPaths.parent(remote)).firstOrNull {
@@ -463,7 +452,7 @@ class FtpClientController(private val runtime: CameraRuntime) {
                     val part = File(file.absolutePath + ".part")
                     try {
                         FileOutputStream(part).use { output ->
-                            connection.download(remote, output, callback)
+                            sha256 = connection.download(remote, output, callback).sha256
                             output.fd.sync()
                         }
                         runtime.checkTaskActive(task.id)
@@ -481,7 +470,8 @@ class FtpClientController(private val runtime: CameraRuntime) {
                     name,
                     "ftp-client:" +
                         MediaFiles.key(
-                            "${account.id}:$remote:" + MediaFiles.digest(file.inputStream())
+                            "${account.id}:$remote:" +
+                                (sha256 ?: MediaFiles.digest(file.inputStream()))
                         ),
                 )
                 progress(file.length(), file.length())

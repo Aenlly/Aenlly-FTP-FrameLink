@@ -115,7 +115,7 @@ class LocalAcceptanceTest {
         try {
             receiver.start("127.0.0.1", port, "qa-camera", "test-password-123")
             val first = jpeg(0xff336699.toInt())
-            val second = jpeg(0xff669933.toInt())
+            val second = ByteArray(FtpTransferIo.BUFFER_BYTES * 17 + 73) { (it % 251).toByte() }
             for (payload in listOf(first, second)) {
                 FtpClient(port).use { client ->
                     client.login()
@@ -132,10 +132,10 @@ class LocalAcceptanceTest {
                     ownedFiles += file
                     assertTrue(file.isFile)
                     assertEquals(task.total, file.length())
-                    file.readBytes().toList()
+                    file.readBytes()
                 }
-            assertTrue(bodies.contains(first.toList()))
-            assertTrue(bodies.contains(second.toList()))
+            assertTrue(bodies.any { it.contentEquals(first) })
+            assertTrue(bodies.any { it.contentEquals(second) })
             assertNotEquals(ownedFiles[0].canonicalPath, ownedFiles[1].canonicalPath)
             FtpClient(port).use { client ->
                 client.login()

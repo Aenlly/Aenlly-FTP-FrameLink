@@ -87,7 +87,10 @@ class DurableStor(
                 }
             val received =
                 FileOutputStream(part).use { output ->
-                    val count = connection.transferFromClient(session.ftpletSession, output)
+                    val count =
+                        FtpTransferIo.receive(output) {
+                            connection.transferFromClient(session.ftpletSession, it)
+                        }
                     output.fd.sync()
                     count
                 }

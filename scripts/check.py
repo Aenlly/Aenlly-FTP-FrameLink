@@ -24,6 +24,7 @@ checks = {
     'android-deps': ('android', [['./gradlew', '--no-daemon', ':app:dependencies', '--configuration', 'debugCompileClasspath']]),
     'android-tests-build': ('android', [['./gradlew','--no-daemon','testDebugUnitTest','assembleDebug','assembleDebugAndroidTest']]),
     'android-lint': ('android', [['./gradlew','--no-daemon','lintDebug']]),
+    'ftp-benchmark': ('.', [[sys.executable, 'scripts/benchmark-ftp.py', '32', '7']]),
     'web': ('web', [['npm', 'ci'], ['npm', 'run', 'build'], ['npm', 'test', '--', '--run']]),
     'sdk': ('.', [[str(root / '.tools/android-sdk/cmdline-tools/latest/bin/sdkmanager'), '--sdk_root=' + env['ANDROID_HOME'], '--licenses'], [str(root / '.tools/android-sdk/cmdline-tools/latest/bin/sdkmanager'), '--sdk_root=' + env['ANDROID_HOME'], 'platform-tools', 'platforms;android-36', 'build-tools;36.0.0', 'ndk;27.2.12479018']]),
 }

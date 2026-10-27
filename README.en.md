@@ -7,7 +7,7 @@
 
 FrameLink is an Android app for FTP transfers, camera browsing, remote capture, and photo selection. Local tools work without an account. Remote client proofing requires a configured or self-hosted cloud server.
 
-[Screenshots](#screenshots) · [Features](#features) · [Getting started](#getting-started) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/Aenlly/Aenlly-FTP/issues)
+[Screenshots](#screenshots) · [Features](#features) · [Getting started](#getting-started) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/Aenlly/Aenlly-FTP-FrameLink/issues)
 
 > **0.1.2 development build.** Local and emulator results are in the [test report](docs/IMPLEMENTATION.md). Sony A7C II is the first target; real-camera wireless, Bluetooth, speed, and battery tests are still pending.
 
@@ -50,8 +50,8 @@ The Android app requires Android 8.0/API26 or later. Development builds include 
 Local builds require Python 3.12 or later and JDK17.
 
 ```sh
-git clone --branch feature/framelink-v1 https://github.com/Aenlly/Aenlly-FTP.git
-cd Aenlly-FTP
+git clone --branch feature/framelink-v1 https://github.com/Aenlly/Aenlly-FTP-FrameLink.git
+cd Aenlly-FTP-FrameLink
 # Install JDK17 and set JAVA_HOME for your machine first
 python3 scripts/bootstrap.py
 sh scripts/build-android.sh
@@ -112,7 +112,7 @@ Detailed module guides and validation notes are currently written in Chinese.
 
 ## Contributing
 
-Reproducible issues, real-camera results, interface improvements, and translations are welcome. Include the phone system, camera firmware, connection type, and actual outcome in [GitHub Issues](https://github.com/Aenlly/Aenlly-FTP/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) for code changes and validation.
+Reproducible issues, real-camera results, interface improvements, and translations are welcome. Include the phone system, camera firmware, connection type, and actual outcome in [GitHub Issues](https://github.com/Aenlly/Aenlly-FTP-FrameLink/issues). See [CONTRIBUTING.md](CONTRIBUTING.md) for code changes and validation.
 
 Current priorities are A7C II hardware and background stability, FTPS and system-folder compatibility, invitation testing, and release preparation. USB/card-reader performance, more cameras, and advanced monitoring will follow practical feedback.
 

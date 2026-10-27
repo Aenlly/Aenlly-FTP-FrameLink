@@ -7,7 +7,7 @@
 
 FrameLink是一个Android相机工具，支持FTP收发、相机照片浏览、遥控拍摄和选片。本地功能不需要账号；客户远程选片需要配置或自行部署云服务。
 
-[界面预览](#界面预览) · [功能入口](#功能入口) · [快速开始](#快速开始) · [参与贡献](CONTRIBUTING.md) · [反馈问题](https://github.com/Aenlly/Aenlly-FTP/issues)
+[界面预览](#界面预览) · [功能入口](#功能入口) · [快速开始](#快速开始) · [参与贡献](CONTRIBUTING.md) · [反馈问题](https://github.com/Aenlly/Aenlly-FTP-FrameLink/issues)
 
 > 当前是 **0.1.2开发测试版**。本地和模拟器测试见[验证记录](docs/IMPLEMENTATION.md)。先适配Sony A7C II，真机无线、蓝牙、速度和耗电还要实测。
 
@@ -48,8 +48,8 @@ FrameLink开发预览暂未单独发布到GitHub Releases，可按下面的步�
 本地构建需要Python 3.12及以上与JDK17。
 
 ```sh
-git clone --branch feature/framelink-v1 https://github.com/Aenlly/Aenlly-FTP.git
-cd Aenlly-FTP
+git clone --branch feature/framelink-v1 https://github.com/Aenlly/Aenlly-FTP-FrameLink.git
+cd Aenlly-FTP-FrameLink
 # 先安装JDK17，并按本机环境设置JAVA_HOME
 python3 scripts/bootstrap.py
 sh scripts/build-android.sh
@@ -108,7 +108,7 @@ scripts/          本地构建、测试与开发工具
 
 ## 参与贡献
 
-欢迎提交可复现的问题、真实机型记录、界面改进和文档翻译。请在[GitHub Issues](https://github.com/Aenlly/Aenlly-FTP/issues)描述手机系统、相机固件、连接方式与实际结果；代码贡献见[CONTRIBUTING.md](CONTRIBUTING.md)。
+欢迎提交可复现的问题、真实机型记录、界面改进和文档翻译。请在[GitHub Issues](https://github.com/Aenlly/Aenlly-FTP-FrameLink/issues)描述手机系统、相机固件、连接方式与实际结果；代码贡献见[CONTRIBUTING.md](CONTRIBUTING.md)。
 
 当前优先事项是A7C II实体机与后台稳定性验收、FTPS和系统文件夹兼容、邀请测试及正式发布准备。USB/读卡器高速导入、更多机型和专业监看工具按实际反馈继续推进。
 

@@ -7,7 +7,7 @@
 
 FrameLinkは、FTP送受信、カメラ内の写真閲覧、リモート撮影、写真選定をまとめたAndroidアプリです。ローカル機能にアカウントは不要です。顧客向けの遠隔写真セレクトには、クラウドサーバーの設定または自己ホストが必要です。
 
-[スクリーンショット](#スクリーンショット) · [主な機能](#主な機能) · [使い始める](#使い始める) · [開発への参加](CONTRIBUTING.md) · [問題の報告](https://github.com/Aenlly/Aenlly-FTP/issues)
+[スクリーンショット](#スクリーンショット) · [主な機能](#主な機能) · [使い始める](#使い始める) · [開発への参加](CONTRIBUTING.md) · [問題の報告](https://github.com/Aenlly/Aenlly-FTP-FrameLink/issues)
 
 > 現在は **0.1.2開発テスト版** です。ローカルとエミュレーターの結果は[テスト記録](docs/IMPLEMENTATION.md)をご覧ください。最初の対象はSony A7C IIです。実機での無線接続、Bluetooth、速度、電池消費は今後確認します。
 
@@ -50,8 +50,8 @@ Android 8.0/API26以上が必要です。開発ビルドにはarm64とx86_64の�
 ローカルビルドにはPython 3.12以上とJDK17が必要です。
 
 ```sh
-git clone --branch feature/framelink-v1 https://github.com/Aenlly/Aenlly-FTP.git
-cd Aenlly-FTP
+git clone --branch feature/framelink-v1 https://github.com/Aenlly/Aenlly-FTP-FrameLink.git
+cd Aenlly-FTP-FrameLink
 # 事前にJDK17をインストールし、環境に合わせてJAVA_HOMEを設定
 python3 scripts/bootstrap.py
 sh scripts/build-android.sh
@@ -112,7 +112,7 @@ scripts/          ローカルビルド、テスト、開発ツール
 
 ## 開発への参加
 
-再現可能な問題の報告、実機での動作記録、画面改善、翻訳を歓迎します。[GitHub Issues](https://github.com/Aenlly/Aenlly-FTP/issues)にはスマートフォンのOS、カメラのファームウェア、接続方法、実際の結果を記載してください。コードの変更と検証は[CONTRIBUTING.md](CONTRIBUTING.md)をご覧ください。
+再現可能な問題の報告、実機での動作記録、画面改善、翻訳を歓迎します。[GitHub Issues](https://github.com/Aenlly/Aenlly-FTP-FrameLink/issues)にはスマートフォンのOS、カメラのファームウェア、接続方法、実際の結果を記載してください。コードの変更と検証は[CONTRIBUTING.md](CONTRIBUTING.md)をご覧ください。
 
 現在はA7C IIの実機・バックグラウンド安定性、FTPSとシステム保存先の互換性、招待テスト、正式公開の準備を優先しています。USB・カードリーダーでの高速取り込み、対応機種、専門的なモニタリング機能は実際のフィードバックをもとに進めます。
 

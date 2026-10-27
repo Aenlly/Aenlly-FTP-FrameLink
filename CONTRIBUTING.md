@@ -38,6 +38,6 @@ python3 scripts/check.py web
 
 ## 反馈入口
 
-通过[GitHub Issues](https://github.com/Aenlly/Aenlly-FTP/issues)反馈或讨论具体问题。本分支提供问题、机型实测和功能建议表单模板；GitHub在模板合入默认分支后才会将其用于新建Issue
+通过[GitHub Issues](https://github.com/Aenlly/Aenlly-FTP-FrameLink/issues)反馈或讨论具体问题。可使用仓库中的问题、机型实测和功能建议表单，写清楚复现条件和结果
 
 维护者确认合并、应用签名、安装包发布和云端部署是独立动作，提交PR不会自动执行这些操作

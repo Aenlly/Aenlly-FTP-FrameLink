@@ -5,8 +5,8 @@
 ## 获取分支
 
 ```sh
-git clone --branch feature/framelink-v1 https://github.com/Aenlly/Aenlly-FTP.git
-cd Aenlly-FTP
+git clone --branch feature/framelink-v1 https://github.com/Aenlly/Aenlly-FTP-FrameLink.git
+cd Aenlly-FTP-FrameLink
 ```
 
 ## 建议审阅顺序
@@ -41,4 +41,4 @@ python3 scripts/dev.py web
 
 安装包、生成的AAR、测试日志、工具链、验收样片原文件、数据库、账号凭证和本地配置均不提交Git。README使用的授权样片运行截图单独放在`docs/images/`。克隆后需自行构建；文档中`artifacts/`和`build-logs/`指本地生成目录
 
-本分支供协作审阅，未合并上游默认分支，也未部署云服务或发布正式安装包
+当前默认开发分支为feature/framelink-v1。此版本供协作与测试，尚未部署云服务或发布正式安装包

@@ -1,0 +1,17 @@
+name: 功能与体验建议
+description: 从实际拍摄或选片场景提出改进
+title: "[建议] "
+body:
+  - type: textarea
+    id: scenario
+    attributes:
+      label: 使用场景与遇到的问题
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 希望怎样完成这件事
+      description: 可以提供操作步骤、草图或有来源的参考，说明已有流程哪里不顺手
+    validations:
+      required: true

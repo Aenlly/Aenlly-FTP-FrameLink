@@ -1,0 +1,47 @@
+name: 问题反馈
+description: 报告可复现的问题，帮助定位具体流程
+title: "[问题] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: App版本与来源
+      placeholder: 例如FrameLink 0.1.2开发包，或原版Aenlly-FTP 1.0.7
+    validations:
+      required: true
+  - type: input
+    id: phone
+    attributes:
+      label: 手机与Android版本
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 发生在哪个流程
+      options:
+        - 相机连接与卡内浏览
+        - 取景、遥控或蓝牙
+        - FTP接收
+        - FTP客户端上传下载
+        - 图库、选片与本机导入
+        - 项目、客户选片与交付
+        - 界面或其他
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: 相机型号、固件与连接方式（如涉及相机）
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 操作步骤、预期与实际结果
+      description: 请说明从哪个入口开始、出现什么状态，以及能否重复发生
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 截图或已脱敏日志
+      description: 请移除账号密码、认证指纹、令牌及真实客户照片

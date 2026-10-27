@@ -1,0 +1,35 @@
+name: 相机兼容实测
+description: 分享真实设备的连接方式与测试结果
+title: "[机型实测] "
+body:
+  - type: input
+    id: environment
+    attributes:
+      label: 相机型号和固件、手机系统、App版本
+    validations:
+      required: true
+  - type: textarea
+    id: network
+    attributes:
+      label: 网络方式与机身设置
+      description: 请描述PC远程Wi-Fi、共同局域网、热点FTP或蓝牙；不要填写密码和认证信息
+    validations:
+      required: true
+  - type: checkboxes
+    id: capabilities
+    attributes:
+      label: 本次亲自验证通过的能力
+      options:
+        - label: 历史照片与缩略图
+        - label: 指定原片下载与字节一致性
+        - label: 实时取景
+        - label: 遥控快门与参数控制
+        - label: FTP接收
+        - label: 蓝牙快捷快门
+  - type: textarea
+    id: details
+    attributes:
+      label: 结果、未通过项和验证方法
+      description: 结合docs/HARDWARE_ACCEPTANCE.md记录，未测试项请明确标注
+    validations:
+      required: true

@@ -16,3 +16,7 @@ Haze版权归Christopher Banes与Haze项目贡献者所有。Apache Commons Net�
 alpha2go本地兼容改动：`SSHConfig`增加可选`DialContext`，供Android仅将相机socket绑定到局域网，保持云端网络独立；默认行为保持上游实现
 
 alpha2go测试工具兼容改动：`ptpiptest.Options`增加可选JPEG预览数据，仅供独立模拟协议验收使用；默认测试响应保持上游实现，模拟器程序不包含在Android安装包中
+
+## 文档中的摄影作品
+
+`docs/images/`中的运行截图使用授权摄影样片。照片版权与代码的GPL许可分别适用，照片继续按[Unsplash License](https://unsplash.com/license)使用；作者、来源、变换方式和核验记录见[VISUAL_QA.md](docs/VISUAL_QA.md)。样片原文件不随App或源码归档预装

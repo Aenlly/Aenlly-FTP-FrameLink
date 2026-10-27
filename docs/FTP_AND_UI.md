@@ -1,6 +1,6 @@
 # FTP与界面完善记录
 
-当前版本：FrameLink Android 0.1.1开发测试版
+记录版本：FrameLink Android 0.1.1开发测试版。后续0.1.2界面规则与验收见[视觉记录](VISUAL_QA.md)，本页保留FTP功能对应关系
 
 ## 原版功能对应关系
 

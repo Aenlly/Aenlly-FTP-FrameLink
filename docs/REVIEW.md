@@ -1,6 +1,6 @@
 # 协作审阅指南
 
-本分支为光屿FrameLink 0.1.1开发测试版，基于Aenlly-FTP的`7bef1146052b3c9f343856bbf3952ee7236b14d1`保留上游历史。Android应用采用独立包名`app.framelink.camera`，工程入口迁至`android/`；原始项目源码和许可证保存在`third_party/aenlly-ftp/`
+本分支为光屿FrameLink 0.1.2开发测试版，基于Aenlly-FTP的`7bef1146052b3c9f343856bbf3952ee7236b14d1`保留上游历史。Android应用采用独立包名`app.framelink.camera`，工程入口迁至`android/`；原始项目源码和许可证保存在`third_party/aenlly-ftp/`
 
 ## 获取分支
 
@@ -39,6 +39,6 @@ python3 scripts/dev.py web
 
 实现阶段的本地验证记录见实施报告。A7C II实体机、蓝牙和真实性能尚未完成验收；模拟相机通过不等于真实无线兼容
 
-安装包、生成的AAR、测试日志、工具链、照片、数据库、账号凭证和本地配置均不提交Git。克隆后需自行构建；文档中`artifacts/`和`build-logs/`指本地生成目录
+安装包、生成的AAR、测试日志、工具链、验收样片原文件、数据库、账号凭证和本地配置均不提交Git。README使用的授权样片运行截图单独放在`docs/images/`。克隆后需自行构建；文档中`artifacts/`和`build-logs/`指本地生成目录
 
 本分支供协作审阅，未合并上游默认分支，也未部署云服务或发布正式安装包

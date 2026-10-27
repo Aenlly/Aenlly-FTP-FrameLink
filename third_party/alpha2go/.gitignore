@@ -1,0 +1,5 @@
+# Camera dumps can contain serial numbers and MAC addresses
+*.bin
+!ptpip/testdata/*.bin
+*.dat
+/bin/

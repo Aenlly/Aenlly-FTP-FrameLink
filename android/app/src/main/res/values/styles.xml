@@ -1,0 +1,1 @@
+<resources><style name="Theme.FrameLink" parent="android:style/Theme.Material.Light.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:windowLightStatusBar">true</item><item name="android:windowActionModeOverlay">true</item><item name="android:colorAccent">#386A9E</item><item name="android:windowBackground">#F5F5F7</item></style></resources>

@@ -1,0 +1,16 @@
+alpha2go
+Copyright 2026 The alpha2go Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The PTP/IP implementation follows the PTP (ISO 15740) and PTP/IP (CIPA
+DC-005) specifications. The libgphoto2 project (LGPL-2.1) was consulted as a
+reference for packet layouts and the publicly documented Sony vendor operation
+codes; no libgphoto2 code is included.
+
+This repository contains no code, headers or data from any Sony SDK.
+
+Go dependencies: golang.org/x/crypto (BSD-3-Clause).
+
+Sony and Alpha are trademarks of Sony Group Corporation. This project is not
+affiliated with or endorsed by Sony.

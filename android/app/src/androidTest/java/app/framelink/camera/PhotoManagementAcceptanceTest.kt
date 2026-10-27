@@ -99,6 +99,30 @@ class PhotoManagementAcceptanceTest {
             db.tasks().save(task)
             assertTrue(runCatching { repository.plan(listOf(second.id)) }.exceptionOrNull()?.message.orEmpty().contains("传输"))
             db.tasks().save(task.copy(state = TransferState.CANCELLED.name))
+            val upload = task.copy(
+                id = "qa-${UUID.randomUUID()}", kind = TransferKind.FTP_UPLOAD.name, photoId = "",
+                payload = org.json.JSONObject().put("uri", file.toURI().toString()).toString(),
+            )
+            db.tasks().save(upload)
+            assertTrue(runCatching { repository.plan(listOf(second.id)) }.isFailure)
+            db.tasks().save(upload.copy(state = TransferState.COMPLETE.name))
+            val album = MediaFiles.publish(context, file, file.name)
+            try {
+                val published = second.copy(filesJson = Json.encode(second.files().map { it.copy(localUri = album.toString()) }))
+                db.photos().save(published)
+                val documentUri = android.provider.DocumentsContract.buildDocumentUri("com.android.providers.media.documents", "image:${android.content.ContentUris.parseId(album)}")
+                val queued = upload.copy(id = "qa-${UUID.randomUUID()}", payload = org.json.JSONObject().put("uri", documentUri.toString()).toString())
+                db.tasks().save(queued)
+                assertTrue(runCatching { repository.plan(listOf(second.id)) }.isFailure)
+                db.tasks().save(queued.copy(state = TransferState.CANCELLED.name))
+            } finally { context.contentResolver.delete(album, null, null) }
+            val exported = android.provider.DocumentsContract.buildDocumentUriUsingTree(android.net.Uri.parse("content://qa.export.documents/tree/album"), "album/QA.jpg")
+            db.tasks().save(TransferTask("qa-${UUID.randomUUID()}", TransferKind.FTP_RECEIVE.name, title = "QA导出副本",
+                payload = org.json.JSONObject().put("photoKey", second.sourceKey).put("exportedUri", exported.toString()).toString(), state = TransferState.COMPLETE.name))
+            val exportUpload = upload.copy(id = "qa-${UUID.randomUUID()}", payload = org.json.JSONObject().put("uri", android.provider.DocumentsContract.buildDocumentUri("qa.export.documents", "album/QA.jpg").toString()).toString())
+            db.tasks().save(exportUpload)
+            assertTrue(runCatching { repository.plan(listOf(second.id)) }.isFailure)
+            db.tasks().save(exportUpload.copy(state = TransferState.CANCELLED.name))
             val third = photo(outside)
             db.photos().save(third)
             val plan = repository.plan(listOf(third.id))

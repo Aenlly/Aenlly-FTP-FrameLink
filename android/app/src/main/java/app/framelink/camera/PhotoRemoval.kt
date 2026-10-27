@@ -106,10 +106,21 @@ class PhotoRemovalRepository(private val context: Context, private val db: Local
             if (File(path).parentFile == File(context.filesDir, "media/import") && name.length > 36) name.take(36) to photo else null
         }.toMap()
         val result = mutableMapOf<String, MutableList<TransferTask>>()
+        val payloads = tasks.associate { it.id to runCatching { JSONObject(it.payload) }.getOrNull() }
         for (task in tasks) {
-            val data = runCatching { JSONObject(task.payload) }.getOrNull()
+            val data = payloads[task.id]
             val photo = byId[task.photoId] ?: byKey[data?.optString("photoKey")] ?: byPath[data?.optString("path")] ?: byImport[task.id]
             if (photo != null) result.getOrPut(photo.id) { mutableListOf() } += task
+        }
+        val byUri = photos.flatMap { photo ->
+            assets(photo, result[photo.id].orEmpty()).mapNotNull { location -> transferUriKey(location)?.let { it to photo } }
+        }.groupBy({ it.first }, { it.second })
+        for (task in tasks) {
+            val owners = byUri[payloads[task.id]?.optString("uri")?.let(::transferUriKey)].orEmpty().distinctBy { it.id }
+            owners.forEach { owner ->
+                val linked = result.getOrPut(owner.id) { mutableListOf() }
+                if (linked.none { it.id == task.id }) linked += task
+            }
         }
         return result
     }
@@ -138,6 +149,27 @@ class PhotoRemovalRepository(private val context: Context, private val db: Local
             null -> File(location).canonicalFile.toURI().toString()
             else -> null
         }
+    }
+
+    /** 仅用于待传输关联匹配，保留原始URI执行删除，避免改变文件提供方的授权范围 */
+    private fun transferUriKey(location: String): String? {
+        if (location.isBlank()) return null
+        val uri = Uri.parse(location)
+        if (uri.authority == "com.android.providers.media.documents") {
+            val document = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull().orEmpty()
+            if (document.startsWith("image:") && document.substringAfter(':').toLongOrNull() != null)
+                return "media-image:${document.substringAfter(':')}"
+        }
+        if (uri.authority == MediaStore.AUTHORITY) {
+            val segments = uri.pathSegments
+            if (segments.size == 4 && segments[0] in setOf("external", "external_primary") && segments[1] == "images" && segments[2] == "media")
+                return "media-image:${segments[3]}"
+        }
+        if (uri.scheme == "content") {
+            val document = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
+            if (document != null) return "document:${uri.authority}:$document"
+        }
+        return locationKey(location)
     }
 
     private fun requireManagedFile(file: File): File {

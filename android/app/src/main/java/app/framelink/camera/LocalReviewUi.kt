@@ -63,16 +63,15 @@ internal fun ProjectHub(
         return
     }
     LazyColumn(
-        contentPadding = PaddingValues(24.dp),
+        contentPadding = PaddingValues(UiTokens.page),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Text("PROJECTS & SELECTIONS", fontSize = 9.sp, color = Muted, letterSpacing = 1.6.sp)
             Text(
-                "把选择，留在一起。",
-                fontSize = 28.sp,
+                "客户选片与交付",
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(top = 12.dp),
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
         item {

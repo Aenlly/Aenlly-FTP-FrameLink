@@ -48,8 +48,11 @@ internal fun GlassSurface(
     val layer = rememberGraphicsLayer()
     var position by remember { mutableStateOf(Offset.Zero) }
     val radiusPx = with(LocalDensity.current) { radius.toPx() }
-    val optics = remember { if (Build.VERSION.SDK_INT >= 33) GlassOptics() else null }
-    val tint = if (dark) Color(0xff182130).copy(alpha = .38f) else Color.White.copy(alpha = .22f)
+    val blurPx = with(LocalDensity.current) { (if (dark) 4.dp else 12.dp).toPx() }
+    val optics = remember {
+        if (Build.VERSION.SDK_INT >= 33) runCatching { GlassOptics() }.getOrNull() else null
+    }
+    val tint = if (dark) Color(0xff182130).copy(alpha = .66f) else Color.White.copy(alpha = .82f)
     val fallback =
         if (dark) Color(0xff202938).copy(alpha = .94f) else Color(0xfff5f7fb).copy(alpha = .94f)
     val blur =
@@ -78,7 +81,8 @@ internal fun GlassSurface(
                         translate(-offset.x, -offset.y) { drawLayer(source) }
                     }
                     if (Build.VERSION.SDK_INT >= 33) {
-                        layer.renderEffect = optics.effect(size.width, size.height, radiusPx, dark)
+                        layer.renderEffect =
+                            optics.effect(size.width, size.height, radiusPx, dark, blurPx)
                     }
                     drawLayer(layer)
                 } else drawRect(fallback)
@@ -87,10 +91,10 @@ internal fun GlassSurface(
     Box(
         modifier
             .shadow(
-                10.dp,
+                6.dp,
                 shape,
-                ambientColor = Color(0xff18263a).copy(alpha = .12f),
-                spotColor = Color(0xff18263a).copy(alpha = .1f),
+                ambientColor = Color(0xff18263a).copy(alpha = .07f),
+                spotColor = Color(0xff18263a).copy(alpha = .05f),
             )
             .clip(shape)
             .onGloballyPositioned { position = it.positionOnScreen() }
@@ -98,19 +102,19 @@ internal fun GlassSurface(
             .background(
                 Brush.verticalGradient(
                     listOf(
-                        Color.White.copy(alpha = if (dark) .08f else .18f),
-                        tint.copy(alpha = if (dark) .08f else .04f),
+                        Color.White.copy(alpha = if (dark) .025f else .10f),
+                        tint.copy(alpha = .025f),
                     )
                 )
             )
             .border(
                 BorderStroke(
-                    1.dp,
+                    .5.dp,
                     Brush.linearGradient(
                         listOf(
-                            Color.White.copy(alpha = .85f),
-                            Color.White.copy(alpha = .14f),
-                            Color.White.copy(alpha = .56f),
+                            Color.White.copy(alpha = if (dark) .30f else .55f),
+                            Color.White.copy(alpha = .06f),
+                            Color.White.copy(alpha = if (dark) .12f else .22f),
                         )
                     ),
                 ),
@@ -136,18 +140,20 @@ private class GlassOptics {
             float r = min(corner, min(halfSize.x, halfSize.y));
             float2 v = abs(q) - halfSize + r;
             float sd = length(max(v, 0.0)) + min(max(v.x, v.y), 0.0) - r;
-            float band = 1.0 - smoothstep(0.0, 18.0, max(-sd, 0.0));
+            float band = 1.0 - smoothstep(0.0, 14.0, max(-sd, 0.0));
             float2 n = normalize(q / max(halfSize, float2(1.0)) + float2(0.0001));
-            float2 uv = p - n * band * 6.0;
+            float2 uv = p - n * band * 3.5;
             half4 c = scene.eval(uv) * 0.28;
             c += scene.eval(uv + float2(3.0, 0.0)) * 0.18;
             c += scene.eval(uv - float2(3.0, 0.0)) * 0.18;
             c += scene.eval(uv + float2(0.0, 3.0)) * 0.18;
             c += scene.eval(uv - float2(0.0, 3.0)) * 0.18;
             half3 tint = mix(half3(1.0), half3(0.06, 0.09, 0.14), half(dark));
-            c.rgb = mix(c.rgb, tint, half(mix(0.22, 0.38, dark)));
-            float gleam = band * (0.03 + max(-n.y, 0.0) * 0.12);
+            c.rgb = mix(c.rgb, tint, half(mix(0.82, 0.38, dark)));
+            float gleam = band * (0.01 + max(-n.y, 0.0) * 0.045);
             c.rgb += half3(gleam);
+            float luminance = dot(float3(c.rgb), float3(0.2126, 0.7152, 0.0722));
+            c.rgb *= half(mix(1.0, min(1.0, 0.40 / max(luminance, 0.001)), dark));
             c.a = 1.0;
             return c;
         }
@@ -162,15 +168,23 @@ private class GlassOptics {
         height: Float,
         corner: Float,
         dark: Boolean,
+        blur: Float,
     ): androidx.compose.ui.graphics.RenderEffect {
-        val current = listOf(width, height, corner, if (dark) 1f else 0f)
+        val current = listOf(width, height, corner, if (dark) 1f else 0f, blur)
         if (parameters == current) return checkNotNull(renderEffect)
         shader.setFloatUniform("resolution", width, height)
         shader.setFloatUniform("corner", corner)
         shader.setFloatUniform("dark", if (dark) 1f else 0f)
         // RenderEffect会快照shader参数，尺寸或模式变化时必须在设置参数后重建
         val effect =
-            android.graphics.RenderEffect.createRuntimeShaderEffect(shader, "scene")
+            android.graphics.RenderEffect.createChainEffect(
+                    android.graphics.RenderEffect.createRuntimeShaderEffect(shader, "scene"),
+                    android.graphics.RenderEffect.createBlurEffect(
+                        blur,
+                        blur,
+                        android.graphics.Shader.TileMode.CLAMP,
+                    ),
+                )
                 .asComposeRenderEffect()
         parameters = current
         renderEffect = effect

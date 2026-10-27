@@ -49,10 +49,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -63,6 +68,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -90,9 +96,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
-internal val Ink = Color(0xff202630)
-internal val Muted = Color(0xff8b919c)
-internal val Brand = Color(0xff386a9e)
+internal val Ink = Color(0xff1f252c)
+internal val Muted = Color(0xff68717d)
+internal val Brand = Color(0xff416a8c)
 internal val CanvasColor = Color(0xfff5f5f7)
 internal val Line = Color(0xffe7e9ee)
 
@@ -169,6 +175,8 @@ fun FrameLink(runtime: CameraRuntime) {
         if (camera.info != null && tab == Tab.GALLERY && source == "camera") runtime.browseRecent()
     }
     MaterialTheme(
+        typography = UiTokens.typography,
+        shapes = UiTokens.shapes,
         colorScheme =
             lightColorScheme(
                 primary = Brand,
@@ -181,7 +189,7 @@ fun FrameLink(runtime: CameraRuntime) {
                 onBackground = Ink,
                 surfaceVariant = Color(0xffedf0f4),
                 outline = Line,
-            )
+            ),
     ) {
         Scaffold(
             containerColor = CanvasColor,
@@ -197,26 +205,30 @@ fun FrameLink(runtime: CameraRuntime) {
             },
             bottomBar = {
                 Box(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    GlassSurface(glass, Modifier.fillMaxWidth(), radius = 32.dp) {
+                    GlassSurface(glass, Modifier.fillMaxWidth(), radius = 26.dp) {
                         NavigationBar(
                             containerColor = Color.Transparent,
                             tonalElevation = 0.dp,
-                            modifier = Modifier.height(68.dp),
+                            modifier = Modifier.height(64.dp),
                             windowInsets = WindowInsets(0, 0, 0, 0),
                         ) {
                             Tab.entries.forEach { entry ->
                                 NavigationBarItem(
+                                    modifier =
+                                        Modifier.testTag(
+                                            "tab-${entry.name.lowercase(Locale.ROOT)}"
+                                        ),
                                     selected = tab == entry,
                                     onClick = { tab = entry },
                                     icon = { Icon(entry.icon, entry.title, Modifier.size(22.dp)) },
                                     label = { Text(entry.title, fontSize = 10.sp) },
                                     colors =
                                         NavigationBarItemDefaults.colors(
-                                            selectedIconColor = Brand,
-                                            selectedTextColor = Brand,
-                                            indicatorColor = Color.White.copy(alpha = .65f),
+                                            selectedIconColor = Color(0xff315573),
+                                            selectedTextColor = Color(0xff315573),
+                                            indicatorColor = Brand.copy(alpha = .10f),
                                             unselectedIconColor = Muted,
-                                            unselectedTextColor = Muted,
+                                            unselectedTextColor = Color(0xff46515f),
                                         ),
                                 )
                             }
@@ -228,36 +240,39 @@ fun FrameLink(runtime: CameraRuntime) {
             Column(
                 Modifier.fillMaxSize()
                     .hazeSource(glass)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(Color(0xfff5f5f7), Color(0xffedf2f6), Color(0xfff5f5f7))
-                        )
+                    .background(CanvasColor)
+                    .padding(
+                        top = padding.calculateTopPadding(),
+                        bottom =
+                            if (tab == Tab.GALLERY && selection.isEmpty()) 0.dp
+                            else padding.calculateBottomPadding(),
                     )
-                    .padding(padding)
             ) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(
-                        Modifier.size(30.dp)
-                            .clip(RoundedCornerShape(11.dp))
-                            .background(Color(0xff29435c)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Outlined.Camera,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
+                    if (tab == Tab.CAMERA)
+                        Box(
+                            Modifier.size(30.dp)
+                                .clip(RoundedCornerShape(11.dp))
+                                .background(Color(0xff29435c)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Outlined.Camera,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
                     Column(Modifier.weight(1f).padding(start = 10.dp)) {
                         Text(
-                            "光屿 · FrameLink",
-                            fontSize = 17.sp,
+                            if (tab == Tab.CAMERA) "光屿"
+                            else if (tab == Tab.TRANSFERS) "传输任务" else tab.title,
+                            fontSize = 20.sp,
                             fontWeight = FontWeight.SemiBold,
-                            letterSpacing = 1.sp,
+                            letterSpacing = 0.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -485,11 +500,11 @@ internal fun Panel(modifier: Modifier = Modifier, content: @Composable ColumnSco
         modifier =
             modifier.shadow(
                 3.dp,
-                RoundedCornerShape(23.dp),
+                UiTokens.card,
                 ambientColor = Brand.copy(alpha = .05f),
                 spotColor = Brand.copy(alpha = .04f),
             ),
-        shape = RoundedCornerShape(23.dp),
+        shape = UiTokens.card,
         color = Color.White,
         border = androidx.compose.foundation.BorderStroke(1.dp, Line),
     ) {
@@ -507,7 +522,7 @@ internal fun Primary(
     Button(
         onClick = onClick,
         enabled = enabled,
-        shape = RoundedCornerShape(13.dp),
+        shape = UiTokens.control,
         contentPadding = PaddingValues(horizontal = 19.dp, vertical = 13.dp),
     ) {
         if (icon != null) {
@@ -568,59 +583,64 @@ private fun CameraHome(
 ) {
     val ftp by runtime.ftpStatus.collectAsStateWithLifecycle()
     val client by runtime.ftpClient.state.collectAsStateWithLifecycle()
+    val imported = photos.filter { it.imported }
     LazyColumn(
         modifier = Modifier.testTag("camera-home"),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        contentPadding = PaddingValues(start = UiTokens.page, end = UiTokens.page, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(UiTokens.gap),
     ) {
         item {
-            Surface(color = Color(0xffe6edeb), shape = RoundedCornerShape(20.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(color = Color.White, shape = UiTokens.card) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onConnect) {
                         Icon(
-                            Icons.Outlined.CameraAlt,
-                            null,
+                            Icons.Outlined.SettingsInputAntenna,
+                            "相机连接设置",
                             tint = Brand,
-                            modifier = Modifier.size(30.dp),
+                            modifier = Modifier.size(24.dp),
                         )
-                        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                            Text(
-                                status.info?.model?.replace("ILCE-", "α ") ?: "Sony α7C II",
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Text(
-                                if (status.connecting) "正在连接相机…"
-                                else if (status.info != null) "● 已连接 · 固件 ${status.info.firmware}"
-                                else "相机未连接",
-                                fontSize = 11.sp,
-                                color = Color(0xff64796e),
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
-                        FilledTonalIconButton(onClick = onConnect) {
-                            Icon(Icons.Outlined.SettingsInputAntenna, "相机连接设置")
-                        }
                     }
-                    Spacer(Modifier.height(10.dp))
-                    Primary(
-                        if (status.connecting) "正在连接"
-                        else if (status.info == null) "连接相机" else "浏览相机照片",
-                        !status.connecting,
-                        Icons.Outlined.Link,
+                    Column(Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text(
+                            status.info?.model?.replace("ILCE-", "α ") ?: "Sony α7C II",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                        )
+                        Text(
+                            if (status.connecting) "正在建立连接…"
+                            else if (status.info != null) "已连接 · 固件 ${status.info.firmware}"
+                            else "相机未连接",
+                            fontSize = 11.sp,
+                            color = if (status.info != null) Color(0xff447467) else Muted,
+                            modifier = Modifier.padding(top = 3.dp),
+                        )
+                    }
+                    TextButton(
                         onClick = if (status.info == null) onConnect else onBrowse,
-                    )
+                        enabled = !status.connecting,
+                    ) {
+                        Text(
+                            if (status.connecting) "正在连接"
+                            else if (status.info == null) "连接相机" else "浏览相机照片",
+                            fontSize = 12.sp,
+                            maxLines = 2,
+                        )
+                    }
                 }
             }
         }
-        item { Text("拍摄与传输", fontSize = 16.sp, fontWeight = FontWeight.Medium) }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 HomeAction(
                     "选片下载",
                     "浏览相机，按需导入",
                     Icons.Outlined.Collections,
                     Modifier.weight(1f),
+                    true,
                     onBrowse,
                 )
                 HomeAction(
@@ -628,49 +648,110 @@ private fun CameraHome(
                     "实时画面与遥控",
                     Icons.Outlined.CropFree,
                     Modifier.weight(1f),
+                    false,
                     onRemote,
                 )
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                HomeAction(
-                    "FTP 接收",
-                    "边拍边传 · Server",
-                    Icons.Outlined.Wifi,
-                    Modifier.weight(1f),
-                    onFtp,
-                )
-                HomeAction(
-                    "FTP 客户端",
-                    "浏览、上传和下载",
-                    Icons.Outlined.SwapHoriz,
-                    Modifier.weight(1f),
-                    onFtpClient,
-                )
+            Surface(color = Color.White, shape = UiTokens.card) {
+                Column {
+                    Row(Modifier.fillMaxWidth()) {
+                        HomeTool("FTP 接收", "边拍边传", Icons.Outlined.Wifi, Modifier.weight(1f), onFtp)
+                        HomeTool(
+                            "FTP 客户端",
+                            "双向文件传输",
+                            Icons.Outlined.SwapHoriz,
+                            Modifier.weight(1f),
+                            onFtpClient,
+                        )
+                    }
+                    HorizontalDivider(
+                        Modifier.padding(horizontal = 16.dp),
+                        color = Line.copy(alpha = .7f),
+                    )
+                    Row(Modifier.fillMaxWidth()) {
+                        HomeTool(
+                            "快速快门",
+                            "蓝牙遥控",
+                            Icons.Outlined.Bluetooth,
+                            Modifier.weight(1f),
+                            onBluetooth,
+                        )
+                        HomeTool(
+                            "本机导入",
+                            "手机与读卡器",
+                            Icons.Outlined.AddPhotoAlternate,
+                            Modifier.weight(1f),
+                            onImport,
+                        )
+                    }
+                }
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                HomeAction(
-                    "快速快门",
-                    "蓝牙自拍与合影",
-                    Icons.Outlined.Bluetooth,
-                    Modifier.weight(1f),
-                    onBluetooth,
-                )
-                HomeAction(
-                    "本机导入",
-                    "从手机或读卡器选图",
-                    Icons.Outlined.AddPhotoAlternate,
-                    Modifier.weight(1f),
-                    onImport,
-                )
+            Row(
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("最近照片", fontSize = 17.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.weight(1f))
+                Text("${imported.size} 张已导入", fontSize = 11.sp, color = Muted)
             }
         }
+        if (imported.isEmpty())
+            item {
+                Surface(color = Color.White, shape = UiTokens.card) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Outlined.PhotoLibrary,
+                            null,
+                            tint = Muted,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text("从照片开始", fontSize = 14.sp)
+                            Text(
+                                "导入后在这里继续浏览和选片",
+                                fontSize = 11.sp,
+                                color = Muted,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        else
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(imported.take(12), key = { it.id }) { photo ->
+                        Column(
+                            Modifier.width(174.dp)
+                                .clickable { onPhoto(photo) }
+                                .semantics { contentDescription = "最近照片 ${photo.name}" }
+                        ) {
+                            PhotoThumbnail(
+                                runtime,
+                                photo,
+                                Modifier.fillMaxWidth().aspectRatio(1.35f).clip(UiTokens.photo),
+                            )
+                            Text(
+                                photo.name,
+                                fontSize = 10.sp,
+                                color = Muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 5.dp),
+                            )
+                        }
+                    }
+                }
+            }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("已导入 ${photos.count { it.imported }}", fontSize = 11.sp, color = Muted)
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(
                     "已选 ${photos.count { it.mark == PhotoMark.PICKED.name }}",
                     fontSize = 11.sp,
@@ -683,22 +764,6 @@ private fun CameraHome(
                 )
             }
         }
-        if (photos.any { it.imported })
-            item {
-                Text("最近导入", fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.height(10.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    items(photos.filter { it.imported }.take(12), key = { it.id }) { photo ->
-                        PhotoThumbnail(
-                            runtime,
-                            photo,
-                            Modifier.size(76.dp).clip(RoundedCornerShape(12.dp)).clickable {
-                                onPhoto(photo)
-                            },
-                        )
-                    }
-                }
-            }
         item {
             Text("FTP接收：$ftp", fontSize = 11.sp, color = Muted)
             if (client.connected)
@@ -713,44 +778,71 @@ private fun HomeAction(
     subtitle: String,
     icon: ImageVector,
     modifier: Modifier,
+    emphasis: Boolean,
     onClick: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by
         animateFloatAsState(
-            if (pressed) .97f else 1f,
-            spring(dampingRatio = .8f, stiffness = 500f),
-            label = "卡片按压",
+            if (pressed) .98f else 1f,
+            spring(dampingRatio = .88f, stiffness = 600f),
+            label = "主要操作按压",
         )
-    val shape = RoundedCornerShape(18.dp)
+    val color = if (emphasis) Color.White else Ink
     Surface(
         modifier
             .graphicsLayer(scaleX = scale, scaleY = scale)
-            .heightIn(min = 94.dp)
-            .shadow(
-                3.dp,
-                shape,
-                ambientColor = Brand.copy(alpha = .06f),
-                spotColor = Brand.copy(alpha = .04f),
-            )
+            .heightIn(min = 86.dp)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
-        shape = shape,
-        color = Color.White,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
+        shape = UiTokens.card,
+        color = if (emphasis) Color(0xff344f66) else Color.White,
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = Brand, modifier = Modifier.size(21.dp))
-                Spacer(Modifier.width(9.dp))
-                Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Icon(
+                    icon,
+                    null,
+                    tint = if (emphasis) Color(0xffdce7ee) else Brand,
+                    modifier = Modifier.size(22.dp),
+                )
+                Text(
+                    title,
+                    color = color,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
             }
             Text(
                 subtitle,
                 fontSize = 10.sp,
-                color = Muted,
-                modifier = Modifier.padding(top = 10.dp),
+                color = if (emphasis) Color(0xffd6e1e8) else Muted,
+                modifier = Modifier.padding(top = 8.dp),
             )
+        }
+    }
+}
+
+@Composable
+private fun HomeTool(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier
+            .heightIn(min = 66.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = Brand, modifier = Modifier.size(22.dp))
+        Column(Modifier.padding(start = 10.dp)) {
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(subtitle, fontSize = 10.sp, color = Muted, modifier = Modifier.padding(top = 3.dp))
         }
     }
 }
@@ -764,22 +856,68 @@ private fun Stat(title: String, value: String, modifier: Modifier) {
 }
 
 @Composable
-internal fun PhotoThumbnail(runtime: CameraRuntime, photo: Photo, modifier: Modifier = Modifier) {
+internal fun PhotoThumbnail(
+    runtime: CameraRuntime,
+    photo: Photo,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
+) {
+    var model by remember(photo.id) { mutableStateOf(photo.displayUri) }
+    var loading by remember(photo.id) { mutableStateOf(true) }
+    var failed by remember(photo.id) { mutableStateOf(false) }
     LaunchedEffect(photo.id, photo.previewPath) {
         if (
             photo.displayUri.isBlank() ||
                 photo.previewPath.isNotBlank() && !File(photo.previewPath).exists()
         )
-            withContext(Dispatchers.IO) { runCatching { runtime.ensurePreview(photo) } }
+            withContext(Dispatchers.IO) {
+                runCatching { runtime.ensurePreview(photo) }
+                    .onSuccess { model = it }
+                    .onFailure {
+                        loading = false
+                        failed = true
+                    }
+            }
+        else model = photo.displayUri
     }
-    Box(modifier.background(Color(0xffe6e9ed)), contentAlignment = Alignment.Center) {
-        Icon(Icons.Outlined.Image, null, tint = Color(0xffbbc3cd))
-        if (photo.displayUri.isNotBlank())
+    Box(
+        modifier
+            .semantics {
+                stateDescription = if (loading) "预览加载中" else if (failed) "预览暂不可用" else "预览已显示"
+            }
+            .background(
+                if (contentScale == ContentScale.Fit) Color(0xff15181d) else Color(0xffe6e9ed)
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (failed) Icons.Outlined.BrokenImage else Icons.Outlined.Image,
+            if (failed) "预览暂不可用，原文件保留" else null,
+            tint = Color(0xffbbc3cd),
+        )
+        if (model.isNotBlank())
             AsyncImage(
-                model = photo.displayUri,
+                model = model,
                 contentDescription = photo.name,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
+                contentScale = contentScale,
+                onLoading = {
+                    loading = true
+                    failed = false
+                },
+                onSuccess = {
+                    loading = false
+                    failed = false
+                },
+                onError = {
+                    loading = false
+                    failed = true
+                },
+            )
+        if (loading)
+            LinearProgressIndicator(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(2.dp),
+                color = Brand,
             )
     }
 }
@@ -839,15 +977,24 @@ private fun Gallery(
         if (bursts) photos.groupBy { it.burstKey.ifBlank { it.id } }.values.toList()
         else photos.map { listOf(it) }
     Column(Modifier.fillMaxSize()) {
-        Column(Modifier.padding(horizontal = 24.dp)) {
-            Label("PHOTO LIBRARY")
+        Column(Modifier.padding(horizontal = 16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "图库",
-                    fontSize = 29.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f),
-                )
+                SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
+                    SegmentedButton(
+                        selected = source == "local",
+                        onClick = { onSource("local") },
+                        shape = SegmentedButtonDefaults.itemShape(0, 2),
+                    ) {
+                        Text("已导入", fontSize = 12.sp)
+                    }
+                    SegmentedButton(
+                        selected = source == "camera",
+                        onClick = { onSource("camera") },
+                        shape = SegmentedButtonDefaults.itemShape(1, 2),
+                    ) {
+                        Text("相机内", fontSize = 12.sp)
+                    }
+                }
                 IconButton(
                     onClick = {
                         onReview(
@@ -856,10 +1003,20 @@ private fun Gallery(
                     },
                     enabled = photos.isNotEmpty(),
                 ) {
-                    Icon(Icons.Outlined.PeopleOutline, "现场客户选片", tint = Brand)
+                    Icon(
+                        Icons.Outlined.PeopleOutline,
+                        "现场客户选片",
+                        tint = Brand,
+                        modifier = Modifier.size(UiTokens.icon),
+                    )
                 }
                 IconButton(onClick = onImport) {
-                    Icon(Icons.Outlined.AddPhotoAlternate, "导入本机照片", tint = Brand)
+                    Icon(
+                        Icons.Outlined.AddPhotoAlternate,
+                        "导入本机照片",
+                        tint = Brand,
+                        modifier = Modifier.size(UiTokens.icon),
+                    )
                 }
                 if (source == "camera")
                     IconButton(
@@ -867,29 +1024,15 @@ private fun Gallery(
                             if (camera.info == null) onConnect() else runtime.loadPhotos(true)
                         }
                     ) {
-                        Icon(Icons.Outlined.Refresh, "刷新相机照片", tint = Brand)
+                        Icon(
+                            Icons.Outlined.Refresh,
+                            "刷新相机照片",
+                            tint = Brand,
+                            modifier = Modifier.size(UiTokens.icon),
+                        )
                     }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    source == "local",
-                    { onSource("local") },
-                    { Text("已导入", fontSize = 11.sp) },
-                )
-                FilterChip(
-                    source == "camera",
-                    { onSource("camera") },
-                    { Text("相机内", fontSize = 11.sp) },
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    if (source == "camera") "已读取 ${photos.size} 张" else "${photos.size} 张",
-                    fontSize = 10.sp,
-                    color = Muted,
-                    modifier = Modifier.align(Alignment.CenterVertically),
-                )
-            }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(
                     listOf(
                         "all" to "全部",
@@ -899,33 +1042,46 @@ private fun Gallery(
                         "raw" to "RAW",
                     )
                 ) { (key, label) ->
-                    FilterChip(filter == key, { onFilter(key) }, { Text(label, fontSize = 10.sp) })
+                    FilterChip(filter == key, { onFilter(key) }, { Text(label, fontSize = 11.sp) })
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(enabled = !camera.loadingPhotos, onClick = { choosingDay = true }) {
-                    Text(chosenDay.ifBlank { "日期" }, fontSize = 10.sp)
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                item {
+                    TextButton(
+                        enabled = !camera.loadingPhotos,
+                        onClick = { choosingDay = true },
+                        contentPadding = PaddingValues(horizontal = 4.dp),
+                    ) {
+                        Icon(Icons.Outlined.CalendarToday, null, Modifier.size(15.dp))
+                        Text(
+                            chosenDay.ifBlank { "日期" },
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
                 }
-                Text("连拍", fontSize = 10.sp, color = Muted)
-                Switch(
-                    bursts,
-                    { bursts = it },
-                    modifier = Modifier.padding(start = 7.dp).height(38.dp),
-                )
-                Spacer(Modifier.weight(1f))
-                if (source == "local") {
-                    Text("跟随最新", fontSize = 9.sp, color = Muted)
-                    Switch(
-                        follow,
-                        {
-                            follow = it
-                            runtime.settings.put("gallery.follow", it.toString())
-                        },
-                        modifier = Modifier.height(36.dp),
+                item { FilterChip(bursts, { bursts = !bursts }, { Text("连拍", fontSize = 11.sp) }) }
+                if (source == "local")
+                    item {
+                        FilterChip(
+                            follow,
+                            {
+                                follow = !follow
+                                runtime.settings.put("gallery.follow", follow.toString())
+                            },
+                            { Text("跟随最新", fontSize = 11.sp) },
+                        )
+                    }
+                item {
+                    Text(
+                        if (source == "camera") "已读取 ${photos.size} 张" else "${photos.size} 张",
+                        fontSize = 11.sp,
+                        color = Muted,
                     )
                 }
-                if (selection.isNotEmpty())
-                    Text("已选 ${selection.size}", fontSize = 11.sp, color = Brand)
             }
         }
         if (photos.isEmpty())
@@ -939,12 +1095,18 @@ private fun Gallery(
             }
         else
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(145.dp),
+                columns = GridCells.Adaptive(100.dp),
                 state = state,
                 modifier = Modifier.weight(1f).testTag("gallery-grid"),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding =
+                    PaddingValues(
+                        start = 8.dp,
+                        end = 8.dp,
+                        top = 4.dp,
+                        bottom = if (selection.isEmpty()) 144.dp else 8.dp,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(groups, key = { it.first().id }) { group ->
                     val photo = group.first()
@@ -956,15 +1118,42 @@ private fun Gallery(
                             }
                             .semantics { contentDescription = "查看 ${photo.name}" }
                     ) {
-                        Box(Modifier.clip(RoundedCornerShape(15.dp))) {
+                        Box(
+                            Modifier.clip(UiTokens.photo)
+                                .then(
+                                    if (photo.id in selection)
+                                        Modifier.border(2.dp, Brand, UiTokens.photo)
+                                    else Modifier
+                                )
+                        ) {
                             PhotoThumbnail(runtime, photo, Modifier.fillMaxWidth().aspectRatio(1f))
+                            if (photo.id in selection)
+                                Box(Modifier.matchParentSize().background(Brand.copy(alpha = .10f)))
                             Checkbox(
                                 checked = photo.id in selection,
                                 onCheckedChange = { onSelect(photo.id) },
+                                colors =
+                                    CheckboxDefaults.colors(
+                                        uncheckedColor = Color.White,
+                                        checkedColor = Brand,
+                                        checkmarkColor = Color.White,
+                                    ),
                                 modifier =
-                                    Modifier.align(Alignment.TopEnd).semantics {
-                                        contentDescription = "选择 ${photo.name}"
-                                    },
+                                    Modifier.align(Alignment.TopEnd)
+                                        .drawBehind {
+                                            val edge = 22.dp.toPx()
+                                            drawRoundRect(
+                                                Color.Black.copy(alpha = .35f),
+                                                topLeft =
+                                                    Offset(
+                                                        center.x - edge / 2,
+                                                        center.y - edge / 2,
+                                                    ),
+                                                size = Size(edge, edge),
+                                                cornerRadius = CornerRadius(4.dp.toPx()),
+                                            )
+                                        }
+                                        .semantics { contentDescription = "选择 ${photo.name}" },
                             )
                             if (group.size > 1)
                                 Surface(
@@ -990,8 +1179,10 @@ private fun Gallery(
                                     tint = Color.White,
                                     modifier =
                                         Modifier.align(Alignment.BottomEnd)
-                                            .padding(9.dp)
-                                            .size(19.dp),
+                                            .padding(5.dp)
+                                            .background(Color.Black.copy(alpha = .6f), CircleShape)
+                                            .padding(4.dp)
+                                            .size(17.dp),
                                 )
                         }
                         Text(
@@ -1000,14 +1191,14 @@ private fun Gallery(
                             overflow = TextOverflow.Ellipsis,
                             fontSize = 10.sp,
                             color = Muted,
-                            modifier = Modifier.padding(top = 8.dp),
+                            modifier = Modifier.padding(horizontal = 3.dp).padding(top = 4.dp),
                         )
                         Text(
                             if (photo.imported) "已导入 · ${photo.files().size} 个文件"
                             else "相机预览 · ${photo.files().size} 个文件",
-                            fontSize = 8.sp,
-                            color = Muted.copy(alpha = .8f),
-                            modifier = Modifier.padding(top = 3.dp),
+                            fontSize = 9.sp,
+                            color = Muted,
+                            modifier = Modifier.padding(horizontal = 3.dp).padding(top = 1.dp),
                         )
                     }
                 }
@@ -1027,6 +1218,7 @@ private fun Gallery(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    Text("已选 ${selection.size}", fontSize = 11.sp, color = Brand)
                     TextButton(onClick = onCompare, enabled = selection.size == 2) {
                         Text("对比", fontSize = 11.sp)
                     }
@@ -1378,8 +1570,8 @@ private fun TransferScreen(
     ) {
         item {
             Text(
-                "传输任务",
-                fontSize = 23.sp,
+                "文件与进度",
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(top = 10.dp),
             )
@@ -1815,14 +2007,13 @@ internal fun ProjectsScreen(
     LaunchedEffect(projectId, runtime.cloud.signedIn) { refresh() }
     if (!runtime.cloud.signedIn) {
         Column(Modifier.padding(24.dp)) {
-            Label("YOUR CREATIVE SPACE")
             Text(
-                "从选片，到交付。",
-                fontSize = 28.sp,
+                "云端客户选片",
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(top = 11.dp),
             )
-            Spacer(Modifier.height(35.dp))
+            Spacer(Modifier.height(16.dp))
             EmptyState("给客户一个专属选片空间", "客户免安装浏览照片、提交选择和留言。你来确认，再安心交付成片。", "启用云端选片", onCloud)
         }
         return
@@ -1837,11 +2028,10 @@ internal fun ProjectsScreen(
                     Icon(Icons.Outlined.ArrowBack, null, Modifier.size(16.dp))
                     Text("所有项目", fontSize = 11.sp)
                 }
-            Label("PHOTOGRAPHY PROJECTS")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     detail?.takeIf { projectId != null }?.name ?: "拍摄项目",
-                    fontSize = 28.sp,
+                    fontSize = 20.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f),
                 )
@@ -2187,6 +2377,9 @@ private fun PhotoViewer(
     val scope = rememberCoroutineScope()
     val original = photo.files().firstOrNull { !it.raw && it.localUri.isNotBlank() }
     var model by remember(photo.id) { mutableStateOf(original?.localUri ?: photo.displayUri) }
+    var viewerLoading by remember(photo.id) { mutableStateOf(true) }
+    var viewerFailure by remember(photo.id) { mutableStateOf("") }
+    var retryKey by remember(photo.id) { mutableIntStateOf(0) }
     var scale by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var edited by remember { mutableStateOf<File?>(null) }
@@ -2238,130 +2431,193 @@ private fun PhotoViewer(
             }
         }
     }
-    LaunchedEffect(photo.id) {
+    LaunchedEffect(photo.id, retryKey) {
         if (original == null)
             withContext(Dispatchers.IO) {
-                runCatching { runtime.ensurePreview(photo, true) }.onSuccess { model = it }
+                runCatching { runtime.ensurePreview(photo, true) }
+                    .onSuccess { model = it }
+                    .onFailure {
+                        viewerLoading = false
+                        viewerFailure = it.message ?: "预览加载失败，请重试"
+                    }
             }
     }
     val glass = remember { HazeState() }
-    Dialog(
-        onDismissRequest = onClose,
-        properties =
-            DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-    ) {
-        DarkDialogBars()
-        Box(Modifier.fillMaxSize().background(Color(0xff111318)).padding(dialogSafePadding())) {
-            Box(
-                Modifier.fillMaxSize().hazeSource(glass).background(Color(0xff111318)),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (model.isBlank()) Info("等待预览")
-                else
-                    AsyncImage(
-                        model = model,
-                        contentDescription = photo.name,
-                        contentScale = ContentScale.Fit,
-                        modifier =
-                            Modifier.fillMaxSize()
-                                .graphicsLayer(
-                                    scaleX = scale,
-                                    scaleY = scale,
-                                    translationX = pan.x,
-                                    translationY = pan.y,
-                                )
-                                .transformable(
-                                    rememberTransformableState { zoom, offset, _ ->
-                                        scale = (scale * zoom).coerceIn(1f, 6f)
-                                        pan = if (scale <= 1f) Offset.Zero else pan + offset
-                                    }
-                                )
-                                .pointerInput(photo.id) {
-                                    detectTapGestures(
-                                        onDoubleTap = {
-                                            scale = if (scale > 1f) 1f else 3f
-                                            pan = Offset.Zero
-                                        }
-                                    )
-                                },
-                    )
-            }
-            GlassSurface(
-                glass,
-                Modifier.align(Alignment.TopCenter).padding(16.dp).fillMaxWidth(),
-                radius = 26.dp,
-                dark = true,
-            ) {
-                Row(
-                    Modifier.padding(start = 18.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+    DarkScene {
+        Dialog(
+            onDismissRequest = onClose,
+            properties =
+                DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        ) {
+            DarkDialogBars()
+            Box(Modifier.fillMaxSize().background(Color(0xff111318)).padding(dialogSafePadding())) {
+                Box(
+                    Modifier.fillMaxSize()
+                        .clipToBounds()
+                        .testTag("photo-viewer-image")
+                        .semantics {
+                            stateDescription =
+                                if (viewerLoading) "照片加载中"
+                                else if (viewerFailure.isNotBlank()) "照片暂不可用" else "照片已显示"
+                        }
+                        .hazeSource(glass)
+                        .background(Color(0xff111318)),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            photo.name,
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            if (original != null) "已导入原片" else "相机预览 · 清晰度以原片为准",
-                            fontSize = 10.sp,
-                            color = Color.White.copy(alpha = .8f),
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    }
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Outlined.Close, "关闭照片", tint = Color.White)
-                    }
+                    if (model.isBlank() && viewerFailure.isBlank()) Info("等待预览")
+                    else if (model.isNotBlank())
+                        key(retryKey) {
+                            AsyncImage(
+                                model = model,
+                                contentDescription = photo.name,
+                                contentScale = ContentScale.Fit,
+                                modifier =
+                                    Modifier.fillMaxSize()
+                                        .drawWithContent {
+                                            withTransform({
+                                                translate(pan.x, pan.y)
+                                                scale(scale, scale, center)
+                                            }) {
+                                                this@drawWithContent.drawContent()
+                                            }
+                                        }
+                                        .transformable(
+                                            rememberTransformableState { zoom, offset, _ ->
+                                                scale = (scale * zoom).coerceIn(1f, 6f)
+                                                pan = if (scale <= 1f) Offset.Zero else pan + offset
+                                            }
+                                        )
+                                        .pointerInput(photo.id) {
+                                            detectTapGestures(
+                                                onDoubleTap = {
+                                                    scale = if (scale > 1f) 1f else 3f
+                                                    pan = Offset.Zero
+                                                }
+                                            )
+                                        },
+                                onLoading = {
+                                    viewerLoading = true
+                                    viewerFailure = ""
+                                },
+                                onSuccess = {
+                                    viewerLoading = false
+                                    viewerFailure = ""
+                                },
+                                onError = {
+                                    viewerLoading = false
+                                    viewerFailure =
+                                        if (photo.imported) "此格式暂不能显示，已保存的原文件可在传输页打开或另存。"
+                                        else "预览暂不能显示，请检查相机连接后重试。"
+                                },
+                            )
+                        }
+                    if (viewerLoading)
+                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    if (viewerFailure.isNotBlank())
+                        Column(
+                            Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(viewerFailure, color = Color(0xffd1d7df), fontSize = 13.sp)
+                            TextButton(
+                                onClick = {
+                                    viewerFailure = ""
+                                    viewerLoading = true
+                                    retryKey++
+                                }
+                            ) {
+                                Text("重试加载")
+                            }
+                        }
                 }
-            }
-            Column(Modifier.align(Alignment.BottomCenter).padding(16.dp)) {
-                GlassSurface(glass, Modifier.fillMaxWidth(), radius = 28.dp, dark = true) {
+                GlassSurface(
+                    glass,
+                    Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth(),
+                    radius = 20.dp,
+                    dark = true,
+                ) {
                     Row(
-                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        Modifier.padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        MarkAction(
-                            "收藏",
-                            Icons.Outlined.FavoriteBorder,
-                            photo.mark == PhotoMark.FAVORITE.name,
-                        ) {
-                            onMark(
-                                if (photo.mark == PhotoMark.FAVORITE.name) PhotoMark.NONE
-                                else PhotoMark.FAVORITE
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                photo.name,
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                if (original != null) "已导入原片" else "相机预览 · 清晰度以原片为准",
+                                fontSize = 10.sp,
+                                color = Color.White.copy(alpha = .8f),
+                                modifier = Modifier.padding(top = 4.dp),
                             )
                         }
-                        MarkAction(
-                            "选中",
-                            Icons.Outlined.CheckCircleOutline,
-                            photo.mark == PhotoMark.PICKED.name,
-                        ) {
-                            onMark(
-                                if (photo.mark == PhotoMark.PICKED.name) PhotoMark.NONE
-                                else PhotoMark.PICKED
+                        if (scale > 1.01f)
+                            Text(
+                                "%.1f×".format(Locale.ROOT, scale),
+                                color = Color(0xffc8dceb),
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 6.dp),
                             )
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.Outlined.Close, "关闭照片", tint = Color.White)
                         }
-                        MarkAction(
-                            "排除",
-                            Icons.Outlined.Block,
-                            photo.mark == PhotoMark.REJECTED.name,
-                        ) {
-                            onMark(
-                                if (photo.mark == PhotoMark.REJECTED.name) PhotoMark.NONE
-                                else PhotoMark.REJECTED
-                            )
-                        }
-                        MarkAction("修图", Icons.Outlined.Tune, false) { share(true) }
-                        MarkAction("分享", Icons.Outlined.IosShare, false) { share(false) }
                     }
                 }
-                Text(
-                    "双指缩放 · 双击查看细节 · 修图先创建副本",
-                    color = Color.White.copy(alpha = .7f),
-                    fontSize = 10.sp,
-                    modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 12.dp),
-                )
+                Column(Modifier.align(Alignment.BottomCenter).padding(12.dp)) {
+                    GlassSurface(glass, Modifier.fillMaxWidth(), radius = 22.dp, dark = true) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                        ) {
+                            MarkAction(
+                                "收藏",
+                                Icons.Outlined.FavoriteBorder,
+                                photo.mark == PhotoMark.FAVORITE.name,
+                            ) {
+                                onMark(
+                                    if (photo.mark == PhotoMark.FAVORITE.name) PhotoMark.NONE
+                                    else PhotoMark.FAVORITE
+                                )
+                            }
+                            MarkAction(
+                                "选中",
+                                Icons.Outlined.CheckCircleOutline,
+                                photo.mark == PhotoMark.PICKED.name,
+                            ) {
+                                onMark(
+                                    if (photo.mark == PhotoMark.PICKED.name) PhotoMark.NONE
+                                    else PhotoMark.PICKED
+                                )
+                            }
+                            MarkAction(
+                                "排除",
+                                Icons.Outlined.Block,
+                                photo.mark == PhotoMark.REJECTED.name,
+                            ) {
+                                onMark(
+                                    if (photo.mark == PhotoMark.REJECTED.name) PhotoMark.NONE
+                                    else PhotoMark.REJECTED
+                                )
+                            }
+                            MarkAction("修图", Icons.Outlined.Tune, false) { share(true) }
+                            MarkAction("分享", Icons.Outlined.IosShare, false) { share(false) }
+                        }
+                    }
+                    Text(
+                        "双指缩放 · 双击查看细节 · 修图先创建副本",
+                        color = Color.White.copy(alpha = .9f),
+                        fontSize = 10.sp,
+                        modifier =
+                            Modifier.align(Alignment.CenterHorizontally)
+                                .padding(top = 8.dp)
+                                .background(Color.Black.copy(alpha = .7f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
             }
         }
     }
@@ -2370,7 +2626,10 @@ private fun PhotoViewer(
 @Composable
 private fun MarkAction(title: String, icon: ImageVector, active: Boolean, onClick: () -> Unit) {
     Column(
-        Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(11.dp),
+        Modifier.widthIn(min = 48.dp)
+            .clip(UiTokens.control)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 9.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
@@ -2381,57 +2640,65 @@ private fun MarkAction(title: String, icon: ImageVector, active: Boolean, onClic
         )
         Text(
             title,
-            fontSize = 9.sp,
+            fontSize = 11.sp,
             color = if (active) Color(0xffa5c5e4) else Color.White.copy(alpha = .82f),
-            modifier = Modifier.padding(top = 7.dp),
+            modifier = Modifier.padding(top = 5.dp),
         )
     }
 }
 
 @Composable
 private fun ComparePhotos(runtime: CameraRuntime, photos: List<Photo>, onClose: () -> Unit) {
-    Dialog(
-        onDismissRequest = onClose,
-        properties =
-            DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-    ) {
-        DarkDialogBars()
-        Column(
-            Modifier.fillMaxSize()
-                .background(Color(0xff111318))
-                .padding(dialogSafePadding())
-                .padding(18.dp)
+    DarkScene {
+        Dialog(
+            onDismissRequest = onClose,
+            properties =
+                DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("双图对比", fontSize = 18.sp, color = Color.White, modifier = Modifier.weight(1f))
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Outlined.Close, "关闭对比", tint = Color.White)
-                }
-            }
-            photos.forEach { photo ->
-                Column(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
-                    PhotoThumbnail(
-                        runtime,
-                        photo,
-                        Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(14.dp)),
+            DarkDialogBars()
+            Column(
+                Modifier.fillMaxSize()
+                    .background(Color(0xff111318))
+                    .padding(dialogSafePadding())
+                    .padding(18.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "双图对比",
+                        fontSize = 18.sp,
+                        color = Color.White,
+                        modifier = Modifier.weight(1f),
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            photo.name,
-                            color = Color(0xffa0a8b5),
-                            fontSize = 10.sp,
-                            modifier = Modifier.weight(1f),
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Outlined.Close, "关闭对比", tint = Color.White)
+                    }
+                }
+                photos.forEach { photo ->
+                    Column(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
+                        PhotoThumbnail(
+                            runtime,
+                            photo,
+                            Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(14.dp)),
+                            contentScale = ContentScale.Fit,
                         )
-                        TextButton(onClick = { runtime.mark(photo, PhotoMark.PICKED) }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                if (photo.mark == PhotoMark.PICKED.name) "已选" else "选中这张",
-                                fontSize = 11.sp,
+                                photo.name,
+                                color = Color(0xffa0a8b5),
+                                fontSize = 10.sp,
+                                modifier = Modifier.weight(1f),
                             )
+                            TextButton(onClick = { runtime.mark(photo, PhotoMark.PICKED) }) {
+                                Text(
+                                    if (photo.mark == PhotoMark.PICKED.name) "已选" else "选中这张",
+                                    fontSize = 11.sp,
+                                )
+                            }
                         }
                     }
                 }
+                Info("对比画面可能为相机预览，原片细节请下载后查看。")
             }
-            Info("对比画面可能为相机预览，原片细节请下载后查看。")
         }
     }
 }
@@ -2470,239 +2737,248 @@ private fun LiveScreen(
             runtime.stopLive()
         }
     }
-    Dialog(
-        onDismissRequest = onClose,
-        properties =
-            DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-    ) {
-        DarkDialogBars()
-        Column(Modifier.fillMaxSize().background(Color(0xff0e1015)).padding(dialogSafePadding())) {
-            Row(
-                Modifier.fillMaxWidth().padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
+    DarkScene {
+        Dialog(
+            onDismissRequest = onClose,
+            properties =
+                DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+        ) {
+            DarkDialogBars()
+            Column(
+                Modifier.fillMaxSize().background(Color(0xff0e1015)).padding(dialogSafePadding())
             ) {
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Outlined.ArrowBack, "返回相机", tint = Color.White)
-                }
-                Column(Modifier.weight(1f)) {
-                    Text("取景拍摄", color = Color.White, fontSize = 15.sp)
-                    Text(
-                        connectedCamera.info?.model.orEmpty(),
-                        color = Color(0xff77808f),
-                        fontSize = 9.sp,
-                    )
-                }
-                TextButton(onClick = { pro = !pro }) {
-                    Text(if (pro) "简洁布局" else "专业工具", color = Color(0xff9bb9d7), fontSize = 11.sp)
-                }
-            }
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                AndroidView(
-                    factory = { context ->
-                        LiveViewSurface(context).also {
-                            it.histogram = { bins -> histogram = bins }
-                        }
-                    },
-                    update = { view ->
-                        view.zebra = zebra
-                        view.peaking = peak
-                        frame?.let { view.submit(it) }
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                    onRelease = { it.onPause() },
-                )
-                if (frame == null) Text("等待相机取景画面", fontSize = 12.sp, color = Color(0xff6e7888))
-                if (grid)
-                    Canvas(Modifier.fillMaxSize()) {
-                        for (i in 1..2) {
-                            drawLine(
-                                Color.White.copy(alpha = .14f),
-                                Offset(size.width * i / 3, 0f),
-                                Offset(size.width * i / 3, size.height),
-                                1f,
-                            )
-                            drawLine(
-                                Color.White.copy(alpha = .14f),
-                                Offset(0f, size.height * i / 3),
-                                Offset(size.width, size.height * i / 3),
-                                1f,
-                            )
-                        }
-                    }
-            }
-            if (pro) {
                 Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = { grid = !grid }) {
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Outlined.ArrowBack, "返回相机", tint = Color.White)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("取景拍摄", color = Color.White, fontSize = 15.sp)
                         Text(
-                            "网格 ${if(grid)"开"else"关"}",
-                            fontSize = 10.sp,
-                            color = Color(0xff9fb2c8),
+                            connectedCamera.info?.model.orEmpty(),
+                            color = Color(0xff77808f),
+                            fontSize = 9.sp,
                         )
                     }
-                    TextButton(onClick = { peak = !peak }) {
+                    TextButton(onClick = { pro = !pro }) {
                         Text(
-                            "峰值 ${if(peak)"开"else"关"}",
-                            fontSize = 10.sp,
-                            color = Color(0xff9fb2c8),
-                        )
-                    }
-                    TextButton(onClick = { zebra = !zebra }) {
-                        Text(
-                            "过曝 ${if(zebra)"开"else"关"}",
-                            fontSize = 10.sp,
-                            color = Color(0xff9fb2c8),
+                            if (pro) "简洁布局" else "专业工具",
+                            color = Color(0xff9bb9d7),
+                            fontSize = 11.sp,
                         )
                     }
                 }
-                Canvas(Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 30.dp)) {
-                    val max = (histogram.maxOrNull() ?: 1).coerceAtLeast(1)
-                    histogram.forEachIndexed { index, value ->
-                        val x = index * size.width / 64
-                        drawLine(
-                            Color(0xff7b8fa6),
-                            Offset(x, size.height),
-                            Offset(x, size.height - value.toFloat() / max * size.height),
-                            size.width / 70,
-                        )
-                    }
-                }
-                Text(
-                    "辅助分析基于取景预览，不代表RAW数据",
-                    fontSize = 8.sp,
-                    color = Color(0xff586473),
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                )
-            }
-            LazyRow(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(
-                    properties.filter { it.writable }.take(if (pro) 12 else 4),
-                    key = { it.code },
-                ) { item ->
-                    Column(
-                        Modifier.clip(RoundedCornerShape(11.dp))
-                            .background(Color(0xff1c2029))
-                            .clickable { property = item }
-                            .padding(horizontal = 14.dp, vertical = 10.dp)
-                    ) {
-                        Text(item.name, fontSize = 8.sp, color = Color(0xff69788b))
-                        Text(
-                            item.label,
-                            fontSize = 12.sp,
-                            color = Color.White,
-                            modifier = Modifier.padding(top = 5.dp),
-                        )
-                    }
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 36.dp, vertical = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                TextButton(
-                    onClick = {
-                        timer =
-                            when (timer) {
-                                0 -> 3
-                                3 -> 10
-                                else -> 0
-                            }
-                    }
-                ) {
-                    Text(
-                        if (timer == 0) "无延时" else "${timer}s",
-                        fontSize = 12.sp,
-                        color = Color(0xff8d9caf),
-                    )
-                }
-                Box(
-                    Modifier.size(74.dp)
-                        .semantics { contentDescription = "拍摄" }
-                        .border(2.dp, Color.White, CircleShape)
-                        .padding(6.dp)
-                        .clip(CircleShape)
-                        .background(if (shooting) Color(0xff8799a8) else Color.White)
-                        .clickable(enabled = !shooting || countdown > 0) {
-                            if (countdown > 0) {
-                                runtime.cancelCountdown()
-                                shooting = false
-                            } else {
-                                shooting = true
-                                scope.launch {
-                                    runtime.capture(timer).join()
-                                    shooting = false
-                                }
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    AndroidView(
+                        factory = { context ->
+                            LiveViewSurface(context).also {
+                                it.histogram = { bins -> histogram = bins }
                             }
                         },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (countdown > 0) Text(countdown.toString(), fontSize = 29.sp, color = Brand)
-                    else if (shooting)
-                        CircularProgressIndicator(
-                            Modifier.size(25.dp),
-                            strokeWidth = 2.dp,
-                            color = Brand,
-                        )
+                        update = { view ->
+                            view.zebra = zebra
+                            view.peaking = peak
+                            frame?.let { view.submit(it) }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        onRelease = { it.onPause() },
+                    )
+                    if (frame == null) Text("等待相机取景画面", fontSize = 12.sp, color = Color(0xff6e7888))
+                    if (grid)
+                        Canvas(Modifier.fillMaxSize()) {
+                            for (i in 1..2) {
+                                drawLine(
+                                    Color.White.copy(alpha = .14f),
+                                    Offset(size.width * i / 3, 0f),
+                                    Offset(size.width * i / 3, size.height),
+                                    1f,
+                                )
+                                drawLine(
+                                    Color.White.copy(alpha = .14f),
+                                    Offset(0f, size.height * i / 3),
+                                    Offset(size.width, size.height * i / 3),
+                                    1f,
+                                )
+                            }
+                        }
                 }
-                if (latest != null)
-                    Box(
-                        Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).clickable {
-                            onPhoto(latest!!)
+                if (pro) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                    ) {
+                        TextButton(onClick = { grid = !grid }) {
+                            Text(
+                                "网格 ${if(grid)"开"else"关"}",
+                                fontSize = 10.sp,
+                                color = Color(0xff9fb2c8),
+                            )
+                        }
+                        TextButton(onClick = { peak = !peak }) {
+                            Text(
+                                "峰值 ${if(peak)"开"else"关"}",
+                                fontSize = 10.sp,
+                                color = Color(0xff9fb2c8),
+                            )
+                        }
+                        TextButton(onClick = { zebra = !zebra }) {
+                            Text(
+                                "过曝 ${if(zebra)"开"else"关"}",
+                                fontSize = 10.sp,
+                                color = Color(0xff9fb2c8),
+                            )
+                        }
+                    }
+                    Canvas(Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 30.dp)) {
+                        val max = (histogram.maxOrNull() ?: 1).coerceAtLeast(1)
+                        histogram.forEachIndexed { index, value ->
+                            val x = index * size.width / 64
+                            drawLine(
+                                Color(0xff7b8fa6),
+                                Offset(x, size.height),
+                                Offset(x, size.height - value.toFloat() / max * size.height),
+                                size.width / 70,
+                            )
+                        }
+                    }
+                    Text(
+                        "辅助分析基于取景预览，不代表RAW数据",
+                        fontSize = 8.sp,
+                        color = Color(0xff586473),
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
+                }
+                LazyRow(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(
+                        properties.filter { it.writable }.take(if (pro) 12 else 4),
+                        key = { it.code },
+                    ) { item ->
+                        Column(
+                            Modifier.clip(RoundedCornerShape(11.dp))
+                                .background(Color(0xff1c2029))
+                                .clickable { property = item }
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Text(item.name, fontSize = 8.sp, color = Color(0xff69788b))
+                            Text(
+                                item.label,
+                                fontSize = 12.sp,
+                                color = Color.White,
+                                modifier = Modifier.padding(top = 5.dp),
+                            )
+                        }
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 36.dp, vertical = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    TextButton(
+                        onClick = {
+                            timer =
+                                when (timer) {
+                                    0 -> 3
+                                    3 -> 10
+                                    else -> 0
+                                }
                         }
                     ) {
-                        AsyncImage(
-                            model = latest!!.displayUri,
-                            contentDescription = "查看拍后照片",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop,
+                        Text(
+                            if (timer == 0) "无延时" else "${timer}s",
+                            fontSize = 12.sp,
+                            color = Color(0xff8d9caf),
                         )
                     }
-                else
-                    IconButton(
-                        onClick = {
-                            runtime.stopLive()
-                            runtime.startLive()
-                        }
+                    Box(
+                        Modifier.size(74.dp)
+                            .semantics { contentDescription = "拍摄" }
+                            .border(2.dp, Color.White, CircleShape)
+                            .padding(6.dp)
+                            .clip(CircleShape)
+                            .background(if (shooting) Color(0xff8799a8) else Color.White)
+                            .clickable(enabled = !shooting || countdown > 0) {
+                                if (countdown > 0) {
+                                    runtime.cancelCountdown()
+                                    shooting = false
+                                } else {
+                                    shooting = true
+                                    scope.launch {
+                                        runtime.capture(timer).join()
+                                        shooting = false
+                                    }
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Outlined.Refresh, "重新打开取景", tint = Color(0xff8d9caf))
+                        if (countdown > 0)
+                            Text(countdown.toString(), fontSize = 29.sp, color = Brand)
+                        else if (shooting)
+                            CircularProgressIndicator(
+                                Modifier.size(25.dp),
+                                strokeWidth = 2.dp,
+                                color = Brand,
+                            )
                     }
-            }
-            if (cameraNotice.isNotBlank())
-                Text(
-                    cameraNotice,
-                    color = Color(0xff9ba9bb),
-                    fontSize = 10.sp,
-                    maxLines = 2,
-                    modifier = Modifier.padding(horizontal = 25.dp).padding(bottom = 9.dp),
-                )
-        }
-    }
-    property?.let { item ->
-        AlertDialog(
-            onDismissRequest = { property = null },
-            title = { Text(item.name) },
-            text = {
-                LazyColumn {
-                    items(item.choices) { choice ->
-                        TextButton(
-                            onClick = {
-                                runtime.setProperty(item, choice.value)
-                                property = null
+                    if (latest != null)
+                        Box(
+                            Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).clickable {
+                                onPhoto(latest!!)
                             }
                         ) {
-                            Text(choice.label)
+                            AsyncImage(
+                                model = latest!!.displayUri,
+                                contentDescription = "查看拍后照片",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
+                    else
+                        IconButton(
+                            onClick = {
+                                runtime.stopLive()
+                                runtime.startLive()
+                            }
+                        ) {
+                            Icon(Icons.Outlined.Refresh, "重新打开取景", tint = Color(0xff8d9caf))
+                        }
+                }
+                if (cameraNotice.isNotBlank())
+                    Text(
+                        cameraNotice,
+                        color = Color(0xff9ba9bb),
+                        fontSize = 10.sp,
+                        maxLines = 2,
+                        modifier = Modifier.padding(horizontal = 25.dp).padding(bottom = 9.dp),
+                    )
+            }
+        }
+        property?.let { item ->
+            AlertDialog(
+                onDismissRequest = { property = null },
+                title = { Text(item.name) },
+                text = {
+                    LazyColumn {
+                        items(item.choices) { choice ->
+                            TextButton(
+                                onClick = {
+                                    runtime.setProperty(item, choice.value)
+                                    property = null
+                                }
+                            ) {
+                                Text(choice.label)
+                            }
                         }
                     }
-                }
-            },
-            confirmButton = { TextButton(onClick = { property = null }) { Text("关闭") } },
-        )
+                },
+                confirmButton = { TextButton(onClick = { property = null }) { Text("关闭") } },
+            )
+        }
     }
 }
 

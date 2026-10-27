@@ -5,18 +5,11 @@
 <p align="center"><a href="README.md">中文</a> · <strong>English</strong> · <a href="README.ja.md">日本語</a></p>
 <p align="center"><img alt="Android 8.0+" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white"> <a href="LICENSE"><img alt="GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue"></a> <img alt="Development preview" src="https://img.shields.io/badge/Status-Development_Preview-D4A34C"></p>
 
-**From FTP transfers to camera control, photo selection, and delivery.** FrameLink is an open-source Android camera assistant built around your photographs. It brings camera workflows and file transfer together while keeping local tools available without an account. Cloud client proofing is optional.
+FrameLink is an Android app for FTP transfers, camera browsing, remote capture, and photo selection. Local tools work without an account. Remote client proofing requires a configured or self-hosted cloud server.
 
 [Screenshots](#screenshots) · [Features](#features) · [Getting started](#getting-started) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/Aenlly/Aenlly-FTP/issues)
 
-> **0.1.2 development preview.** Camera, FTP, library, and selection workflows are implemented; see the [validation report](docs/IMPLEMENTATION.md) for local and emulator evidence. Sony A7C II is the first target camera. Real-camera wireless, Bluetooth, and performance qualification are still pending. This is not a certified compatibility or app-store release.
-
-## What you can do
-
-- **Select before importing:** browse camera photographs, distinguish previews from originals, and download JPEG, RAW, or all files as needed.
-- **Review while shooting:** run the phone's FTP receiver, view incoming photographs in the library, and inspect transfer progress and failures.
-- **Take group photos or self-portraits:** choose live-view remote capture or the lightweight Bluetooth shutter workflow.
-- **Work with clients:** keep on-site client selections separate, or use the optional web service for selection rounds, confirmation, and final delivery.
+> **0.1.2 development build.** Local and emulator results are in the [test report](docs/IMPLEMENTATION.md). Sony A7C II is the first target; real-camera wireless, Bluetooth, speed, and battery tests are still pending.
 
 ## Screenshots
 
@@ -127,4 +120,4 @@ Current priorities are A7C II hardware and background stability, FTPS and system
 
 Licensed under [GPL-3.0](LICENSE). Aenlly's original attribution, history, and license are preserved; the earlier implementation is in `third_party/aenlly-ftp/`. Thanks to [alpha2go](https://github.com/Knallli/alpha2go), [α-Remote](https://github.com/Staacks/alpharemote), [SonnyLink](https://github.com/XiaoQAQ10086/SonnyLink), Apache Commons Net, Haze, and their contributors. Versions and usage are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-If the project is useful to you, consider starring it, sharing it, or contributing feedback from a real photography session.
+If you can test with a camera, please include its model and firmware, your phone system, and the connection method. Reports of what failed are useful too.

@@ -5,18 +5,11 @@
 <p align="center"><strong>中文</strong> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a></p>
 <p align="center"><img alt="Android 8.0+" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white"> <a href="LICENSE"><img alt="GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue"></a> <img alt="开发预览" src="https://img.shields.io/badge/Status-Development_Preview-D4A34C"></p>
 
-**从FTP收发，到连接相机、看图选片与成片交付。** FrameLink是一款照片优先的开源Android相机助手，保留FTP工具的实用性，把拍摄与照片管理放进同一套工作流程。本地核心功能无需登录，云端客户选片按需使用。
+FrameLink是一个Android相机工具，支持FTP收发、相机照片浏览、遥控拍摄和选片。本地功能不需要账号；客户远程选片需要配置或自行部署云服务。
 
 [界面预览](#界面预览) · [功能入口](#功能入口) · [快速开始](#快速开始) · [参与贡献](CONTRIBUTING.md) · [反馈问题](https://github.com/Aenlly/Aenlly-FTP/issues)
 
-> 当前为 **0.1.2开发预览**。相机、FTP、图库与选片流程已实现，本地与模拟器验证记录见[实施报告](docs/IMPLEMENTATION.md)。首个目标机型为Sony A7C II，实体机无线、蓝牙和真实性能仍待验收；这不是正式兼容认证或商店发布版本。
-
-## 适合怎样使用
-
-- **拍完先挑，再导入**：浏览相机照片，区分预览和原片，选择需要的JPEG、RAW或全部文件。
-- **现场边拍边看**：启动手机FTP接收，相机上传后自动整理到图库，随时查看进度和失败原因。
-- **自拍与合影**：按场景选择实时取景遥控或轻量蓝牙快门。
-- **客户选片与交付**：现场独立记录客户选择，或使用可选云服务，通过手机网页完成选片、确认与成片下载。
+> 当前是 **0.1.2开发测试版**。本地和模拟器测试见[验证记录](docs/IMPLEMENTATION.md)。先适配Sony A7C II，真机无线、蓝牙、速度和耗电还要实测。
 
 ## 界面预览
 
@@ -123,4 +116,4 @@ scripts/          本地构建、测试与开发工具
 
 项目采用[GPL-3.0](LICENSE)。保留Aenlly的原始署名、历史与许可证；早期实现位于`third_party/aenlly-ftp/`。感谢[alpha2go](https://github.com/Knallli/alpha2go)、[α-Remote](https://github.com/Staacks/alpharemote)、[SonnyLink](https://github.com/XiaoQAQ10086/SonnyLink)、Apache Commons Net和Haze等开源项目，固定版本与使用方式见[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-如果项目对你有帮助，欢迎Star、分享，或带着一次真实拍摄体验参与改进。
+有相机的话，欢迎按清单帮忙测一下。型号、固件、手机系统和连接方式写全，成功或失败的记录都很有用。

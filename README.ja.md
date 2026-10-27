@@ -5,18 +5,11 @@
 <p align="center"><a href="README.md">中文</a> · <a href="README.en.md">English</a> · <strong>日本語</strong></p>
 <p align="center"><img alt="Android 8.0以上" src="https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white"> <a href="LICENSE"><img alt="GPL-3.0" src="https://img.shields.io/badge/License-GPL--3.0-blue"></a> <img alt="開発プレビュー" src="https://img.shields.io/badge/Status-Development_Preview-D4A34C"></p>
 
-**FTP転送から、カメラ接続、写真選定、納品まで。** FrameLinkは写真を中心に設計した、オープンソースのAndroidカメラアシスタントです。FTPツールの実用性を保ちながら、撮影と写真管理を一つの流れにまとめます。ローカル機能はログイン不要で、クラウドによる顧客向け写真セレクトは必要に応じて利用できます。
+FrameLinkは、FTP送受信、カメラ内の写真閲覧、リモート撮影、写真選定をまとめたAndroidアプリです。ローカル機能にアカウントは不要です。顧客向けの遠隔写真セレクトには、クラウドサーバーの設定または自己ホストが必要です。
 
 [スクリーンショット](#スクリーンショット) · [主な機能](#主な機能) · [使い始める](#使い始める) · [開発への参加](CONTRIBUTING.md) · [問題の報告](https://github.com/Aenlly/Aenlly-FTP/issues)
 
-> 現在は **0.1.2開発プレビュー** です。カメラ、FTP、ライブラリ、写真選定の機能を実装しており、ローカルとエミュレーターでの検証内容は[検証レポート](docs/IMPLEMENTATION.md)に記録しています。最初の対応目標はSony A7C IIですが、実機の無線接続、Bluetooth、実際の転送性能は未検証です。正式な互換性認定やストア公開版ではありません。
-
-## こんな場面で
-
-- **取り込む前に写真を選ぶ**：カメラ内の写真を閲覧し、プレビューと原本を区別して、必要なJPEG、RAW、または全ファイルをダウンロードします。
-- **撮りながら確認する**：スマートフォンでFTP受信を開始し、届いた写真をライブラリで確認します。転送の進捗と失敗理由も表示します。
-- **自撮りや集合写真**：ライブビューによるリモート撮影と、軽量なBluetoothシャッターを使い分けます。
-- **顧客と写真を選ぶ**：現場で顧客の選択を別に記録するか、任意のWebサービスで選定、確認、仕上がり写真の納品を行います。
+> 現在は **0.1.2開発テスト版** です。ローカルとエミュレーターの結果は[テスト記録](docs/IMPLEMENTATION.md)をご覧ください。最初の対象はSony A7C IIです。実機での無線接続、Bluetooth、速度、電池消費は今後確認します。
 
 ## スクリーンショット
 
@@ -127,4 +120,4 @@ scripts/          ローカルビルド、テスト、開発ツール
 
 [GPL-3.0](LICENSE)で公開しています。Aenllyの元の署名、履歴、ライセンスを保持し、初期の実装は`third_party/aenlly-ftp/`に保存しています。[alpha2go](https://github.com/Knallli/alpha2go)、[α-Remote](https://github.com/Staacks/alpharemote)、[SonnyLink](https://github.com/XiaoQAQ10086/SonnyLink)、Apache Commons Net、Hazeと各貢献者に感謝します。固定バージョンと利用内容は[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)をご覧ください。
 
-役に立ったら、Starや紹介、実際の撮影体験に基づくフィードバックで開発に参加していただけるとうれしいです。
+実機で試せる方は、カメラの型番とファームウェア、スマートフォンのOS、接続方法を添えて結果を教えてください。動かなかった場合の記録も役立ちます。

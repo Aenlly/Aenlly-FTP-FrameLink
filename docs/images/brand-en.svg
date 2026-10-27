@@ -9,8 +9,8 @@
   </g>
   <g font-family="system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
     <text x="178" y="95" font-size="36" font-weight="650" fill="#1F252C">Aenlly-FTP · FrameLink</text>
-    <text x="179" y="133" font-size="22" fill="#526777">From your camera to your favorite photographs</text>
-    <text x="180" y="165" font-size="12" letter-spacing="2" fill="#68717D">ANDROID CAMERA ASSISTANT / OPEN SOURCE</text>
+    <text x="179" y="133" font-size="22" fill="#526777">Camera tools for Android</text>
+    <text x="180" y="165" font-size="12" letter-spacing="2" fill="#68717D">FTP · PTP/IP · BLUETOOTH · LOCAL LIBRARY</text>
     <rect x="930" y="62" width="140" height="30" rx="15" fill="#E2E8EC"/>
     <text x="1000" y="82" text-anchor="middle" font-size="12" font-weight="600" fill="#526777">0.1.2 DEV PREVIEW</text>
   </g>

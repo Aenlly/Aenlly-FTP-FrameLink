@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.Flow
 interface PhotoDao {
     @Query("SELECT * FROM photos ORDER BY capturedAt DESC, id") fun observe(): Flow<List<Photo>>
 
+    @Query("SELECT * FROM photos") suspend fun all(): List<Photo>
+
     @Query("SELECT * FROM photos WHERE id=:id") suspend fun find(id: String): Photo?
 
     @Query("SELECT * FROM photos WHERE id IN (:ids)")
@@ -20,7 +22,7 @@ interface PhotoDao {
 
     @Query("SELECT * FROM photos WHERE sourceKey=:key") suspend fun bySource(key: String): Photo?
 
-    @Query("SELECT * FROM photos WHERE projectId=:id ORDER BY capturedAt")
+    @Query("SELECT * FROM photos WHERE projectId=:id AND localHidden=0 ORDER BY capturedAt")
     suspend fun project(id: String): List<Photo>
 
     @Upsert suspend fun save(photo: Photo)
@@ -39,6 +41,8 @@ interface PhotoDao {
 @Dao
 interface TaskDao {
     @Query("SELECT * FROM tasks ORDER BY createdAt DESC") fun observe(): Flow<List<TransferTask>>
+
+    @Query("SELECT * FROM tasks") suspend fun all(): List<TransferTask>
 
     @Query("SELECT * FROM tasks WHERE id=:id") suspend fun find(id: String): TransferTask?
 
@@ -66,7 +70,7 @@ interface TaskDao {
 
 @Database(
     entities = [Photo::class, TransferTask::class, LocalReview::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class LocalDatabase : RoomDatabase() {
@@ -77,6 +81,13 @@ abstract class LocalDatabase : RoomDatabase() {
     abstract fun reviews(): LocalReviewDao
 
     companion object {
+        val MIGRATION_2_3 =
+            object : androidx.room.migration.Migration(2, 3) {
+                override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    db.execSQL("ALTER TABLE photos ADD COLUMN localHidden INTEGER NOT NULL DEFAULT 0")
+                }
+            }
+
         val MIGRATION_1_2 =
             object : androidx.room.migration.Migration(1, 2) {
                 override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {

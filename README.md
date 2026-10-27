@@ -9,7 +9,7 @@ FrameLink是一个Android相机工具，支持FTP收发、相机照片浏览、�
 
 [界面预览](#界面预览) · [功能入口](#功能入口) · [快速开始](#快速开始) · [参与贡献](CONTRIBUTING.md) · [反馈问题](https://github.com/Aenlly/Aenlly-FTP-FrameLink/issues)
 
-> 当前是 **0.1.2开发测试版**。本地和模拟器测试见[验证记录](docs/IMPLEMENTATION.md)。先适配Sony A7C II，真机无线、蓝牙、速度和耗电还要实测。
+> 当前是 **0.1.3开发测试版**。本地和模拟器测试见[验证记录](docs/IMPLEMENTATION.md)。先适配Sony A7C II，真机无线、蓝牙、速度和耗电还要实测。
 
 ## 界面预览
 
@@ -31,7 +31,7 @@ FrameLink是一个Android相机工具，支持FTP收发、相机照片浏览、�
 | 相机 → FTP 接收 | 手机作为接收端；自定义端口、账号、保存目录和独立压缩副本 |
 | 相机 → FTP 客户端 | 连接FTP或显式FTPS服务器，浏览目录、新建文件夹、上传与多选下载 |
 | 相机 → 快速快门 / 本机导入 | 蓝牙轻量遥控；从手机或读卡器导入照片 |
-| 图库 | 收藏、暂选、排除、大图、双图比较、连拍分组、现场客户选片和系统分享 |
+| 图库 | 收藏、暂选、排除、大图、双图比较、连拍分组、现场客户选片、系统分享；仅移出图库或连同本机文件删除 |
 | 项目 | 本地客户选择独立保存；可选云端分享、选片轮次、确认与成片关联 |
 | 传输 | 查看持久化任务、字节进度、错误原因、取消与重试，打开或另存已保存文件 |
 
@@ -55,11 +55,11 @@ python3 scripts/bootstrap.py
 sh scripts/build-android.sh
 ```
 
-输出：`artifacts/FrameLink-0.1.2-debug.apk`。当前自动工具准备脚本面向macOS Apple Silicon；其他环境需自行准备Go、Android SDK与NDK，见[Android构建说明](android/README.md)和[协议桥](camera-bridge/README.md)。签名为开发证书，正式签名与发布单独安排。
+输出：`artifacts/FrameLink-0.1.3-debug.apk`。当前自动工具准备脚本面向macOS Apple Silicon；其他环境需自行准备Go、Android SDK与NDK，见[Android构建说明](android/README.md)和[协议桥](camera-bridge/README.md)。签名为开发证书，正式签名与发布单独安排。
 
 ### 连接与传输
 
-1. **浏览或遥控相机**：在机身开启PC远程Wi-Fi，按机身信息填写IP与访问认证信息，操作见[连接指南](android/README.md#连接相机)。
+1. **浏览或遥控相机**：在机身开启电脑遥控和访问身份验证，首次填写IP、账号和密码。App自动读取指纹，确认后连接并记住信息；密码支持显示或隐藏，操作见[连接指南](android/README.md#连接相机)。
 2. **FTP边拍边传**：让设备加入同一Wi-Fi或手机热点，在“FTP 接收”选择手机地址并启动服务，将地址、端口、账号和密码填入机身FTP设置。
 3. **连接已有文件服务器**：打开“FTP 客户端”，填写服务器信息；选中文件下载，或从系统文件选择器上传。
 4. **只管理本机照片**：直接使用“本机导入”和图库，不需要先连接相机或登录。

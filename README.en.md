@@ -9,7 +9,7 @@ FrameLink is an Android app for FTP transfers, camera browsing, remote capture, 
 
 [Screenshots](#screenshots) · [Features](#features) · [Getting started](#getting-started) · [Contributing](CONTRIBUTING.md) · [Issues](https://github.com/Aenlly/Aenlly-FTP-FrameLink/issues)
 
-> **0.1.2 development build.** Local and emulator results are in the [test report](docs/IMPLEMENTATION.md). Sony A7C II is the first target; real-camera wireless, Bluetooth, speed, and battery tests are still pending.
+> **0.1.3 development build.** Local and emulator results are in the [test report](docs/IMPLEMENTATION.md). Sony A7C II is the first target; real-camera wireless, Bluetooth, speed, and battery tests are still pending.
 
 ## Screenshots
 
@@ -33,7 +33,7 @@ The app currently uses Chinese interface labels. The README is available in Chin
 | Camera → FTP 接收 | Receive uploads on the phone; configure port, account, destination, and separate compressed copies |
 | Camera → FTP 客户端 | Browse FTP or explicit FTPS servers, create folders, upload files, and download selections |
 | Camera → 快速快门 / 本机导入 | Bluetooth shutter; import from the phone or a card reader |
-| Library → 图库 | Favorites, picks, rejects, full-screen viewing, comparison, burst grouping, on-site client selection, and system sharing |
+| Library → 图库 | Favorites, picks, rejects, full-screen viewing, comparison, burst grouping, on-site client selection, and sharing; remove entries or delete their local files |
 | Projects → 项目 | Independent local client choices; optional web sharing, selection rounds, confirmation, and final-file association |
 | Transfers → 传输 | Persistent tasks, byte progress, error details, cancellation, retry, opening, and saving files |
 
@@ -57,11 +57,11 @@ python3 scripts/bootstrap.py
 sh scripts/build-android.sh
 ```
 
-Output: `artifacts/FrameLink-0.1.2-debug.apk`. The automatic tool setup currently targets macOS Apple Silicon. Other environments need their own Go, Android SDK, and NDK setup; see the [Android guide](android/README.md) and [protocol bridge](camera-bridge/README.md). The APK uses a development certificate. Production signing and distribution are separate steps.
+Output: `artifacts/FrameLink-0.1.3-debug.apk`. The automatic tool setup currently targets macOS Apple Silicon. Other environments need their own Go, Android SDK, and NDK setup; see the [Android guide](android/README.md) and [protocol bridge](camera-bridge/README.md). The APK uses a development certificate. Production signing and distribution are separate steps.
 
 ### Connect and transfer
 
-1. **Browse or control a camera:** enable PC Remote Wi-Fi on the camera and enter its IP and authentication details. See the [connection guide](android/README.md).
+1. **Browse or control a camera:** enable PC Remote and Access Authentication. Enter the IP, username, and password once. The app reads the fingerprint for confirmation and remembers the connection; the password field has a visibility toggle. See the [connection guide](android/README.md).
 2. **Receive photographs over FTP:** put both devices on the same Wi-Fi network or connect the camera to the phone's hotspot. Start “FTP 接收” and enter the displayed address, port, username, and password in the camera's FTP settings.
 3. **Use an existing file server:** open “FTP 客户端”, configure the server, select remote files to download, or upload using the system file picker.
 4. **Use local photographs only:** open “本机导入” and the library without connecting a camera or signing in.

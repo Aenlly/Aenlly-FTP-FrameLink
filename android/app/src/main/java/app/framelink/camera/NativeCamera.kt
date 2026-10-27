@@ -17,8 +17,24 @@ class NativeCamera(private val context: Context) {
     private val session = Bridge.newSession()
 
     fun connect(config: ConnectionConfig): CameraInfo {
+        session.setNetworkBinder(cameraNetwork(config.host))
+        return Json.decode(session.connect(Json.encode(config)))
+    }
+
+    fun inspectIdentity(host: String): CameraIdentity {
+        val probe = Bridge.newSession()
+        try {
+            probe.setNetworkBinder(cameraNetwork(host))
+            return Json.decode(probe.probeIdentity(host))
+        } finally {
+            probe.close()
+        }
+    }
+
+    private fun cameraNetwork(host: String): NetworkBinder? {
+        require(android.util.Patterns.IP_ADDRESS.matcher(host).matches()) { "请输入相机的局域网IP地址" }
         val manager = context.getSystemService(ConnectivityManager::class.java)
-        val target = InetAddress.getByName(config.host).address
+        val target = InetAddress.getByName(host).address
         val network =
             manager.allNetworks.firstOrNull { network ->
                 val caps = manager.getNetworkCapabilities(network)
@@ -36,8 +52,7 @@ class NativeCamera(private val context: Context) {
                         }
                     }
             }
-        session.setNetworkBinder(
-            if (network == null) null
+        return if (network == null) null
             else
                 object : NetworkBinder {
                     override fun bindSocket(fd: Long) {
@@ -46,8 +61,6 @@ class NativeCamera(private val context: Context) {
                         }
                     }
                 }
-        )
-        return Json.decode(session.connect(Json.encode(config)))
     }
 
     fun page(slot: Int, cursor: Long): CameraPage =

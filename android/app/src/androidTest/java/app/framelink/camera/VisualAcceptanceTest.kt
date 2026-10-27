@@ -77,6 +77,12 @@ class VisualAcceptanceTest {
         compose.onNodeWithContentDescription("选择 ${images[1].name}").performClick()
         compose.onNodeWithText("已选 2").assertIsDisplayed()
         screenshot("selection")
+        compose.onNodeWithText("移除").performClick()
+        compose.waitUntil(10000) { !compose.onNodeWithText("确认移除").fetchSemanticsNode().config.contains(SemanticsProperties.Disabled) }
+        compose.onNodeWithText("仅从图库移除").assertIsDisplayed()
+        compose.onNodeWithText("删除本机文件并移除").assertIsDisplayed()
+        screenshot("removal")
+        compose.onNodeWithText("取消").performClick()
         compose.onNodeWithText("对比").performClick()
         compose.onNodeWithText("双图对比").assertIsDisplayed()
         screenshot("compare")

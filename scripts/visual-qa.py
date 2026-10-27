@@ -37,6 +37,8 @@ try:
         elif variant == 'gesture':
             shell('cmd', 'overlay', 'enable-exclusive', '--category', 'com.android.internal.systemui.navbar.gestural')
         result = subprocess.run([sys.executable, str(root / 'scripts/instrument.py'), 'visual', variant], cwd=root)
+        if result.returncode == 0 and variant == 'small':
+            result = subprocess.run([sys.executable, str(root / 'scripts/instrument.py'), 'identity', variant], cwd=root)
         shots = '/sdcard/Android/data/app.framelink.camera/files/qa-shots/'
         names = subprocess.check_output(adb + ['shell', 'ls', shots], text=True).splitlines()
         for name in names:

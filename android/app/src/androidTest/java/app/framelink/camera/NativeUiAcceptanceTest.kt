@@ -29,12 +29,15 @@ class NativeUiAcceptanceTest {
         try {
             compose.onNodeWithText("相机", useUnmergedTree = true).performClick()
             compose.onNodeWithText("连接相机").performClick()
+            val authentication = compose.onNodeWithContentDescription("使用相机访问身份验证")
+            if (authentication.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.ToggleableState] == androidx.compose.ui.state.ToggleableState.On)
+                authentication.performScrollTo().performClick()
             compose
                 .onNode(hasSetTextAction() and hasText("相机IP地址"))
                 .performTextReplacement("127.0.0.1")
             compose.onNode(hasSetTextAction() and hasText("相机IP地址")).performImeAction()
             compose.waitForIdle()
-            compose.onNodeWithText("连接并读取相机能力").performScrollTo().performClick()
+            compose.onNodeWithTag("camera-connect-action").performClick()
             try {
                 compose.waitUntil(30000) { runtime.camera.value.info != null }
             } catch (error: Throwable) {

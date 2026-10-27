@@ -23,6 +23,7 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +32,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /** 真实相机状态、照片索引和可恢复任务；界面不直接调用协议 */
@@ -50,6 +52,7 @@ class CameraRuntime(
         )
     val cloud = CloudClient(settings)
     val reviews = LocalReviewRepository(context, database)
+    val photoRemoval = PhotoRemovalRepository(context, database)
     val native = NativeCamera(context)
     val photos = database.photos().observe()
     val tasks = database.tasks().observe()
@@ -72,6 +75,15 @@ class CameraRuntime(
     private var liveJob: Job? = null
     private var captureJob: Job? = null
     private val connectionGeneration = AtomicLong()
+    val cameraIdentityPrompt = MutableStateFlow<CameraIdentityPrompt?>(null)
+    @Volatile private var pendingCameraConnection: PendingCameraConnection? = null
+
+    private data class PendingCameraConnection(
+        val id: String,
+        val generation: Long,
+        val config: ConnectionConfig,
+        val identity: CameraIdentity,
+    )
     private val previewLocks = ConcurrentHashMap<String, Mutex>()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     private var cursor = 0L
@@ -154,10 +166,12 @@ class CameraRuntime(
         runCatching { Json.decode<ConnectionConfig>(settings.get("camera.config")) }
             .getOrDefault(ConnectionConfig())
 
-    fun connect(input: ConnectionConfig) =
-        scope.launch {
-            val generation = connectionGeneration.incrementAndGet()
-            mutableCamera.value = CameraStatus(connecting = true, message = "正在连接相机，请保留相机网络连接")
+    fun connect(input: ConnectionConfig): Job {
+        val generation = connectionGeneration.incrementAndGet()
+        pendingCameraConnection = null
+        cameraIdentityPrompt.value = null
+        mutableCamera.value = CameraStatus(connecting = true, message = "正在连接相机，请保留相机网络连接")
+        return scope.launch {
             try {
                 startService()
                 val guid =
@@ -167,7 +181,25 @@ class CameraRuntime(
                         }
                     }
                 settings.put("camera.guid", guid)
-                val config = input.copy(guid = guid)
+                var config = input.copy(guid = guid)
+                if (config.user.isNotBlank()) {
+                    mutableCamera.value = CameraStatus(connecting = true, message = "正在读取相机身份")
+                    val identity = native.inspectIdentity(config.host)
+                    if (connectionGeneration.get() != generation) return@launch
+                    val trusted =
+                        settings.get("camera.trust.${MediaFiles.key(config.host)}").ifBlank {
+                            savedConnection().takeIf { it.host == config.host }?.fingerprint.orEmpty()
+                        }
+                    val expected = config.fingerprint.ifBlank { trusted }
+                    if (!sameCameraFingerprint(expected, identity.fingerprint)) {
+                        val id = UUID.randomUUID().toString()
+                        pendingCameraConnection = PendingCameraConnection(id, generation, config, identity)
+                        cameraIdentityPrompt.value = CameraIdentityPrompt(id, identity, expected)
+                        mutableCamera.value = CameraStatus(message = "请确认相机身份后继续连接")
+                        return@launch
+                    }
+                    config = config.copy(fingerprint = identity.fingerprint)
+                }
                 val info = native.connect(config)
                 settings.put("camera.config", Json.encode(config))
                 currentCameraIds.value = emptySet()
@@ -186,14 +218,24 @@ class CameraRuntime(
                 if (connectionGeneration.get() == generation) {
                     android.util.Log.e("FrameLink", "Camera connection failed", error)
                     native.close()
-                    mutableCamera.value = CameraStatus(message = error.message ?: "连接未完成")
+                    mutableCamera.value = CameraStatus(message = cameraConnectionMessage(error))
                     notice.value = mutableCamera.value.message
                 }
             }
         }
+    }
+
+    fun confirmCameraIdentity(id: String) {
+        val pending = pendingCameraConnection ?: return
+        if (pending.id != id || pending.generation != connectionGeneration.get()) return
+        settings.put("camera.trust.${MediaFiles.key(pending.config.host)}", pending.identity.fingerprint)
+        connect(pending.config.copy(fingerprint = pending.identity.fingerprint))
+    }
 
     fun disconnect() {
         connectionGeneration.incrementAndGet()
+        pendingCameraConnection = null
+        cameraIdentityPrompt.value = null
         cancelCountdown()
         stopLive()
         native.close()
@@ -274,6 +316,7 @@ class CameraRuntime(
                                     "${mutableCamera.value.info?.id}:${item.groupId}"
                                 else item.id,
                                 existing?.published ?: false,
+                                existing?.localHidden ?: false,
                             )
                         }
                 database.photos().saveAll(records)
@@ -330,6 +373,15 @@ class CameraRuntime(
     fun mark(photo: Photo, mark: PhotoMark) =
         scope.launch { database.photos().mark(photo.id, mark.name) }
 
+    suspend fun removePhotos(plan: PhotoRemovalPlan, deleteFiles: Boolean): PhotoRemovalResult =
+        queue.withLock {
+            withContext(NonCancellable) {
+                val result = photoRemoval.remove(plan, deleteFiles)
+                if (lastCapture.value?.id in result.removedIds) lastCapture.value = null
+                result
+            }
+        }
+
     fun importUris(uris: List<Uri>) =
         scope.launch {
             for (uri in uris) {
@@ -352,6 +404,7 @@ class CameraRuntime(
         scope.launch {
             for (id in ids) {
                 val photo = database.photos().find(id) ?: continue
+                if (photo.localHidden) database.photos().save(photo.copy(localHidden = false))
                 if (photo.downloadFiles(format).isEmpty()) {
                     notice.value = "${photo.name}没有所选格式"
                     continue
@@ -650,7 +703,8 @@ class CameraRuntime(
         check(part.renameTo(output)) { "文件保存失败，已保留暂存文件" }
         val hash = MediaFiles.digest(output.inputStream())
         val id = "local:$hash"
-        if (database.photos().find(id) == null) {
+        val existing = database.photos().find(id)
+        if (existing == null || (existing.localHidden && !existing.imported)) {
             val local =
                 runCatching { MediaFiles.publish(context, output, name).toString() }
                     .getOrDefault(Uri.fromFile(output).toString())
@@ -672,9 +726,17 @@ class CameraRuntime(
                         )
                     ),
                 )
-            database.photos().save(photo)
-            runCatching { ensurePreview(photo) }
-        } else output.delete()
+            val imported = if (existing == null) photo else photo.copy(
+                mark = existing.mark,
+                projectId = existing.projectId,
+                burstKey = existing.burstKey,
+            )
+            database.photos().save(imported)
+            runCatching { ensurePreview(imported) }
+        } else {
+            if (existing.localHidden) database.photos().save(existing.copy(localHidden = false))
+            output.delete()
+        }
         progress(task, output.length(), output.length())
     }
 
@@ -759,7 +821,7 @@ class CameraRuntime(
         }
         if (!CameraFile(name = name).image) return
         val existing = database.photos().bySource(key)
-        if (existing == null) {
+        if (existing == null || (existing.localHidden && !existing.imported)) {
             val uri =
                 runCatching { MediaFiles.publish(context, file, name) }
                     .getOrElse { Uri.fromFile(file) }
@@ -782,8 +844,11 @@ class CameraRuntime(
                     ),
                     published = uri.scheme == "content",
                 )
-            database.photos().save(photo)
-            runCatching { ensurePreview(photo) }
+            val imported = if (existing == null) photo else photo.copy(mark = existing.mark, projectId = existing.projectId, burstKey = existing.burstKey)
+            database.photos().save(imported)
+            runCatching { ensurePreview(imported) }
+        } else if (existing.localHidden && task.kind == TransferKind.FTP_DOWNLOAD.name) {
+            database.photos().save(existing.copy(localHidden = false))
         }
         if (settings.get("ftp.compress") == "true" && !payload.has("compressedUri")) {
             val formats =

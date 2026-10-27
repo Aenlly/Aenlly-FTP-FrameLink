@@ -19,4 +19,4 @@ alpha2go测试工具兼容改动：`ptpiptest.Options`增加可选JPEG预览数�
 
 ## 文档中的摄影作品
 
-`docs/images/`中的运行截图使用授权摄影样片。照片版权与代码的GPL许可分别适用，照片继续按[Unsplash License](https://unsplash.com/license)使用；作者、来源、变换方式和核验记录见[VISUAL_QA.md](docs/VISUAL_QA.md)。样片原文件不随App或源码归档预装
+`docs/images/`中含有摄影作品的运行截图使用授权样片。照片版权与代码的GPL许可分别适用，照片继续按[Unsplash License](https://unsplash.com/license)使用；作者、来源、变换方式和核验记录见[VISUAL_QA.md](docs/VISUAL_QA.md)。样片原文件不随App或源码归档预装

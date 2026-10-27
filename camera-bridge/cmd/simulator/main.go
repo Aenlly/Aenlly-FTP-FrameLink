@@ -24,6 +24,7 @@ import (
 
 func main() {
 	dir := flag.String("dir", "../artifacts/fixtures", "synthetic QA image directory")
+	withSSH := flag.Bool("ssh", false, "enable loopback-only SSH identity acceptance fixture")
 	flag.Parse()
 	if err := os.MkdirAll(*dir, 0700); err != nil {
 		panic(err)
@@ -102,6 +103,36 @@ func main() {
 		panic(err)
 	}
 	defer server.Close()
+	if *withSSH {
+		sshServer, err := ptpiptest.StartSSH("qa-camera", "test-password-123", server.Addr())
+		if err != nil {
+			panic(err)
+		}
+		defer sshServer.Close()
+		sshListener, err := net.Listen("tcp", "127.0.0.1:16022")
+		if err != nil {
+			panic(err)
+		}
+		defer sshListener.Close()
+		go func() {
+			for {
+				incoming, err := sshListener.Accept()
+				if err != nil {
+					return
+				}
+				go proxyConnection(incoming, sshServer.Addr())
+			}
+		}()
+		statsListener, err := net.Listen("tcp", "127.0.0.1:16023")
+		if err != nil {
+			panic(err)
+		}
+		stats := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprint(w, sshServer.AuthAttempts.Load())
+		})}
+		go stats.Serve(statsListener)
+		defer stats.Close()
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:15740")
 	if err != nil {
 		panic(err)
@@ -132,4 +163,17 @@ func main() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	<-signals
+}
+
+func proxyConnection(incoming net.Conn, address string) {
+	defer incoming.Close()
+	upstream, err := net.Dial("tcp", address)
+	if err != nil {
+		return
+	}
+	defer upstream.Close()
+	finished := make(chan struct{}, 2)
+	go func() { io.Copy(upstream, incoming); finished <- struct{}{} }()
+	go func() { io.Copy(incoming, upstream); finished <- struct{}{} }()
+	<-finished
 }

@@ -34,6 +34,8 @@ data class LocalChoice(val selected: Boolean = false, val comment: String = "")
 
 @Dao
 interface LocalReviewDao {
+    @Query("SELECT * FROM local_reviews") suspend fun all(): List<LocalReview>
+
     @Query("SELECT * FROM local_reviews ORDER BY updatedAt DESC")
     fun observe(): Flow<List<LocalReview>>
 

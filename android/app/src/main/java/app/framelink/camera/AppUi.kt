@@ -134,6 +134,7 @@ fun FrameLink(runtime: CameraRuntime) {
     var filter by rememberSaveable { mutableStateOf("all") }
     var selection by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var viewer by rememberSaveable { mutableStateOf<String?>(null) }
+    var removing by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var localReview by rememberSaveable { mutableStateOf<String?>(null) }
     var compare by remember { mutableStateOf(false) }
     var live by rememberSaveable { mutableStateOf(false) }
@@ -370,6 +371,7 @@ fun FrameLink(runtime: CameraRuntime) {
                                 tab = Tab.TRANSFERS
                             },
                             onCompare = { compare = true },
+                            onRemove = { removing = it },
                             onUpload = {
                                 sheet =
                                     if (runtime.cloud.signedIn) Sheet.PROJECT_PICKER
@@ -459,6 +461,7 @@ fun FrameLink(runtime: CameraRuntime) {
                     runtime,
                     photo,
                     onClose = { viewer = null },
+                    onRemove = { removing = listOf(photo.id) },
                     onMark = { mark ->
                         val previous = photo.mark
                         runtime.mark(photo, mark)
@@ -472,6 +475,15 @@ fun FrameLink(runtime: CameraRuntime) {
                     },
                 )
             }
+        if (removing.isNotEmpty())
+            PhotoRemovalDialog(
+                runtime, removing,
+                onClose = { removing = emptyList() },
+                onRemoved = { ids ->
+                    selection = selection.filterNot { it in ids }
+                    if (viewer in ids) viewer = null
+                },
+            )
         if (compare)
             ComparePhotos(
                 runtime,
@@ -583,7 +595,7 @@ private fun CameraHome(
 ) {
     val ftp by runtime.ftpStatus.collectAsStateWithLifecycle()
     val client by runtime.ftpClient.state.collectAsStateWithLifecycle()
-    val imported = photos.filter { it.imported }
+    val imported = photos.filter { it.imported && !it.localHidden }
     LazyColumn(
         modifier = Modifier.testTag("camera-home"),
         contentPadding = PaddingValues(start = UiTokens.page, end = UiTokens.page, bottom = 24.dp),
@@ -939,6 +951,7 @@ private fun Gallery(
     onConnect: () -> Unit,
     onDownload: (DownloadFormat) -> Unit,
     onCompare: () -> Unit,
+    onRemove: (List<String>) -> Unit,
     onUpload: () -> Unit,
     onReview: (List<Photo>) -> Unit,
 ) {
@@ -960,7 +973,7 @@ private fun Gallery(
     }
     val photos =
         all.filter { photo ->
-            (if (source == "local") photo.imported || photo.source == PhotoSource.CAPTURE.name
+            (if (source == "local") photo.inLibrary
             else
                 photo.source == PhotoSource.CAMERA.name &&
                     (camera.info == null || photo.id in listedIds)) &&
@@ -1226,6 +1239,11 @@ private fun Gallery(
                         Icon(Icons.Outlined.CloudUpload, null, Modifier.size(16.dp))
                         Text("项目", fontSize = 11.sp, modifier = Modifier.padding(start = 5.dp))
                     }
+                    if (source == "local")
+                        TextButton(onClick = { onRemove(selection) }) {
+                            Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(17.dp))
+                            Text("移除", fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+                        }
                     if (source == "camera")
                         Primary(
                             "下载 ${selection.size} 张",
@@ -1285,7 +1303,7 @@ private fun Gallery(
                     items(
                         (if (source == "camera") availableDays
                         else
-                            all.filter { it.imported }
+                            all.filter { it.inLibrary }
                                 .map { photoDay(it) }
                                 .distinct()
                                 .sortedDescending())
@@ -1337,6 +1355,7 @@ private fun Gallery(
 internal fun ModalSheet(
     title: String,
     onClose: () -> Unit,
+    footer: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     ModalBottomSheet(
@@ -1358,14 +1377,16 @@ internal fun ModalSheet(
                 IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "关闭") }
             }
             Column(
-                Modifier.fillMaxWidth()
+                (if (footer == null) Modifier else Modifier.weight(1f, fill = false)).fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp)
-                    .padding(bottom = 30.dp),
+                    .padding(bottom = if (footer == null) 30.dp else 12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 content()
             }
+            if (footer != null)
+                Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 20.dp)) { footer() }
         }
     }
 }
@@ -1379,14 +1400,54 @@ private fun ConnectionSheet(runtime: CameraRuntime, onClose: () -> Unit) {
     var host by rememberSaveable { mutableStateOf(saved.host) }
     var user by rememberSaveable { mutableStateOf(saved.user) }
     var password by remember { mutableStateOf(saved.password) }
-    var fingerprint by rememberSaveable { mutableStateOf(saved.fingerprint) }
+    var showPassword by remember { mutableStateOf(false) }
+    var showPreparation by rememberSaveable { mutableStateOf(false) }
+    var authenticate by rememberSaveable { mutableStateOf(saved.host.isBlank() || saved.user.isNotBlank()) }
+    var submitted by remember { mutableStateOf(false) }
+    val status by runtime.camera.collectAsStateWithLifecycle()
+    val identityPrompt by runtime.cameraIdentityPrompt.collectAsStateWithLifecycle()
     var scanning by remember { mutableStateOf(false) }
     var found by remember { mutableStateOf<List<String>>(emptyList()) }
-    ModalSheet("连接你的相机", onClose) {
-        Info("第一批适配 Sony α7C II。把手机连接到相机Wi-Fi，或让两者加入同一个局域网。关闭其他控制App的相机连接。")
+    fun closeConnection() {
+        if (status.connecting || identityPrompt != null) runtime.disconnect()
+        onClose()
+    }
+    LaunchedEffect(status.info, submitted) {
+        if (submitted && status.info != null) onClose()
+    }
+    ModalSheet("连接相机", ::closeConnection, footer = {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (submitted && status.info == null && identityPrompt == null) {
+                Text(status.message, color = if (status.connecting) Brand else MaterialTheme.colorScheme.error, fontSize = 13.sp)
+            }
+            Button(
+                onClick = {
+                    keyboard?.hide()
+                    submitted = true
+                    runtime.connect(ConnectionConfig(host = host.trim(), user = if (authenticate) user.trim() else "", password = if (authenticate) password else ""))
+                },
+                enabled = host.isNotBlank() && (!authenticate || (user.isNotBlank() && password.isNotBlank())) && !status.connecting && identityPrompt == null,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("camera-connect-action"),
+                shape = UiTokens.control,
+                colors = ButtonDefaults.buttonColors(containerColor = Brand),
+            ) {
+                if (status.connecting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                else Icon(Icons.Outlined.Link, null, Modifier.size(19.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (status.connecting) "正在连接…" else "连接相机", fontSize = 15.sp)
+            }
+        }
+    }) {
+        Info("Sony α7C II · 同一Wi-Fi或相机热点")
         Panel {
-            Text("机身上的准备", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Info("① 开启PC远程连接\n② 网络 → 网络选项 → 访问认证信息\n③ 将地址、账号、密码和指纹填写在下方")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.CameraAlt, null, tint = Brand, modifier = Modifier.size(22.dp))
+                Text("开启电脑遥控与访问身份验证", Modifier.weight(1f).padding(start = 10.dp), fontSize = 13.sp)
+                TextButton(onClick = { showPreparation = !showPreparation }) { Text(if (showPreparation) "收起" else "设置步骤", fontSize = 12.sp) }
+            }
+            androidx.compose.animation.AnimatedVisibility(showPreparation) {
+                Info("① 网络 → 连接/电脑遥控 → 电脑遥控 → 开\n② 网络 → 网络选项 → 访问身份验证信息\n③ 首次填写相机地址、用户名和密码，指纹自动读取后确认\n连接前请断开其他控制App的相机会话。")
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             OutlinedButton(
@@ -1425,6 +1486,7 @@ private fun ConnectionSheet(runtime: CameraRuntime, onClose: () -> Unit) {
         OutlinedTextField(
             host,
             { host = it },
+            enabled = !status.connecting && identityPrompt == null,
             label = { Text("相机IP地址") },
             placeholder = { Text("例如 192.168.122.1") },
             singleLine = true,
@@ -1432,40 +1494,71 @@ private fun ConnectionSheet(runtime: CameraRuntime, onClose: () -> Unit) {
             keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(
-            user,
-            { user = it },
-            label = { Text("访问认证账号") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            password,
-            { password = it },
-            label = { Text("访问认证密码") },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            fingerprint,
-            { fingerprint = it },
-            label = { Text("相机显示的SHA256指纹") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Info("密码加密保存在手机。开启访问认证时需要完整指纹；机身关闭认证时，账号与密码留空。")
-        Primary("连接并读取相机能力", host.isNotBlank(), Icons.Outlined.Link) {
-            runtime.connect(
-                ConnectionConfig(
-                    host = host.trim(),
-                    user = user.trim(),
-                    password = password,
-                    fingerprint = fingerprint.trim(),
-                )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("使用相机访问身份验证", Modifier.weight(1f), fontSize = 13.sp)
+            Switch(
+                checked = authenticate,
+                onCheckedChange = { authenticate = it },
+                enabled = !status.connecting && identityPrompt == null,
+                modifier = Modifier.semantics { contentDescription = "使用相机访问身份验证" },
             )
-            onClose()
         }
+        if (authenticate) {
+            OutlinedTextField(
+                user,
+                { user = it },
+                label = { Text("访问认证账号") },
+                enabled = !status.connecting && identityPrompt == null,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                password,
+                { password = it },
+                label = { Text("访问认证密码") },
+                enabled = !status.connecting && identityPrompt == null,
+                visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
+                trailingIcon = {
+                    IconButton(onClick = { showPassword = !showPassword }) {
+                        Icon(if (showPassword) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, if (showPassword) "隐藏密码" else "显示密码")
+                    }
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Info(if (authenticate) "指纹自动读取，首次确认即可。认证信息加密保存在本机，下次无需重复输入。" else "仅在机身已关闭访问身份验证时使用此方式；首次连接可能需要在相机上配对。")
+    }
+    identityPrompt?.let { prompt ->
+        val changed = prompt.previousFingerprint.isNotBlank()
+        AlertDialog(
+            onDismissRequest = { submitted = false; runtime.disconnect() },
+            icon = { Icon(Icons.Outlined.VerifiedUser, null, tint = Brand) },
+            shape = UiTokens.card,
+            containerColor = Color.White,
+            title = { Text(if (changed) "相机身份发生变化" else "确认相机身份") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("设备地址：${prompt.identity.host}")
+                    Text(if (changed) "这次读取的指纹与之前不同。请在相机的访问身份验证信息中核对，再决定是否更新。" else "已自动读取指纹。请与相机的访问身份验证信息核对后确认，无需手动输入。")
+                    if (changed) {
+                        Text("之前的指纹", fontSize = 12.sp, color = Muted)
+                        Text(prompt.previousFingerprint, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    }
+                    Text("${if (changed) "当前" else "SHA256"}指纹", fontSize = 12.sp, color = Muted)
+                    Surface(color = CanvasColor, shape = UiTokens.control) {
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            Text(prompt.identity.fingerprint, Modifier.padding(16.dp), fontSize = 13.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                        }
+                    }
+                    Text("确认后才会发送认证信息。", fontSize = 12.sp, color = Muted)
+                }
+            },
+            confirmButton = { Button(onClick = { runtime.confirmCameraIdentity(prompt.id) }, shape = UiTokens.control, colors = ButtonDefaults.buttonColors(containerColor = Brand)) { Text(if (changed) "确认更新并连接" else "确认并连接") } },
+            dismissButton = { TextButton(onClick = { submitted = false; runtime.disconnect() }) { Text("取消") } },
+        )
     }
 }
 
@@ -2371,6 +2464,7 @@ private fun PhotoViewer(
     runtime: CameraRuntime,
     photo: Photo,
     onClose: () -> Unit,
+    onRemove: () -> Unit,
     onMark: (PhotoMark) -> Unit,
 ) {
     val context = LocalContext.current
@@ -2562,6 +2656,10 @@ private fun PhotoViewer(
                                 fontSize = 12.sp,
                                 modifier = Modifier.padding(horizontal = 6.dp),
                             )
+                        if (photo.inLibrary)
+                            IconButton(onClick = onRemove) {
+                                Icon(Icons.Outlined.DeleteOutline, "移除照片", tint = Color.White)
+                            }
                         IconButton(onClick = onClose) {
                             Icon(Icons.Outlined.Close, "关闭照片", tint = Color.White)
                         }

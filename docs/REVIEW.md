@@ -1,6 +1,6 @@
 # 协作审阅指南
 
-本分支为光屿FrameLink 0.1.2开发测试版，基于Aenlly-FTP的`7bef1146052b3c9f343856bbf3952ee7236b14d1`保留上游历史。Android应用采用独立包名`app.framelink.camera`，工程入口迁至`android/`；原始项目源码和许可证保存在`third_party/aenlly-ftp/`
+本分支为光屿FrameLink 0.1.3开发测试版，基于Aenlly-FTP的`7bef1146052b3c9f343856bbf3952ee7236b14d1`保留上游历史。Android应用采用独立包名`app.framelink.camera`，工程入口迁至`android/`；原始项目源码和许可证保存在`third_party/aenlly-ftp/`
 
 ## 获取分支
 

@@ -1,6 +1,7 @@
 package app.framelink.camera
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.Ignore
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -96,6 +97,7 @@ data class Photo(
     val projectId: String = "",
     val burstKey: String = "",
     val published: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val localHidden: Boolean = false,
 ) {
     @Ignore @Volatile private var decodedFiles: List<CameraFile>? = null
 
@@ -112,6 +114,10 @@ data class Photo(
     @get:Ignore
     val imported
         get() = files().any { it.savedUri.isNotBlank() }
+
+    @get:Ignore
+    val inLibrary
+        get() = !localHidden && (imported || source == PhotoSource.CAPTURE.name)
 
     @get:Ignore
     val displayUri

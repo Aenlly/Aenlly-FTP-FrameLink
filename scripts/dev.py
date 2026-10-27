@@ -19,7 +19,7 @@ elif mode=='web':
     command=['npm','run','dev']
     cwd=root/'web'
 elif mode=='simulator':
-    command=[str(root/'.tools/go/bin/go'),'run','./cmd/simulator','-dir',str(root/'artifacts/fixtures')]
+    command=[str(root/'.tools/go/bin/go'),'run','./cmd/simulator','-dir',str(root/'artifacts/fixtures'),'-ssh']
     cwd=root/'camera-bridge'
 else:
     raise SystemExit('usage: dev.py cloud|web')

@@ -14,12 +14,15 @@ if 'FrameLinkQA' not in name: raise SystemExit('设备不是本项目验收模�
 commands=[['reverse','tcp:15740','tcp:15740'],['reverse','tcp:16001','tcp:16001'],['install','-r',str(root/'android/app/build/outputs/apk/debug/app-debug.apk')],['install','-r',str(root/'android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk')],['shell','am','instrument','-w','-r','app.framelink.camera.test/androidx.test.runner.AndroidJUnitRunner']]
 mode=sys.argv[1] if len(sys.argv)>1 else 'all'
 prefix='app.framelink.camera.'
-classes={'all':','.join(prefix+x for x in ['LocalAcceptanceTest','NativeProtocolAcceptanceTest','NativeUiAcceptanceTest','FtpClientAcceptanceTest']), 'native':prefix+'NativeProtocolAcceptanceTest', 'ui':prefix+'NativeUiAcceptanceTest', 'ftp':prefix+'FtpClientAcceptanceTest', 'ftp-ui':prefix+'FtpClientAcceptanceTest#installedUiShowsCoreActionsConnectsAndDownloads', 'visual':prefix+'VisualAcceptanceTest'}
+classes={'all':','.join(prefix+x for x in ['LocalAcceptanceTest','NativeProtocolAcceptanceTest','NativeUiAcceptanceTest','FtpClientAcceptanceTest','PhotoManagementAcceptanceTest','CameraIdentityAcceptanceTest']), 'native':prefix+'NativeProtocolAcceptanceTest', 'ui':prefix+'NativeUiAcceptanceTest', 'ftp':prefix+'FtpClientAcceptanceTest', 'ftp-ui':prefix+'FtpClientAcceptanceTest#installedUiShowsCoreActionsConnectsAndDownloads', 'visual':prefix+'VisualAcceptanceTest','photos':prefix+'PhotoManagementAcceptanceTest','identity':prefix+'CameraIdentityAcceptanceTest'}
 if mode not in classes: raise SystemExit('未知验收模式：'+mode)
+if mode in ['all', 'identity']:
+    # 仅测试设备需要绑定反向端口22；业务App连接相机不需要root
+    commands[0:0] = [['root'], ['wait-for-device'], ['reverse','tcp:22','tcp:16022'], ['reverse','tcp:16023','tcp:16023']]
 variant=sys.argv[2] if len(sys.argv)>2 else 'phone'
 if variant not in ['phone','small','gesture']: raise SystemExit('未知界面规格：'+variant)
 commands[-1]=['shell','am','instrument','-w','-r','-e','class',classes[mode],'-e','visualVariant',variant,'app.framelink.camera.test/androidx.test.runner.AndroidJUnitRunner']
-label='android-visual-'+variant if mode=='visual' else 'android-instrument' if mode=='all' else 'android-instrument-'+mode
+label='android-visual-'+variant if mode=='visual' else 'android-identity-'+variant if mode=='identity' else 'android-instrument' if mode=='all' else 'android-instrument-'+mode
 log=root/'build-logs'/(label+'.log')
 if log.exists():
     stamp=datetime.datetime.now().strftime('%Y%m%d-%H%M%S')

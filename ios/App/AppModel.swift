@@ -11,6 +11,8 @@ final class AppModel: ObservableObject {
   let camera = NativeTransport()
   @Published var cameraInfo: CameraInfo?
   @Published var cameraIDs: Set<String> = []
+  @Published var cameraHasMore = false
+  @Published var cameraLoading = false
   @Published var gallerySource = 0
   @Published var cameraMessage = "连接相机，浏览照片或开启取景"
   @Published var connecting = false
@@ -190,6 +192,8 @@ final class AppModel: ObservableObject {
     camera.close()
     cameraInfo = nil
     cameraIDs = []
+    cameraHasMore = false
+    cameraLoading = false
     properties = []
     connecting = false
     identityPrompt = nil
@@ -197,8 +201,11 @@ final class AppModel: ObservableObject {
     cameraMessage = "相机已断开，手机原片已保留"
   }
   func loadCamera(reset: Bool) async {
-    guard cameraInfo?.canBrowse == true else { return }
+    guard cameraInfo?.canBrowse == true, !cameraLoading else { return }
+    if !reset && !cameraHasMore { return }
     let token = generation
+    cameraLoading = true
+    defer { if token == generation { cameraLoading = false } }
     if reset {
       cursor = 0
       cameraIDs = []
@@ -209,10 +216,23 @@ final class AppModel: ObservableObject {
       try library.mergeCamera(page)
       cameraIDs.formUnion(page.items.map(\.id))
       cursor = page.nextCursor
+      cameraHasMore = cursor != 0
     } catch {
       notice = error.localizedDescription
       if !camera.connected() { disconnect() }
     }
+  }
+  func readAllCameraPhotos() async throws {
+    let token = generation
+    while cameraLoading { try await Task.sleep(nanoseconds: 50_000_000) }
+    while cameraHasMore {
+      try Task.checkCancellation()
+      guard token == generation, cameraInfo != nil else { throw CocoaError(.userCancelled) }
+      let previous = cursor
+      await loadCamera(reset: false)
+      if previous == cursor && cameraHasMore { throw CocoaError(.fileReadUnknown) }
+    }
+    guard token == generation, cameraInfo != nil else { throw CocoaError(.userCancelled) }
   }
   func previewURL(_ snapshot: Photo, large: Bool = false) async -> URL? {
     let photo = library.photos.first { $0.id == snapshot.id } ?? snapshot

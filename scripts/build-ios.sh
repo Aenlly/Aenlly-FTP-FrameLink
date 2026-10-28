@@ -23,4 +23,4 @@ mkdir -p "$GOPATH/pkg/gomobile"
 gomobile bind -target=ios,iossimulator -iosversion=17.0 -prefix=FL -o "$TASK_ROOT/ios/Frameworks/Camera.xcframework" ./bridge
 cd "$TASK_ROOT"
 xcodebuild -project ios/FrameLink.xcodeproj -scheme FrameLink -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/DerivedData "ARCHS=$(uname -m)" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual build
-ditto -c -k --sequesterRsrc --keepParent ios/DerivedData/Build/Products/Debug-iphonesimulator/FrameLink.app artifacts/FrameLink-0.1.5-ios-simulator.zip
+ditto -c -k --sequesterRsrc --keepParent ios/DerivedData/Build/Products/Debug-iphonesimulator/FrameLink.app artifacts/FrameLink-0.1.6-ios-simulator.zip

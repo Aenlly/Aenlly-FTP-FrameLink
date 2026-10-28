@@ -5,9 +5,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.selection.triStateToggleable
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,27 +27,29 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-internal fun GalleryMediaItem(runtime: CameraRuntime, group: List<Photo>, selected: Set<String>, list: Boolean, onOpen: () -> Unit, onSelection: (List<String>) -> Unit) {
+internal fun GalleryMediaItem(runtime: CameraRuntime, group: List<Photo>, selected: Set<String>, list: Boolean, compact: Boolean, onOpen: () -> Unit, onSelection: (List<String>) -> Unit) {
     val photo=group.first()
     val complete=group.all{it.id in selected}
     val partial=!complete && group.any{it.id in selected}
-    val shape=RoundedCornerShape(if(list) 16.dp else 10.dp)
+    val shape=RoundedCornerShape(if(list) 16.dp else if(compact) 3.dp else 10.dp)
     val base=Modifier.testTag("photo-${photo.id}").clickable(onClick=onOpen).semantics{contentDescription="查看 ${photo.name}"}
     @Composable fun Select(modifier:Modifier=Modifier) {
-        TriStateCheckbox(state=if(complete) ToggleableState.On else if(partial) ToggleableState.Indeterminate else ToggleableState.Off,
-            onClick={val ids=group.map{it.id}.toSet();onSelection((if(complete) selected-ids else selected+ids).toList())},
-            colors=CheckboxDefaults.colors(checkedColor=Brand,uncheckedColor=if(list) Muted else Color.White,checkmarkColor=Color.White),
-            modifier=modifier.semantics{contentDescription="选择 ${photo.name}"})
+        Box(modifier.size(if(compact&&!list) 32.dp else 40.dp).triStateToggleable(state=if(complete) ToggleableState.On else if(partial) ToggleableState.Indeterminate else ToggleableState.Off,role=androidx.compose.ui.semantics.Role.Checkbox,
+            onClick={val ids=group.map{it.id}.toSet();onSelection((if(complete) selected-ids else selected+ids).toList())})
+            .semantics{contentDescription="选择 ${photo.name}"},contentAlignment=Alignment.Center) {
+            Box(Modifier.size(25.dp).background(if(complete||partial) SelectionAccent else Color.Black.copy(alpha=.18f),CircleShape).border(2.dp,if(list&&!complete&&!partial) Muted else Color.White,CircleShape),contentAlignment=Alignment.Center) {
+                if(complete||partial) Icon(if(partial) Icons.Outlined.Remove else Icons.Outlined.Check,null,tint=Color.White,modifier=Modifier.size(18.dp))
+            }
+        }
     }
     @Composable fun Preview(modifier:Modifier) {
-        Box(modifier.clip(shape).then(if(complete||partial) Modifier.border(2.dp,Brand,shape) else Modifier)) {
+        Box(modifier.clip(shape)) {
             PhotoThumbnail(runtime,photo,Modifier.fillMaxSize())
-            if(complete||partial) Box(Modifier.matchParentSize().background(Brand.copy(alpha=.12f)))
-            if(photo.mark==PhotoMark.FAVORITE.name) Icon(Icons.Outlined.Favorite,"已收藏",tint=Color.White,modifier=Modifier.align(Alignment.TopStart).padding(6.dp).background(Color.Black.copy(alpha=.4f),RoundedCornerShape(7.dp)).padding(4.dp).size(15.dp))
-            Surface(Modifier.align(Alignment.BottomStart).padding(5.dp),color=Color.Black.copy(alpha=.52f),shape=RoundedCornerShape(5.dp)) {
+            if(photo.mark==PhotoMark.FAVORITE.name) Icon(Icons.Outlined.Favorite,"已收藏",tint=Color.White,modifier=Modifier.align(Alignment.BottomStart).padding(6.dp).background(Color.Black.copy(alpha=.4f),RoundedCornerShape(7.dp)).padding(4.dp).size(15.dp))
+            Surface(Modifier.align(Alignment.TopStart).padding(5.dp),color=Color.Black.copy(alpha=.52f),shape=RoundedCornerShape(5.dp)) {
                 Text(if(group.size>1) "${photo.formatTitle()} · 连拍 ${group.size}" else photo.formatTitle(),color=Color.White,fontSize=8.sp,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(horizontal=5.dp,vertical=3.dp))
             }
-            if(!list) Box(Modifier.align(Alignment.TopEnd).padding(2.dp).background(Color.Black.copy(alpha=.24f),RoundedCornerShape(8.dp))) {Select()}
+            if(!list) Select(Modifier.align(Alignment.BottomEnd))
         }
     }
     if(list) {
@@ -60,8 +66,10 @@ internal fun GalleryMediaItem(runtime: CameraRuntime, group: List<Photo>, select
     } else {
         Column(base,verticalArrangement=Arrangement.spacedBy(5.dp)) {
             Preview(Modifier.fillMaxWidth().aspectRatio(1f))
-            Text(photo.displayTitle(),maxLines=1,overflow=TextOverflow.Ellipsis,fontSize=11.sp,color=Ink,modifier=Modifier.padding(horizontal=3.dp))
-            Text(photo.importTitle(),fontSize=9.sp,color=Muted,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(horizontal=3.dp))
+            if(!compact) {
+                Text(photo.displayTitle(),maxLines=1,overflow=TextOverflow.Ellipsis,fontSize=11.sp,color=Ink,modifier=Modifier.padding(horizontal=3.dp))
+                Text(photo.importTitle(),fontSize=9.sp,color=Muted,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(horizontal=3.dp))
+            }
         }
     }
 }

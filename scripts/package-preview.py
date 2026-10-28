@@ -11,7 +11,7 @@ import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-version='0.1.5'
+version='0.1.6'
 checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark','ios','ios-core','ios-ui','ios-device']
 for name in checks:
     result=root/'build-logs'/f'{name}.exit'
@@ -53,6 +53,9 @@ result={'version':version,'qualification':'development-preview','package':'app.f
 ios=artifacts/f'FrameLink-{version}-ios-simulator.zip'
 if not ios.exists(): raise SystemExit('缺少iOS模拟器包')
 result['ios']={'simulatorArchive':ios.name,'bytes':ios.stat().st_size,'sha256':hashlib.sha256(ios.read_bytes()).hexdigest(),'signing':'local-ad-hoc','physicalIPhoneVerified':False,'uiCases':5,'coreTests':6,'coreChecks':14}
+ipa=artifacts/f'FrameLink-{version}-ios-unsigned.ipa'
+if not ipa.exists(): raise SystemExit('缺少供自签试装的iPhone IPA')
+result['ios']['unsignedIpa']={'file':ipa.name,'sha256':hashlib.sha256(ipa.read_bytes()).hexdigest(),'needsResigning':True,'physicalIPhoneVerified':False}
 result['hardwareEvidence']={'latestGlassScenePhysicalVerified':False}
 evidence=artifacts/f'hardware-acceptance-{version}.json'
 if evidence.exists():

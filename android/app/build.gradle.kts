@@ -1,13 +1,13 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose"); id("com.google.devtools.ksp") }
 android {
     namespace = "app.framelink.camera"
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig {
         applicationId = "app.framelink.camera"
         minSdk = 26
-        targetSdk = 36
-        versionCode = 6
-        versionName = "0.1.5"
+        targetSdk = 37
+        versionCode = 7
+        versionName = "0.1.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters.addAll(listOf("arm64-v8a", "x86_64")) }
     }

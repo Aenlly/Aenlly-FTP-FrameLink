@@ -43,6 +43,31 @@ class FtpClientAcceptanceTest {
         get() = (compose.activity.application as CameraApp).runtime
 
     @Test
+    fun receivingSetupStartsWithoutScrollingAndOpensImportedPhotos() {
+        val keys = listOf("ftp.address", "ftp.user", "ftp.password", "ftp.port")
+        val previous = keys.associateWith { runtime.settings.get(it) }
+        try {
+            runtime.stopFtp()
+            runtime.settings.put("ftp.user", "qa-camera")
+            runtime.settings.put("ftp.password", "qa-camera-password")
+            runtime.settings.put("ftp.port", "2121")
+            compose.onNodeWithTag("tab-camera").performClick()
+            compose.onNodeWithText("FTP 接收", substring = false).performClick()
+            compose.onNodeWithText("启动照片接收").assertIsDisplayed()
+            compose.onNodeWithText("复制连接信息").performClick()
+            compose.onNodeWithText("已复制连接信息").assertIsDisplayed()
+            compose.onNodeWithText("启动照片接收").performClick()
+            compose.waitUntil(15000) { runtime.ftpRunning.value }
+            compose.onNodeWithText("接收服务在线").assertIsDisplayed()
+            compose.onNodeWithText("查看已接收照片").performClick()
+            compose.onNodeWithText("已导入", substring = false).assertIsDisplayed()
+        } finally {
+            runtime.stopFtp()
+            previous.forEach { (key, value) -> runtime.settings.put(key, value) }
+        }
+    }
+
+    @Test
     fun protocolRoundTripChineseNamesAuthenticationAndNoOverwrite() {
         Server(compose.activity).use { server ->
             val bytes = ByteArray(2 * 1024 * 1024) { (it % 251).toByte() }

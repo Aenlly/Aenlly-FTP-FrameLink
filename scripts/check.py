@@ -30,7 +30,7 @@ checks = {
     'ios-device': ('.', [['xcodebuild','-project','ios/FrameLink.xcodeproj','-scheme','FrameLink','-configuration','Debug','-sdk','iphoneos','-destination','generic/platform=iOS','-derivedDataPath','ios/DerivedData-device','CODE_SIGNING_ALLOWED=NO','build']]),
     'ftp-benchmark': ('.', [[sys.executable, 'scripts/benchmark-ftp.py', '32', '7']]),
     'web': ('web', [['npm', 'ci'], ['npm', 'run', 'build'], ['npm', 'test', '--', '--run']]),
-    'sdk': ('.', [[str(root / '.tools/android-sdk/cmdline-tools/latest/bin/sdkmanager'), '--sdk_root=' + env['ANDROID_HOME'], '--licenses'], [str(root / '.tools/android-sdk/cmdline-tools/latest/bin/sdkmanager'), '--sdk_root=' + env['ANDROID_HOME'], 'platform-tools', 'platforms;android-36', 'build-tools;36.0.0', 'ndk;27.2.12479018']]),
+    'sdk': ('.', [[str(root / '.tools/android-sdk/cmdline-tools/latest/bin/sdkmanager'), '--sdk_root=' + env['ANDROID_HOME'], '--licenses'], [str(root / '.tools/android-sdk/cmdline-tools/latest/bin/sdkmanager'), '--sdk_root=' + env['ANDROID_HOME'], 'platform-tools', 'platforms;android-37.0', 'build-tools;37.0.0', 'ndk;27.2.12479018']]),
 }
 cwd, commands = checks[label]
 logs = root / 'build-logs'

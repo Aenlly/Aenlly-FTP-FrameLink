@@ -331,7 +331,7 @@ struct SettingsView: View {
   var body: some View {
     List {
       Section("FrameLink") {
-        LabeledContent("版本", value: "0.1.5")
+        LabeledContent("版本", value: "0.1.6")
         Text("本地拍摄与选片无需登录。原片保存在App文件目录，卸载前请先导出。").font(.footnote)
       }
       Section("连接能力") {

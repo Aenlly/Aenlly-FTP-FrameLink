@@ -76,12 +76,12 @@ enum GalleryStyle: String, CaseIterable {
     case .list: return "列表"
     }
   }
-  var cellSize: CGFloat {
+  var columnCount: Int {
     switch self {
-    case .small: return 92
-    case .medium: return 135
-    case .large: return 180
-    case .list: return 84
+    case .small: return 5
+    case .medium: return 3
+    case .large: return 2
+    case .list: return 1
     }
   }
 }
@@ -115,9 +115,7 @@ struct SelectablePhotoGrid: View {
       ScrollViewReader { proxy in
         ScrollView {
           LazyVGrid(
-            columns: style == .list
-              ? [GridItem(.flexible())]
-              : [GridItem(.adaptive(minimum: style.cellSize), spacing: 12)], spacing: 16
+            columns: Array(repeating: GridItem(.flexible(), spacing: style == .small ? 2 : 8), count: style.columnCount), spacing: style == .small ? 2 : 16
           ) {
             ForEach(displayedPhotos) { photo in
               let itemLayout =
@@ -125,7 +123,7 @@ struct SelectablePhotoGrid: View {
                 ? AnyLayout(HStackLayout(alignment: .center, spacing: 14))
                 : AnyLayout(VStackLayout(alignment: .leading, spacing: 7))
               itemLayout {
-                ZStack(alignment: .topTrailing) {
+                ZStack(alignment: .bottomTrailing) {
                   Button {
                     if range == nil && !tapSuppressed { open(photo) }
                   } label: {
@@ -140,25 +138,21 @@ struct SelectablePhotoGrid: View {
                         ? "checkmark.circle.fill" : "circle"
                     ).font(.title2).symbolRenderingMode(.palette).foregroundStyle(
                       .white,
-                      selection.contains(photo.id) ? Palette.accent : Color.black.opacity(0.4)
+                      selection.contains(photo.id) ? Color.blue : Color.black.opacity(0.4)
                     ).frame(width: 44, height: 44).contentShape(Rectangle())
                   }.buttonStyle(.plain).disabled(!selectionEnabled).accessibilityLabel(
                     "选择 \(photo.name)")
                 }.aspectRatio(1, contentMode: .fit)
                   .frame(width: style == .list ? 84 : nil, height: style == .list ? 84 : nil)
-                  .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                  .overlay(
-                    RoundedRectangle(cornerRadius: 22).stroke(
-                      selection.contains(photo.id) ? Palette.accent : .clear, lineWidth: 3)
-                  )
-                  .overlay(alignment: .bottomLeading) {
+                  .clipShape(RoundedRectangle(cornerRadius: style == .small ? 3 : 12, style: .continuous))
+                  .overlay(alignment: .topLeading) {
                     Text(photo.formatTitle).font(.system(size: 9, weight: .medium)).foregroundStyle(
                       .white
                     ).padding(.horizontal, 6).padding(.vertical, 3).background(
                       .black.opacity(0.5), in: Capsule()
                     ).padding(6).allowsHitTesting(false)
                   }
-                VStack(alignment: .leading, spacing: 5) {
+                if style != .small { VStack(alignment: .leading, spacing: 5) {
                   Text(photo.displayTitle).font(style == .list ? .subheadline : .caption).lineLimit(
                     1
                   ).foregroundStyle(.primary)
@@ -170,7 +164,7 @@ struct SelectablePhotoGrid: View {
                   }
                 }.frame(maxWidth: .infinity, alignment: .leading).onTapGesture {
                   if range == nil && !tapSuppressed { open(photo) }
-                }
+                } }
               }.padding(style == .list ? 12 : 0).background(
                 style == .list ? Color(uiColor: .secondarySystemGroupedBackground) : .clear,
                 in: RoundedRectangle(cornerRadius: 18)
@@ -182,7 +176,7 @@ struct SelectablePhotoGrid: View {
                       value: [photo.id: geometry.frame(in: .named("photo-grid"))])
                   })
             }
-          }.padding(16)
+          }.padding(style == .small ? 2 : 12)
         }.coordinateSpace(name: "photo-grid").scrollDisabled(range != nil)
           .onPreferenceChange(CellFrames.self) { frames = $0 }
           .simultaneousGesture(
@@ -279,6 +273,7 @@ struct GalleryView: View {
   @State private var naming: NamePurpose?
   @State private var remove = false
   @State private var format = false
+  @State private var selectingAll: Task<Void, Never>?
   @AppStorage("gallery.layout") private var layoutKey = "medium"
   private var layout: GalleryStyle { GalleryStyle(rawValue: layoutKey) ?? .medium }
   private var photos: [Photo] {
@@ -294,7 +289,31 @@ struct GalleryView: View {
         || (filter == 4 && $0.files.contains(where: { $0.isRaw }))
     }
   }
-  var body: some View {
+  private var allSelected: Bool {
+    !photos.isEmpty && photos.allSatisfy { library.selection.contains($0.id) }
+      && !(source == 1 && model.cameraHasMore)
+  }
+  private var selectAllButton: some View {
+    Button(allSelected ? "取消全选" : "全选", action: selectAll)
+      .disabled(photos.isEmpty || model.cameraLoading || selectingAll != nil)
+  }
+  private func selectAll() {
+    let ids = Set(photos.map(\.id))
+    if allSelected {
+      library.selection.subtract(ids)
+    } else if source == 1 && model.cameraHasMore {
+      selectingAll = Task { @MainActor in
+        defer { selectingAll = nil }
+        do {
+          try await model.readAllCameraPhotos()
+          try Task.checkCancellation()
+          library.selection.formUnion(photos.map(\.id))
+        } catch is CancellationError { }
+        catch { model.notice = "未能读取全部照片，请重试" }
+      }
+    } else { library.selection.formUnion(ids) }
+  }
+  private var galleryContent: some View {
     VStack(spacing: 0) {
       Picker(
         "照片来源",
@@ -318,6 +337,7 @@ struct GalleryView: View {
         }.padding(.horizontal, 16)
       }.scrollIndicators(.hidden)
       HStack {
+        selectAllButton
         Text("\(photos.count) 张")
         Spacer()
         if source == 1 {
@@ -345,11 +365,14 @@ struct GalleryView: View {
           onDragging: { dragging = $0 }
         ) { viewer = $0 }
       }
-      if source == 1 && model.cameraInfo != nil {
+      if source == 1 && model.cameraInfo != nil && model.cameraHasMore {
         Button("加载更多") { Task { await model.loadCamera(reset: false) } }.font(.footnote).padding(
           .bottom, 6)
       }
-    }.background(Palette.background).navigationTitle("图库").navigationBarTitleDisplayMode(.inline)
+    }
+  }
+  var body: some View {
+    galleryContent.background(Palette.background).navigationTitle("图库").navigationBarTitleDisplayMode(.inline)
       .toolbar {
         Menu {
           ForEach(GalleryStyle.allCases, id: \.rawValue) { option in
@@ -396,7 +419,7 @@ struct GalleryView: View {
         allowsMultipleSelection: true
       ) { if case .success(let urls) = $0 { model.importFiles(urls) } }
       .photosPicker(
-        isPresented: $choosingPhotos, selection: $pickedPhotos, maxSelectionCount: 200,
+        isPresented: $choosingPhotos, selection: $pickedPhotos, maxSelectionCount: nil,
         matching: .images, preferredItemEncoding: .current
       )
       .onChange(of: pickedPhotos) { _, items in
@@ -413,6 +436,12 @@ struct GalleryView: View {
           pickedPhotos = []
         }
       }
+      .onChange(of: source) { _, _ in selectingAll?.cancel() }
+      .onChange(of: filter) { _, _ in selectingAll?.cancel() }
+      .onDisappear { selectingAll?.cancel() }
+      .alert("正在读取全部照片", isPresented: Binding(get: { selectingAll != nil }, set: { if !$0 { selectingAll?.cancel() } })) {
+        Button("取消", role: .cancel) { selectingAll?.cancel() }
+      } message: { Text("已读取\(model.cameraIDs.count)张，将按当前筛选全选") }
       .fullScreenCover(item: $viewer) { photo in PhotoViewer(photos: photos, initial: photo.id) }
       .sheet(item: $naming) { purpose in
         NameEditor(title: purpose == .batch ? "保存这一批" : "客户现场选片", initial: "") { name in
@@ -550,7 +579,7 @@ struct PhotoViewer: View {
             library.selection.contains(current) ? "已选择" : "选择这张",
             systemImage: library.selection.contains(current) ? "checkmark.circle.fill" : "circle"
           ).font(.headline).padding(.horizontal, 22).padding(.vertical, 13).background(
-            library.selection.contains(current) ? Palette.accent : Color.white.opacity(0.15),
+            library.selection.contains(current) ? Color.blue : Color.white.opacity(0.15),
             in: Capsule()
           ).foregroundStyle(.white)
         }

@@ -50,6 +50,12 @@ class CameraUsabilityAcceptanceTest {
             compose.onNodeWithContentDescription("关闭照片").performClick()
             compose.onNodeWithText("未导入",substring=false).performClick()
             compose.onNodeWithTag("photo-${photo.id}").assertIsDisplayed()
+            compose.onNodeWithText("全部",substring=false).performClick()
+            compose.onNodeWithContentDescription("清空本次选择").performClick()
+            compose.onNodeWithText("全选",substring=false).performClick()
+            compose.onNodeWithText("取消全选",substring=false).assertIsDisplayed()
+            compose.onNodeWithText("取消全选",substring=false).performClick()
+            compose.onNodeWithContentDescription("选择 $name").assertIsOff()
         } finally {
             runtime.settings.put("gallery.layout",oldLayout)
             runBlocking{runtime.database.photos().save(photo.copy(localHidden=true,filesJson="[]"))}
@@ -63,10 +69,14 @@ class CameraUsabilityAcceptanceTest {
             runtime.connect(ConnectionConfig(host="127.0.0.1"))
             compose.waitUntil(30000){runtime.camera.value.info != null}
             runtime.disconnect()
-            compose.onNodeWithTag("tab-camera").performClick()
-            compose.onNodeWithText("连接相机",substring=false).performClick()
+            compose.onNodeWithTag("tab-gallery").performClick()
+            compose.onNodeWithText("相机内",substring=false).performClick()
+            compose.onNodeWithText("重新连接相机",substring=false).performClick()
             compose.waitUntil(30000){runtime.camera.value.info != null}
+            compose.waitUntil(30000){runtime.currentCameraIds.value.isNotEmpty()}
+            compose.onNodeWithTag("gallery-grid").assertIsDisplayed()
             compose.onNodeWithTag("camera-connect-action").assertDoesNotExist()
+            compose.onNodeWithTag("tab-camera").performClick()
             compose.onNodeWithContentDescription("相机连接设置").performClick()
             compose.onNodeWithTag("camera-connect-action").assertIsDisplayed()
         } finally {runtime.disconnect();runtime.settings.put("camera.config",old)}

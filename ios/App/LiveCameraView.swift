@@ -62,6 +62,10 @@ struct LiveCameraView: View {
   var onGallery: () -> Void = {}
   @State private var controlsVisible = true
   @State private var professional = false
+  @State private var assistants = false
+  @State private var histogramVisible = false
+  @State private var histogramBins = [Int](repeating: 0, count: 64)
+  @State private var histogramUpdatedAt = Date.distantPast
   @State private var showInfo = false
   @State private var grid = false
   @State private var countdown = 0
@@ -88,8 +92,13 @@ struct LiveCameraView: View {
         .first(where: \.isKeyWindow)?.safeAreaInsets ?? .zero
       let top = max(insets.top, geometry.safeAreaInsets.top)
       let bottom = max(insets.bottom, geometry.safeAreaInsets.bottom)
+      let panelHeight = landscape
+        ? geometry.size.height - top - bottom - 16 : min(360, geometry.size.height * 0.44)
+      let panelWidth = landscape
+        ? min(260, max(220, geometry.size.width * 0.28)) : min(480, geometry.size.width - 24)
       let previewTop = !landscape && controlsVisible ? top + 56 : 0
-      let previewBottom = !landscape && controlsVisible ? bottom + 194 : 0
+      let previewBottom = !landscape && controlsVisible
+        ? bottom + (professional ? panelHeight + 12 : 194) : 0
       let pictureHeight = max(1, geometry.size.height - previewTop - previewBottom)
       ZStack {
         Color.black
@@ -126,12 +135,22 @@ struct LiveCameraView: View {
         }
         .frame(width: geometry.size.width, height: pictureHeight)
         .contentShape(Rectangle())
-        .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { controlsVisible.toggle() } }
+        .onTapGesture {
+          withAnimation(.easeInOut(duration: 0.15)) {
+            controlsVisible.toggle()
+            if !controlsVisible { professional = false }
+          }
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(controlsVisible ? "取景画面，点按隐藏控制" : "显示取景控制")
         .accessibilityAddTraits(.isButton)
         .position(x: geometry.size.width / 2, y: previewTop + pictureHeight / 2)
-        if controlsVisible && !landscape {
+        if controlsVisible && histogramVisible {
+          LiveHistogram(bins: histogramBins).frame(width: 104, height: 52).accessibilityElement(children: .ignore)
+            .accessibilityLabel("预览亮度直方图").accessibilityIdentifier("live-histogram")
+            .position(x: 64, y: previewTop + pictureHeight - 38).allowsHitTesting(false)
+        }
+        if controlsVisible && !landscape && !professional {
           VStack(spacing: 0) {
             HStack {
               Button {
@@ -194,63 +213,73 @@ struct LiveCameraView: View {
             }.frame(height: 194)
           }.padding(.horizontal, 16).padding(.top, top).padding(.bottom, bottom)
         }
-        if controlsVisible && landscape {
-          VStack {
-            HStack {
+        if controlsVisible && landscape && !professional {
+          HStack {
+            VStack {
               GlassCapsule {
-                HStack(spacing: 10) {
-                  Button {
-                    dismiss()
-                  } label: {
-                    Image(systemName: "chevron.left")
-                  }.accessibilityLabel("返回相机")
-                  Text("拍摄").font(.system(size: 12))
-                }
+                Button { dismiss() } label: { Image(systemName: "chevron.left") }
+                  .accessibilityLabel("返回相机").frame(width: 24, height: 24)
               }
               Spacer()
               GlassCapsule {
-                HStack(spacing: 16) {
-                  Button {
-                    showInfo = true
-                  } label: {
-                    Image(systemName: "ellipsis")
-                  }.accessibilityLabel("连接信息")
-                  Button {
-                    controlsVisible = false
-                  } label: {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                  }.accessibilityLabel("沉浸取景")
-                  Button("专业工具") { professional = true }.font(.system(size: 11))
-                }
-              }
-            }
-            Spacer()
-            quickProperties.frame(maxWidth: 480)
-          }.padding(.leading, max(insets.left, geometry.safeAreaInsets.leading) + 12).padding(
-            .trailing, max(insets.right, geometry.safeAreaInsets.trailing) + 12
-          ).padding(.top, top + 8).padding(.bottom, bottom + 12)
-          HStack {
-            Spacer()
-            GlassCapsule {
-              VStack(spacing: 16) {
-                Menu {
-                  ForEach([0, 3, 10], id: \.self) { value in
-                    Button(value == 0 ? "无延时" : "\(value)秒") { countdown = value }
+                VStack(alignment: .leading, spacing: 14) {
+                  ForEach(Array(properties.filter { rank($0.code) < 4 }.prefix(4))) { item in
+                    Button { property = item } label: {
+                      VStack(alignment: .leading, spacing: 4) {
+                        Text(PropertyText.names[item.code] ?? "参数").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Text(PropertyText.value(item, item.value) ?? "机身设置").font(.system(size: 13))
+                      }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.disabled(!item.writable || model.propertyUpdating)
                   }
-                } label: {
-                  Text(countdown == 0 ? "无延时" : "\(countdown)秒").font(.system(size: 11))
                 }
-                shutter(size: 54)
-                Button(action: onGallery) { Image(systemName: "photo.on.rectangle") }
-                  .accessibilityLabel("查看相机照片")
-              }
+              }.frame(width: 108)
+              Spacer()
             }
-          }.padding(.trailing, max(insets.right, geometry.safeAreaInsets.trailing) + 12)
+            Spacer()
+            VStack {
+              GlassCapsule {
+                HStack(spacing: 20) {
+                  Button { showInfo = true } label: { Image(systemName: "ellipsis") }
+                    .accessibilityLabel("连接信息")
+                  Button { controlsVisible = false } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                    .accessibilityLabel("沉浸取景")
+                }.frame(height: 24)
+              }
+              Button("专业工具") { professional = true }.font(.system(size: 12)).frame(height: 44)
+              Spacer()
+              GlassCapsule {
+                VStack(spacing: 12) {
+                  Menu {
+                    ForEach([0, 3, 10], id: \.self) { value in
+                      Button(value == 0 ? "无延时" : "\(value)秒") { countdown = value }
+                    }
+                  } label: { Text(countdown == 0 ? "无延时" : "\(countdown)秒").font(.system(size: 11)) }
+                  shutter(size: 64)
+                  Button(action: onGallery) { Image(systemName: "photo.on.rectangle").frame(height: 32) }
+                    .accessibilityLabel("查看相机照片")
+                }
+              }
+            }.frame(width: 112)
+          }.padding(.leading, max(insets.left, geometry.safeAreaInsets.leading) + 12)
+            .padding(.trailing, max(insets.right, geometry.safeAreaInsets.trailing) + 12)
+            .padding(.top, top + 8).padding(.bottom, bottom + 8).buttonStyle(.plain)
+        }
+        if controlsVisible && professional {
+          professionalPanel.frame(width: panelWidth, height: panelHeight)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("live-tools-panel")
+            .position(
+              x: landscape
+                ? geometry.size.width - max(insets.right, geometry.safeAreaInsets.trailing) - 12 - panelWidth / 2
+                : geometry.size.width / 2,
+              y: landscape ? top + panelHeight / 2 + 8
+                : geometry.size.height - bottom - 12 - panelHeight / 2)
         }
       }.foregroundStyle(.white)
-        .onChange(of: landscape) { _, value in
-          controlsVisible = !value
-          professional = false
+        .onChange(of: model.liveImage) { _, image in
+          guard controlsVisible, histogramVisible,
+            Date().timeIntervalSince(histogramUpdatedAt) >= 0.5, let image else { return }
+          histogramUpdatedAt = Date()
+          histogramBins = previewHistogram(image)
         }
         .task {
           controlsVisible = !landscape
@@ -263,39 +292,6 @@ struct LiveCameraView: View {
       timer?.cancel()
       model.stopLive()
     }
-    .sheet(isPresented: $professional) {
-      NavigationStack {
-        List {
-          Section("预览辅助") {
-            Toggle("构图网格", isOn: $grid)
-            Text("拍摄模式与参数以机身能力为准").font(.caption).foregroundStyle(.secondary)
-          }
-          Section("相机参数") {
-            ForEach(properties) { item in
-              NavigationLink {
-                CameraPropertyPicker(property: item)
-              } label: {
-                HStack {
-                  Text(PropertyText.names[item.code] ?? "机身设置")
-                  Spacer()
-                  Text(PropertyText.value(item, item.value) ?? "机身调整").foregroundStyle(.secondary)
-                }
-              }.disabled(!item.writable || model.propertyUpdating)
-            }
-          }
-          Section {
-            NavigationLink {
-              CameraConnectionDetails()
-            } label: {
-              Text("连接信息与预览规格")
-            }
-          }
-        }.scrollContentBackground(.hidden).navigationTitle("专业工具").navigationBarTitleDisplayMode(
-          .inline
-        ).toolbar { Button("收起工具") { professional = false } }
-      }.presentationDetents([.medium, .large]).presentationBackground(.ultraThinMaterial)
-        .presentationCornerRadius(28)
-    }
     .sheet(isPresented: $showInfo) {
       NavigationStack { CameraConnectionDetails().toolbar { Button("完成") { showInfo = false } } }
         .presentationDetents([.medium, .large])
@@ -304,6 +300,69 @@ struct LiveCameraView: View {
       NavigationStack { CameraPropertyPicker(property: item) }.presentationDetents([
         .medium, .large,
       ])
+    }
+  }
+  private var professionalPanel: some View {
+    LiveToolGlass {
+      VStack(spacing: 8) {
+        HStack {
+          Text("专业工具").font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+          Button {
+            professional = false
+            controlsVisible = false
+          } label: { Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 44, height: 44) }
+            .accessibilityLabel("沉浸取景")
+          Button { professional = false } label: {
+            Image(systemName: "xmark").frame(width: 44, height: 44)
+          }.accessibilityLabel("收起工具")
+        }
+        HStack(spacing: 6) {
+          Button { assistants = false } label: {
+            Text("机身参数").frame(maxWidth: .infinity, minHeight: 32)
+              .background(assistants ? .white.opacity(0.04) : .white.opacity(0.2), in: Capsule())
+          }.accessibilityValue(assistants ? "" : "已选中")
+          Button { assistants = true } label: {
+            Text("预览辅助").frame(maxWidth: .infinity, minHeight: 32)
+              .background(assistants ? .white.opacity(0.2) : .white.opacity(0.04), in: Capsule())
+          }.accessibilityValue(assistants ? "已选中" : "")
+        }.font(.system(size: 12)).buttonStyle(.plain)
+        ScrollView {
+          LazyVStack(spacing: 4) {
+            if assistants {
+              Toggle("构图网格", isOn: $grid).toggleStyle(.switch).frame(minHeight: 44)
+              Toggle("直方图", isOn: $histogramVisible).toggleStyle(.switch).frame(minHeight: 44)
+              Text("辅助分析基于取景预览").font(.caption2).foregroundStyle(.secondary)
+            } else {
+              ForEach(properties) { item in
+                Button { property = item } label: {
+                  HStack {
+                    Text(PropertyText.names[item.code] ?? "机身设置")
+                    Spacer()
+                    Text(PropertyText.value(item, item.value) ?? "机身调整").foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right").font(.system(size: 11))
+                  }.font(.system(size: 12)).frame(minHeight: 44)
+                }.disabled(!item.writable || model.propertyUpdating)
+              }
+              Button("连接信息与预览规格") { showInfo = true }.font(.caption).frame(minHeight: 44)
+            }
+          }
+        }.scrollIndicators(.hidden).accessibilityIdentifier("live-properties")
+        HStack {
+          Button(action: onGallery) { Image(systemName: "photo.on.rectangle").frame(width: 44, height: 44) }
+            .accessibilityLabel("查看相机照片")
+          Spacer()
+          shutter(size: 48)
+          Spacer()
+          Menu {
+            ForEach([0, 3, 10], id: \.self) { value in
+              Button(value == 0 ? "无延时" : "\(value)秒") { countdown = value }
+            }
+          } label: {
+            Text(countdown == 0 ? "无延时" : "\(countdown)秒").font(.system(size: 11))
+              .frame(minWidth: 44, minHeight: 44)
+          }
+        }
+      }.padding(12)
     }
   }
   private var quickProperties: some View {
@@ -351,6 +410,59 @@ struct LiveCameraView: View {
   private func rank(_ code: Int) -> Int {
     [0x5007: 0, 0xD20D: 1, 0x500D: 1, 0xD21E: 2, 0x500F: 2, 0x5010: 3][code] ?? 10 + code
   }
+}
+
+private struct LiveToolGlass<Content: View>: View {
+  @ViewBuilder var content: Content
+  var body: some View {
+    #if compiler(>=6.2)
+    if #available(iOS 26.0, *) {
+      content.glassEffect(.regular, in: .rect(cornerRadius: 24))
+    } else {
+      content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.3), lineWidth: 0.7))
+    }
+    #else
+      content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.3), lineWidth: 0.7))
+    #endif
+  }
+}
+
+private struct LiveHistogram: View {
+  let bins: [Int]
+  var body: some View {
+    Canvas { context, size in
+      let peak = max(1, bins.max() ?? 1)
+      let step = size.width / CGFloat(bins.count)
+      var path = Path()
+      for (index, value) in bins.enumerated() {
+        path.addRect(CGRect(x: CGFloat(index) * step, y: size.height * (1 - CGFloat(value) / CGFloat(peak)),
+          width: step, height: size.height * CGFloat(value) / CGFloat(peak)))
+      }
+      context.fill(path, with: .color(.white.opacity(0.85)))
+    }.padding(6).background(.black.opacity(0.48), in: RoundedRectangle(cornerRadius: 8))
+  }
+}
+
+/// 预览亮度参考图按低分辨率采样，不使用原片或RAW数据
+private func previewHistogram(_ image: UIImage) -> [Int] {
+  var bins = [Int](repeating: 0, count: 64)
+  guard let image = image.cgImage else { return bins }
+  let width = 128
+  let height = 96
+  var pixels = [UInt8](repeating: 0, count: width * height * 4)
+  pixels.withUnsafeMutableBytes { buffer in
+    guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,
+      bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return }
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    for index in stride(from: 0, to: buffer.count, by: 4) {
+      let luminance = (Int(buffer[index]) * 54 + Int(buffer[index + 1]) * 183 + Int(buffer[index + 2]) * 19) >> 8
+      bins[min(63, luminance >> 2)] += 1
+    }
+  }
+  return bins
 }
 
 private struct CameraPropertyPicker: View {

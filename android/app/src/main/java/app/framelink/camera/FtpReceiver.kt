@@ -13,6 +13,7 @@ import org.apache.ftpserver.command.CommandFactoryFactory
 import org.apache.ftpserver.ftplet.DefaultFtpReply
 import org.apache.ftpserver.ftplet.DefaultFtplet
 import org.apache.ftpserver.ftplet.FtpRequest
+import org.apache.ftpserver.ftplet.FtpReply
 import org.apache.ftpserver.ftplet.FtpSession
 import org.apache.ftpserver.ftplet.FtpletResult
 import org.apache.ftpserver.listener.ListenerFactory
@@ -78,13 +79,21 @@ class FtpReceiver(
                     object : DefaultFtplet() {
                         override fun onConnect(session: FtpSession): FtpletResult {
                             clients.incrementAndGet()
-                            status.value = "相机已连接，等待照片"
+                            status.value = "设备已连接，等待登录"
                             return FtpletResult.DEFAULT
                         }
 
                         override fun onDisconnect(session: FtpSession): FtpletResult {
                             if (clients.decrementAndGet() <= 0) status.value = "服务运行中，等待相机连接"
                             return FtpletResult.DEFAULT
+                        }
+
+                        override fun afterCommand(session: FtpSession, request: FtpRequest, reply: FtpReply): FtpletResult {
+                            if (request.command == "PASS") {
+                                status.value = if (reply.code == 230) "设备已登录，等待照片"
+                                    else "登录未成功，请检查相机中的账号和密码"
+                            }
+                            return super.afterCommand(session, request, reply) ?: FtpletResult.DEFAULT
                         }
 
                         override fun beforeCommand(

@@ -148,13 +148,30 @@ fun FrameLink(runtime: CameraRuntime) {
     var projectId by rememberSaveable { mutableStateOf<String?>(null) }
     val gridState = rememberLazyGridState()
     val snackbar = remember { SnackbarHostState() }
+    var pendingNetwork by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var networkPermissionHelp by remember { mutableStateOf(false) }
+    val networkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        val action = pendingNetwork
+        pendingNetwork = null
+        if (LocalNetworkAccess.granted(context)) action?.invoke()
+        else networkPermissionHelp = true
+    }
+    fun ensureNetwork(action: () -> Unit) {
+        if (LocalNetworkAccess.granted(context)) action()
+        else {
+            pendingNetwork = action
+            networkPermission.launch(arrayOf(LocalNetworkAccess.permission, Manifest.permission.POST_NOTIFICATIONS))
+        }
+    }
     fun connectionSettings(error: String = "", keepIntent: Boolean = false) {
+        if (!LocalNetworkAccess.granted(context)) { ensureNetwork { connectionSettings(error, keepIntent) }; return }
         reconnectAttempt++
         if (!keepIntent) afterReconnect = null
         connectionFailure = error
         sheet = Sheet.CONNECT
     }
     fun reconnect(onReady: () -> Unit = {}) {
+        if (!LocalNetworkAccess.granted(context)) { ensureNetwork { reconnect(onReady) }; return }
         val status = runtime.camera.value
         if (status.connecting) return
         if (status.info != null) { onReady(); return }
@@ -206,8 +223,12 @@ fun FrameLink(runtime: CameraRuntime) {
     }
     LaunchedEffect(tab, live) { snackbar.currentSnackbarData?.dismiss() }
     LaunchedEffect(camera.info?.id) {
-        if (camera.info != null) afterReconnect?.let { ready -> afterReconnect = null; ready() }
-        if (camera.info != null && tab == Tab.GALLERY && source == "camera") runtime.browseRecent()
+        if (camera.info != null) {
+            val ready = afterReconnect
+            afterReconnect = null
+            if (ready != null) ready()
+            else if (tab == Tab.GALLERY && source == "camera") runtime.refreshCameraPhotos()
+        }
         if (camera.info == null && source == "camera") selection = emptyList()
     }
     MaterialTheme(
@@ -241,35 +262,7 @@ fun FrameLink(runtime: CameraRuntime) {
             },
             bottomBar = {
                 Box(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    GlassSurface(glass, Modifier.fillMaxWidth(), radius = 26.dp) {
-                        NavigationBar(
-                            containerColor = Color.Transparent,
-                            tonalElevation = 0.dp,
-                            modifier = Modifier.height(64.dp),
-                            windowInsets = WindowInsets(0, 0, 0, 0),
-                        ) {
-                            Tab.entries.forEach { entry ->
-                                NavigationBarItem(
-                                    modifier =
-                                        Modifier.testTag(
-                                            "tab-${entry.name.lowercase(Locale.ROOT)}"
-                                        ),
-                                    selected = tab == entry,
-                                    onClick = { tab = entry },
-                                    icon = { Icon(entry.icon, entry.title, Modifier.size(22.dp)) },
-                                    label = { Text(entry.title, fontSize = 10.sp) },
-                                    colors =
-                                        NavigationBarItemDefaults.colors(
-                                            selectedIconColor = Color(0xff315573),
-                                            selectedTextColor = Color(0xff315573),
-                                            indicatorColor = Brand.copy(alpha = .10f),
-                                            unselectedIconColor = Muted,
-                                            unselectedTextColor = Color(0xff46515f),
-                                        ),
-                                )
-                            }
-                        }
-                    }
+                    GlassNavigation(glass, Tab.entries.map { NavigationEntry(it.title, it.icon, "tab-${it.name.lowercase(Locale.ROOT)}") }, tab.ordinal) { tab = Tab.entries[it] }
                 }
             },
         ) { padding ->
@@ -332,8 +325,7 @@ fun FrameLink(runtime: CameraRuntime) {
                             photos,
                             camera,
                             onConnect = {
-                                notifyPermission()
-                                reconnect()
+                                ensureNetwork { notifyPermission(); reconnect() }
                             },
                             onConnectionSettings = { connectionSettings() },
                             onBrowse = {
@@ -343,12 +335,10 @@ fun FrameLink(runtime: CameraRuntime) {
                                 else runtime.browseRecent()
                             },
                             onFtp = {
-                                notifyPermission()
-                                sheet = Sheet.FTP
+                                ensureNetwork { notifyPermission(); sheet = Sheet.FTP }
                             },
                             onFtpClient = {
-                                notifyPermission()
-                                sheet = Sheet.FTP_CLIENT
+                                ensureNetwork { notifyPermission(); sheet = Sheet.FTP_CLIENT }
                             },
                             onImport = {
                                 picker.launch(arrayOf("image/*", "application/octet-stream"))
@@ -384,7 +374,7 @@ fun FrameLink(runtime: CameraRuntime) {
                                     if (filter == "picked") filter = "all"
                                 }
                                 source = it
-                                if (it == "camera" && camera.info != null) runtime.loadPhotos(true)
+                                if (it == "camera" && camera.info != null) runtime.refreshCameraPhotos()
                             },
                             onFilter = { filter = it },
                             onSelect = ::togglePhoto,
@@ -393,7 +383,7 @@ fun FrameLink(runtime: CameraRuntime) {
                             onImport = {
                                 picker.launch(arrayOf("image/*", "application/octet-stream"))
                             },
-                            onConnect = { reconnect { runtime.loadPhotos(true) } },
+                            onConnect = { reconnect { runtime.refreshCameraPhotos() } },
                             onDownload = { format ->
                                 runtime.enqueueDownload(selection, format)
                                 selection = arrayListOf()
@@ -426,8 +416,8 @@ fun FrameLink(runtime: CameraRuntime) {
                         TransferScreen(
                             tasks,
                             runtime,
-                            onFtp = { sheet = Sheet.FTP },
-                            onFtpClient = { sheet = Sheet.FTP_CLIENT },
+                            onFtp = { ensureNetwork { sheet = Sheet.FTP } },
+                            onFtpClient = { ensureNetwork { sheet = Sheet.FTP_CLIENT } },
                         )
                 }
             }
@@ -437,7 +427,9 @@ fun FrameLink(runtime: CameraRuntime) {
                 sheet = null
                 if (runtime.camera.value.info == null) { afterReconnect = null; reconnectAttempt++ }
             })
-            Sheet.FTP -> FtpSheet(runtime, onClose = { sheet = null })
+            Sheet.FTP -> FtpSheet(runtime, onClose = { sheet = null }, onPhotos = {
+                sheet = null; source = "local"; filter = "all"; tab = Tab.GALLERY
+            })
             Sheet.FTP_CLIENT ->
                 FtpClientScreen(
                     runtime,
@@ -468,6 +460,14 @@ fun FrameLink(runtime: CameraRuntime) {
                 )
             null -> Unit
         }
+        if (networkPermissionHelp) AlertDialog(onDismissRequest = { networkPermissionHelp = false },
+            title = { Text("允许连接附近的相机") },
+            text = { Text("请在系统应用权限中允许附近设备或局域网访问，之后即可使用相机连接和FTP传输。本机图库仍可使用。") },
+            confirmButton = { TextButton(onClick = {
+                networkPermissionHelp = false
+                context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+            }) { Text("打开权限设置") } },
+            dismissButton = { TextButton(onClick = { networkPermissionHelp = false }) { Text("稍后") } })
         localReview?.let {
             LocalReviewScreen(runtime, it, photos, onClose = { localReview = null })
         }
@@ -1018,6 +1018,9 @@ private fun Gallery(
     var bursts by rememberSaveable { mutableStateOf(false) }
     var layout by remember { mutableStateOf(GalleryLayout.from(runtime.settings.get("gallery.layout"))) }
     var choosingLayout by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    var bulkSelection by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val hasMore by runtime.galleryHasMore.collectAsStateWithLifecycle()
     val selectionSet = remember(selection) { selection.toSet() }
     var burst by remember { mutableStateOf<List<Photo>?>(null) }
     val cameraDay by runtime.galleryDay.collectAsStateWithLifecycle()
@@ -1028,6 +1031,7 @@ private fun Gallery(
     val dragContext = "$source:$filter:$bursts:$chosenDay:${layout.key}:${if (source == "camera") camera.info?.id.orEmpty() else ""}"
     var dragGroups by remember(dragContext) { mutableStateOf<List<List<Photo>>?>(null) }
     var choosingDay by remember { mutableStateOf(false) }
+    LaunchedEffect(dragContext) { bulkSelection?.cancel(); bulkSelection = null }
     var follow by rememberSaveable {
         mutableStateOf(runtime.settings.get("gallery.follow") != "false")
     }
@@ -1035,11 +1039,11 @@ private fun Gallery(
         if (follow && source == "local" && state.firstVisibleItemIndex == 0)
             state.animateScrollToItem(0)
     }
-    val photos =
-        all.filter { photo ->
+    fun matching(candidates: List<Photo>, cameraIds: Set<String> = listedIds): List<Photo> =
+        candidates.filter { photo ->
             (if (source == "local") photo.inLibrary
             else
-                camera.info != null && photo.source == PhotoSource.CAMERA.name && photo.id in listedIds) &&
+                camera.info != null && photo.source == PhotoSource.CAMERA.name && photo.id in cameraIds) &&
                 (chosenDay.isBlank() || photoDay(photo) == chosenDay) &&
                 when (filter) {
                     "picked" -> photo.id in selectionSet
@@ -1049,6 +1053,29 @@ private fun Gallery(
                     else -> true
                 }
         }
+    val photos = matching(all)
+    val allSelected = photos.isNotEmpty() && photos.all { it.id in selectionSet } && !(source == "camera" && hasMore)
+    fun selectAll() {
+        if (allSelected) {
+            val visible = photos.map { it.id }.toSet()
+            onSelectionChange(selection.filterNot { it in visible })
+            return
+        }
+        if (source != "camera" || !hasMore) {
+            onSelectionChange((selectionSet + photos.map { it.id }).toList())
+            return
+        }
+        bulkSelection = scope.launch {
+            try {
+                runtime.readAllCameraPhotos()
+                val ids = runtime.currentCameraIds.value
+                val complete = runtime.database.photos().byIds(ids.toList())
+                onSelectionChange((selectionSet + matching(complete, ids).map { it.id }).toList())
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { runtime.notice.value = error.message ?: "未能完成全选，请重试" }
+            finally { bulkSelection = null }
+        }
+    }
     val groups =
         if (bursts) photos.groupBy { it.burstKey.ifBlank { it.id } }.values.toList()
         else photos.map { listOf(it) }
@@ -1104,7 +1131,7 @@ private fun Gallery(
                 if (source == "camera")
                     IconButton(
                         onClick = {
-                            if (camera.info == null) onConnect() else runtime.loadPhotos(true)
+                            if (camera.info == null) onConnect() else runtime.refreshCameraPhotos()
                         }
                     ) {
                         Icon(
@@ -1128,7 +1155,12 @@ private fun Gallery(
                     FilterChip(filter == key, { onFilter(key) }, { Text(label, fontSize = 11.sp) })
                 }
             }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = ::selectAll, enabled = photos.isNotEmpty() && !camera.loadingPhotos && bulkSelection == null) {
+                Text(if (allSelected) "取消全选" else "全选", fontSize = 11.sp)
+            }
             LazyRow(
+                modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1146,7 +1178,10 @@ private fun Gallery(
                         )
                     }
                 }
-                item { FilterChip(bursts, { bursts = !bursts }, { Text("连拍", fontSize = 11.sp) }) }
+                item { FilterChip(bursts, {
+                    bursts = !bursts
+                    if (bursts) runtime.notice.value = "连拍照片会合并成一组，点开可逐张选择"
+                }, { Text(if (bursts) "连拍分组 · 开" else "连拍分组", fontSize = 11.sp) }) }
                 if (source == "local")
                     item {
                         FilterChip(
@@ -1168,8 +1203,14 @@ private fun Gallery(
                 }
                 item { Text("长按滑动多选", fontSize = 10.sp, color = Muted) }
             }
+            }
         }
-        if (displayedGroups.isEmpty())
+        if (displayedGroups.isEmpty() && camera.loadingPhotos && source == "camera")
+            Column(Modifier.weight(1f).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.dp)
+                Text("正在读取相机照片", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 16.dp))
+            }
+        else if (displayedGroups.isEmpty())
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 EmptyState(
                     if (source == "camera" && camera.info == null) "相机已断开"
@@ -1188,7 +1229,7 @@ private fun Gallery(
             }
         else
             LazyVerticalGrid(
-                columns = if(layout == GalleryLayout.LIST) GridCells.Fixed(1) else GridCells.Adaptive(layout.cellDp.dp),
+                columns = GridCells.Fixed(layout.columns),
                 state = state,
                 userScrollEnabled = dragGroups == null,
                 modifier = Modifier.weight(1f).testTag("gallery-grid")
@@ -1203,16 +1244,16 @@ private fun Gallery(
                         }),
                 contentPadding =
                     PaddingValues(
-                        start = 8.dp,
-                        end = 8.dp,
+                        start = if (layout == GalleryLayout.SMALL) 2.dp else 8.dp,
+                        end = if (layout == GalleryLayout.SMALL) 2.dp else 8.dp,
                         top = 4.dp,
                         bottom = if (selection.isEmpty()) 144.dp else 8.dp,
                     ),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(if (layout == GalleryLayout.SMALL) 2.dp else 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (layout == GalleryLayout.SMALL) 2.dp else 8.dp),
             ) {
                 items(displayedGroups, key = { it.first().id }) { group ->
-                    GalleryMediaItem(runtime, group, selectionSet, layout == GalleryLayout.LIST,
+                    GalleryMediaItem(runtime, group, selectionSet, layout == GalleryLayout.LIST, layout == GalleryLayout.SMALL,
                         onOpen = { follow = false; runtime.settings.put("gallery.follow","false"); if(group.size>1) burst=group else onOpen(group.first()) },
                         onSelection = onSelectionChange)
                 }
@@ -1265,6 +1306,12 @@ private fun Gallery(
                 }
             }
     }
+    if (bulkSelection != null) AlertDialog(
+        onDismissRequest = { bulkSelection?.cancel() }, title = { Text("正在读取全部照片") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Text("已读取 ${listedIds.size} 张，将按当前日期和筛选全选")
+        } }, confirmButton = {}, dismissButton = { TextButton(onClick = { bulkSelection?.cancel() }) { Text("取消") } })
     if (download)
         AlertDialog(
             onDismissRequest = { download = false },
@@ -1574,8 +1621,8 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
 }
 
 @Composable
-private fun FtpSheet(runtime: CameraRuntime, onClose: () -> Unit) {
-    FtpReceiverOptions(runtime, onClose)
+private fun FtpSheet(runtime: CameraRuntime, onClose: () -> Unit, onPhotos: () -> Unit) {
+    FtpReceiverOptions(runtime, onClose, onPhotos)
 }
 
 @Composable
@@ -2799,7 +2846,7 @@ private fun ComparePhotos(runtime: CameraRuntime, photos: List<Photo>, selection
 private fun PhotoSelectionAction(selected: Boolean, onClick: () -> Unit) {
     Column(
         Modifier.clip(UiTokens.control)
-            .background(if (selected) Brand else Color.Transparent)
+            .background(if (selected) SelectionAccent else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 13.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

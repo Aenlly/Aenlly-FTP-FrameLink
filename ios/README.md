@@ -24,11 +24,11 @@ sh scripts/build-ios.sh
 open ios/FrameLink.xcodeproj
 ```
 
-脚本生成`ios/Frameworks/Camera.xcframework`并构建iOS Simulator App，输出`artifacts/FrameLink-0.1.5-ios-simulator.zip`。相机协议与FTP直接调用Go桥，原片以文件路径传递，不把整张RAW搬过Swift桥。
+脚本生成`ios/Frameworks/Camera.xcframework`并构建iOS Simulator App，输出`artifacts/FrameLink-0.1.6-ios-simulator.zip`。相机协议与FTP直接调用Go桥，原片以文件路径传递，不把整张RAW搬过Swift桥。
 
 模拟器使用本机临时签名，以便Keychain正常保存连接信息，不需要开发者账号。相机框架为静态库，只链接、不重复嵌入。实体iPhone仍需配置自己的开发团队与签名。
 
-安装到iPhone：在Xcode选择自己的开发团队、签名与设备后运行。仓库不包含开发者证书，不提供未签名IPA冒充可安装包。相机网络权限在首次访问局域网时由系统询问。
+安装到iPhone：可在Xcode选择自己的开发团队和设备后运行，或生成IPA后使用自签工具安装，无需上架App Store。[朋友试装与IPA构建](INSTALL.md)。相机网络权限在首次访问局域网时由系统询问。
 
 ## 检查
 

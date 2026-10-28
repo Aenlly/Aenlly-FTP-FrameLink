@@ -466,7 +466,10 @@ private fun FtpConnectionForm(
 }
 
 @Composable
-internal fun FtpReceiverOptions(runtime: CameraRuntime, onClose: () -> Unit) {
+internal fun FtpReceiverOptions(runtime: CameraRuntime, onClose: () -> Unit, onPhotos: () -> Unit = {}) {
+    val context = LocalContext.current
+    var passwordVisible by rememberSaveable { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
     val status by runtime.ftpStatus.collectAsStateWithLifecycle()
     var addresses by remember { mutableStateOf(FtpReceiver.addresses()) }
     var address by rememberSaveable {
@@ -489,10 +492,31 @@ internal fun FtpReceiverOptions(runtime: CameraRuntime, onClose: () -> Unit) {
         mutableStateOf(runtime.settings.get("ftp.port").ifBlank { "2121" })
     }
     var advanced by rememberSaveable { mutableStateOf(false) }
-    val running = runtime.ftp != null
-    ModalSheet("FTP 接收 · 边拍边传", onClose) {
-        Info("相机或其他FTP客户端向手机上传文件。手机与设备需连接同一Wi-Fi，或让设备连接手机热点。")
+    val running by runtime.ftpRunning.collectAsStateWithLifecycle()
+    ModalSheet("FTP 接收 · 边拍边传", onClose, footer = {
+        if (!running) Primary("启动照片接收", address.isNotBlank() && user.isNotBlank() && password.length >= 8 && (port.toIntOrNull() ?: 0) in 1024..65535, Icons.Outlined.Wifi) {
+            runtime.settings.put("ftp.address", address)
+            runtime.settings.put("ftp.user", user)
+            runtime.settings.put("ftp.password", password)
+            runtime.settings.put("ftp.port", port)
+            runtime.startFtp(address, port.toInt(), user, password)
+        } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(onClick = { runtime.stopFtp() }) { Text("停止接收") }
+            Button(onClick = onPhotos, modifier = Modifier.weight(1f)) { Text("查看已接收照片") }
+        }
+    }) {
+        Text(if (running) "接收服务在线" else "让相机把照片传到手机", fontSize = 17.sp, fontWeight = FontWeight.Medium)
         Text(status, color = Brand, fontSize = 12.sp)
+        Info("同一Wi-Fi或手机热点 → 启动接收 → 在相机中填写下方配置。下次会保留账号和端口。")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(enabled = address.isNotBlank(), onClick = {
+                context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("相机FTP配置", "服务器：$address\n端口：$port\n账号：$user\n远程目录：/\n传输模式：被动（PASV）"))
+                copied = true
+            }) { Icon(Icons.Outlined.ContentCopy, null, Modifier.size(16.dp)); Text(if (copied) "已复制连接信息" else "复制连接信息", fontSize = 12.sp) }
+            TextButton(onClick = {
+                context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("FTP接收密码", password))
+            }) { Text("复制密码", fontSize = 12.sp) }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("手机接收地址", Modifier.weight(1f), fontSize = 13.sp)
             TextButton(
@@ -521,6 +545,10 @@ internal fun FtpReceiverOptions(runtime: CameraRuntime, onClose: () -> Unit) {
             password,
             { password = it },
             label = { Text("接收密码") },
+            visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = { IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                Icon(if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility, "显示或隐藏接收密码")
+            } },
             enabled = !running,
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -535,22 +563,6 @@ internal fun FtpReceiverOptions(runtime: CameraRuntime, onClose: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         )
         Info("在相机FTP设置中填写所选手机地址、端口、账号与密码；使用被动模式和UTF-8文件名。")
-        if (!running)
-            Primary(
-                "启动照片接收",
-                address.isNotBlank() &&
-                    user.isNotBlank() &&
-                    password.length >= 8 &&
-                    (port.toIntOrNull() ?: 0) in 1024..65535,
-                Icons.Outlined.Wifi,
-            ) {
-                runtime.settings.put("ftp.address", address)
-                runtime.settings.put("ftp.user", user)
-                runtime.settings.put("ftp.password", password)
-                runtime.settings.put("ftp.port", port)
-                runtime.startFtp(address, port.toInt(), user, password)
-            }
-        else OutlinedButton(onClick = { runtime.stopFtp() }) { Text("停止接收") }
         TextButton(onClick = { advanced = !advanced }) {
             Text(if (advanced) "收起保存与压缩设置" else "保存位置与压缩副本")
         }

@@ -98,12 +98,13 @@ class BluetoothRemote(
 
     fun scan() {
         check(manager.adapter?.isEnabled == true) { "请先打开手机蓝牙" }
+        val scanner = checkNotNull(manager.adapter.bluetoothLeScanner) { "手机蓝牙扫描暂不可用，请重新开启蓝牙" }
         devices.value = emptyList()
         state.value = "扫描中，请在相机开启蓝牙遥控配对"
-        manager.adapter.bluetoothLeScanner.startScan(scan)
+        scanner.startScan(scan)
         scope.launch {
             delay(12000)
-            manager.adapter.bluetoothLeScanner.stopScan(scan)
+            scanner.stopScan(scan)
             if (!ready.value) state.value = "扫描结束，选择相机或重新扫描"
         }
     }

@@ -60,10 +60,12 @@ class PhysicalCoreUiAcceptanceTest {
         connect()
         val originals = runBlocking { runtime.database.photos().all() }.flatMap { it.files() }.map { it.originalPath }.filter { it.isNotBlank() && File(it).isFile }.distinct()
         val hashes = originals.associateWith { MediaFiles.digest(File(it).inputStream()) }
+        val previousLayout = runtime.settings.get("gallery.layout")
         var batchId: String? = null
         try {
             clickText("图库"); clickText("相机内")
             waitFor(45000) { runtime.currentCameraIds.value.isNotEmpty() }
+            clickDescription("显示方式"); clickText("中图")
             val page = runBlocking { runtime.database.photos().observe().first().filter { it.id in runtime.currentCameraIds.value } }
             assertTrue(page.size >= 2)
             val first = page.first()
@@ -72,6 +74,15 @@ class PhysicalCoreUiAcceptanceTest {
             clickDescription("关闭照片")
             waitFor { findDescription("选择 ${first.name}")?.isChecked == true }
             clickDescription("选择 ${page[1].name}"); waitFor { hasText("已选 2") }
+            GalleryLayout.entries.forEach { layout ->
+                clickDescription("显示方式"); clickText(layout.title)
+                waitFor { runtime.settings.get("gallery.layout") == layout.key && hasText("已选 2") }
+                assertGridSelection(first.name, backwards = true)
+                assertGridSelection(page[1].name)
+            }
+            screenshot("physical-gallery-list")
+            clickDescription("显示方式"); clickText("中图")
+            assertGridSelection(first.name, backwards = true)
             clickDescription("清空本次选择")
             waitFor { nodes().none { it.text?.toString()?.matches(Regex("已选 \\d+")) == true } }
             dragBetween(findDescription("查看 ${first.name}")!!, findDescription("查看 ${page[1].name}")!!)
@@ -104,13 +115,19 @@ class PhysicalCoreUiAcceptanceTest {
             clickText("已导入")
             // 断线后直接使用已经下载的本机原片，原始字节保持完整
             assertEquals(output.size, File(output.originalPath).length())
-            runtime.connect(runtime.savedConnection())
+            clickText("相机"); clickText("连接相机")
             waitFor(45000) { runtime.camera.value.info != null }
+            assertFalse("已保存相机应直接重连，不打开设置页", hasText("相机IP地址"))
             hashes.forEach { (file, hash) -> assertEquals(hash, MediaFiles.digest(File(file).inputStream())) }
             report("core-ui.json", JSONObject().put("camera", "ILCE-7CM2").put("firmware", runtime.camera.value.info!!.firmware)
                 .put("listed", page.size).put("selected", 2).put("dragSelection", true).put("downloadedBytes", File(output.originalPath).length())
-                .put("preexistingOriginalsVerified", hashes.size).put("batchPages", sheets.size).put("reconnect", true))
-        } finally { batchId?.let { runBlocking { runtime.batches.delete(it) } }; automation.setRotation(UiAutomation.ROTATION_UNFREEZE) }
+                .put("preexistingOriginalsVerified", hashes.size).put("batchPages", sheets.size).put("reconnect", true)
+                .put("directReconnect", true).put("layoutsPreserveSelection", GalleryLayout.entries.map { it.key }))
+        } finally {
+            runtime.settings.put("gallery.layout", previousLayout)
+            batchId?.let { runBlocking { runtime.batches.delete(it) } }
+            automation.setRotation(UiAutomation.ROTATION_UNFREEZE)
+        }
     }
 
     @Test
@@ -123,10 +140,12 @@ class PhysicalCoreUiAcceptanceTest {
             waitFor(30000) { runtime.frame.value?.isNotEmpty() == true }
             dismissFullscreenEducation()
             waitFor { hasText("光圈") }
+            assertFalse("主取景页不常驻协议型号", hasText("ILCE-7CM2"))
+            screenshot("physical-live-portrait-camera")
             clickText("专业工具")
             val focus = runtime.properties.value.firstOrNull { it.code == 0x500A }
             if (focus != null && CameraPropertyText.editable(focus)) {
-                // 参数栏可以水平滚动，使用坐标仅滑动这一条控件区域
+                // 专业参数在独立面板中纵向滚动
                 repeat(4) {
                     if (!hasText("对焦模式")) {
                         nodes().firstOrNull { it.isScrollable }
@@ -140,6 +159,8 @@ class PhysicalCoreUiAcceptanceTest {
                     assertFalse(hasText("32772")); clickText("关闭")
                 }
             }
+            screenshot("physical-live-chinese")
+            clickDescription("收起工具")
             val metrics = app.getSystemService(android.view.WindowManager::class.java).currentWindowMetrics
             val safeBottom = metrics.bounds.height() - metrics.windowInsets.getInsetsIgnoringVisibility(android.view.WindowInsets.Type.navigationBars()).bottom
             val bounds = Rect(); findDescription("拍摄")!!.getBoundsInScreen(bounds)
@@ -148,12 +169,12 @@ class PhysicalCoreUiAcceptanceTest {
             assertTrue("快门应位于系统手势区上方，快门=$bounds，安全底部=$safeBottom，窗口=${metrics.bounds}", bounds.bottom < safeBottom - 12)
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }; val frame = runtime.frame.value!!
             BitmapFactory.decodeByteArray(frame, 0, frame.size, options)
-            screenshot("physical-live-chinese")
-            clickDescription("收起工具")
             clickDescription("沉浸取景"); waitFor { findDescription("显示取景控制") != null }
             clickDescription("显示取景控制")
             assertTrue(automation.setRotation(UiAutomation.ROTATION_FREEZE_90))
-            waitFor { app.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && findDescription("显示取景控制")?.stateDescription == "取景画面已显示" }
+            waitFor { app.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && findDescription("沉浸取景") != null }
+            clickDescription("沉浸取景")
+            waitFor { findDescription("显示取景控制")?.stateDescription == "取景画面已显示" }
             val landscapeBounds = Rect(); automation.rootInActiveWindow.getBoundsInScreen(landscapeBounds)
             val screen = app.getSystemService(android.view.WindowManager::class.java).maximumWindowMetrics.bounds
             // 无障碍矩形可能向下取整，允许两个物理像素的边界舍入差
@@ -166,6 +187,9 @@ class PhysicalCoreUiAcceptanceTest {
             val menuBounds = Rect(); automation.rootInActiveWindow.getBoundsInScreen(menuBounds)
             assertEquals("显示菜单不能挤小取景窗口", landscapeBounds, menuBounds)
             screenshot("physical-live-landscape-glass")
+            clickText("专业工具")
+            screenshot("physical-live-landscape-tools")
+            clickDescription("收起工具")
             assertTrue(automation.setRotation(UiAutomation.ROTATION_FREEZE_0))
             waitFor { app.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT && findDescription("沉浸取景") != null }
             aperture = runtime.properties.value.firstOrNull { it.code == 0x5007 && it.writable }
@@ -193,6 +217,7 @@ class PhysicalCoreUiAcceptanceTest {
     }
 
     private fun nodes(): List<AccessibilityNodeInfo> {
+        if (Build.VERSION.SDK_INT >= 33) automation.clearCache()
         val result = mutableListOf<AccessibilityNodeInfo>()
         fun visit(node: AccessibilityNodeInfo) { if (node.isVisibleToUser) result += node; for (index in 0 until node.childCount) node.getChild(index)?.let(::visit) }
         automation.rootInActiveWindow?.takeIf { it.packageName == app.packageName }?.let(::visit)
@@ -244,6 +269,18 @@ class PhysicalCoreUiAcceptanceTest {
     private fun dragBetween(first: AccessibilityNodeInfo, second: AccessibilityNodeInfo) {
         val a = Rect(); val b = Rect(); first.getBoundsInScreen(a); second.getBoundsInScreen(b)
         swipe(a.centerX().toFloat(), a.top + a.width() / 2f, b.centerX().toFloat(), b.top + b.width() / 2f, true)
+    }
+    private fun assertGridSelection(name: String, backwards: Boolean = false) {
+        repeat(8) {
+            findDescription("选择 $name")?.let { node ->
+                assertTrue("显示方式切换后应保留选择：$name", node.isChecked)
+                return
+            }
+            nodes().filter { it.isScrollable }.maxByOrNull { node -> Rect().apply { node.getBoundsInScreen(this) }.height() }?.performAction(
+                if (backwards) AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD else AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            SystemClock.sleep(200)
+        }
+        error("滚动后未找到照片：$name")
     }
     private fun swipe(x: Float, y: Float, endX: Float, endY: Float, longPress: Boolean = false) {
         val start = SystemClock.uptimeMillis()

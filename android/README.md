@@ -1,6 +1,8 @@
 # 光屿 FrameLink Android
 
-包名`app.framelink.camera`，最低Android 8.0/API26，当前提供arm64和x86_64原生协议库
+包名`app.framelink.camera`，编译与目标版本为Android17/API37，最低兼容Android8/API26，提供arm64和x86_64原生协议库
+
+Android17首次连接相机或打开FTP时请求局域网权限。图库的小图／中图／大图分别为5／3／2列；全选按当前日期和筛选处理，相机还有分页时可继续读取或取消。
 
 ## 构建
 
@@ -11,7 +13,7 @@ python3 scripts/bootstrap.py
 sh scripts/build-android.sh
 ```
 
-生成`artifacts/FrameLink-0.1.5-debug.apk`。这是Android开发证书签名的测试包，正式签名、商店提交与公开发布是独立步骤
+生成`artifacts/FrameLink-0.1.6-debug.apk`。这是Android开发证书签名的测试包，正式签名、商店提交与公开发布是独立步骤
 
 ## 连接相机
 

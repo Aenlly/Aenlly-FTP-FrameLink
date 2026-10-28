@@ -40,7 +40,7 @@ class GalleryInteractionAcceptanceTest {
             val photos = seed(2)
             runBlocking { runtime.database.photos().save(photos[0].copy(mark = PhotoMark.PICKED.name)) }
             gallery()
-            compose.onNodeWithText(photos[0].name).performClick()
+            compose.onNodeWithContentDescription("查看 ${photos[0].name}").performTouchInput { click(Offset(width * .25f, height * .25f)) }
             compose.onNodeWithText("排除").assertDoesNotExist()
             compose.onNodeWithText("选中").assertDoesNotExist()
             compose.onNodeWithText("选择", substring = false).performClick()
@@ -49,9 +49,9 @@ class GalleryInteractionAcceptanceTest {
             checkbox(photos[0]).assertIsOn()
             compose.onNodeWithText("已选 1").assertIsDisplayed()
             compose.onNodeWithText("已选", substring = false).performClick()
-            compose.onNodeWithText(photos[0].name).assertIsDisplayed()
-            compose.onNodeWithText(photos[1].name).assertDoesNotExist()
-            compose.onNodeWithText(photos[0].name).performClick()
+            compose.onNodeWithContentDescription("查看 ${photos[0].name}").assertIsDisplayed()
+            compose.onNodeWithContentDescription("查看 ${photos[1].name}").assertDoesNotExist()
+            compose.onNodeWithContentDescription("查看 ${photos[0].name}").performTouchInput { click(Offset(width * .25f, height * .25f)) }
             compose.onNodeWithText("已选择").performClick()
             compose.onNodeWithContentDescription("关闭照片").performClick()
             compose.onNodeWithText("还没有选择照片").assertIsDisplayed()
@@ -108,7 +108,7 @@ class GalleryInteractionAcceptanceTest {
             val photos = seed(4)
             runBlocking { runtime.database.photos().saveAll(photos.take(2).map { it.copy(burstKey = "qa-burst") }) }
             gallery()
-            compose.onNodeWithText("连拍", substring = false).performClick()
+            compose.onNodeWithText("连拍分组", substring = false).performClick()
             checkbox(photos[0]).performClick()
             compose.onNodeWithText("已选 2").assertIsDisplayed()
             checkbox(photos[0]).assertIsOn()

@@ -28,9 +28,15 @@ class LiveViewUsabilityAcceptanceTest {
             compose.waitUntil(20000) { runtime.frame.value?.isNotEmpty() == true }
             dismissFullscreenEducation()
             compose.waitUntil(20000) { compose.onAllNodes(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "取景画面已显示")).fetchSemanticsNodes().isNotEmpty() }
+            val scene = compose.onNodeWithTag("fullscreen-scene").fetchSemanticsNode().id
+            compose.onNodeWithText("专业工具").performClick()
             compose.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             compose.waitUntil(15000) { compose.activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
             compose.waitForIdle()
+            assertEquals("旋转不应重建取景窗口", scene, compose.onNodeWithTag("fullscreen-scene").fetchSemanticsNode().id)
+            compose.onNodeWithTag("live-tools-panel").assertIsDisplayed()
+            compose.onNodeWithContentDescription("收起工具").performClick()
+            compose.onNodeWithContentDescription("沉浸取景").performClick()
             val bounds = compose.onNodeWithTag("fullscreen-scene").fetchSemanticsNode().boundsInWindow
             val metrics = compose.activity.getSystemService(android.view.WindowManager::class.java).currentWindowMetrics.bounds
             assertTrue("横屏窗口宽度=$bounds，屏幕=$metrics", bounds.width >= metrics.width() * .95f)
@@ -53,6 +59,18 @@ class LiveViewUsabilityAcceptanceTest {
             }
             compose.waitForIdle()
             acceptanceScreenshot(compose.activity, "live-landscape-glass-controls")
+            compose.onNodeWithText("专业工具").performClick()
+            val panel = compose.onNodeWithTag("live-tools-panel").fetchSemanticsNode().boundsInWindow
+            assertTrue("横屏专业面板应控制在屏幕宽度的40%以内：$panel / $bounds", panel.width <= bounds.width * .40f)
+            assertEquals("专业面板不应缩小横屏取景", pictureBounds, compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow)
+            acceptanceScreenshot(compose.activity, "live-landscape-compact-tools")
+            compose.onNodeWithText("预览辅助").performClick()
+            compose.onNodeWithTag("live-properties").performScrollToNode(hasContentDescription("直方图"))
+            compose.onNodeWithContentDescription("直方图", substring = false).performClick()
+            val histogram = compose.onNodeWithTag("live-histogram").fetchSemanticsNode().boundsInWindow
+            assertTrue("直方图只作角落参考", histogram.width <= bounds.width * .18f && histogram.height <= bounds.height * .25f)
+            compose.onNodeWithContentDescription("收起工具").performClick()
+            acceptanceScreenshot(compose.activity, "live-landscape-small-histogram")
             compose.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             compose.waitUntil(15000) { compose.activity.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT }
             compose.onNodeWithContentDescription("返回相机").performClick()

@@ -2,6 +2,8 @@ package app.framelink.camera
 
 import java.util.Locale
 
+internal val SelectionAccent = androidx.compose.ui.graphics.Color(0xff287af3)
+
 /** 同一次拍摄的格式与保存状态分开呈现，JPEG已导入不代表RAW也已保存 */
 internal fun CameraFile.formatTitle(): String = when {
     raw -> "RAW"
@@ -29,7 +31,7 @@ internal fun CameraInfo.displayName(): String = when (model) {
 internal fun ConnectionConfig.canReconnectDirectly(): Boolean = host.isNotBlank() &&
     (user.isBlank() || (password.isNotBlank() && fingerprint.isNotBlank()))
 
-internal enum class GalleryLayout(val key: String, val title: String, val cellDp: Int) {
-    SMALL("small", "小图", 88), MEDIUM("medium", "中图", 116), LARGE("large", "大图", 192), LIST("list", "列表", 96);
+internal enum class GalleryLayout(val key: String, val title: String, val columns: Int) {
+    SMALL("small", "小图", 5), MEDIUM("medium", "中图", 3), LARGE("large", "大图", 2), LIST("list", "列表", 1);
     companion object { fun from(key: String) = entries.firstOrNull { it.key == key } ?: MEDIUM }
 }

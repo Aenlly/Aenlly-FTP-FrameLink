@@ -67,13 +67,16 @@ class CameraRuntime(
     val captureDates = MutableStateFlow<List<String>>(emptyList())
     val galleryDay = MutableStateFlow("")
     val currentCameraIds = MutableStateFlow<Set<String>>(emptySet())
+    val galleryHasMore = MutableStateFlow(false)
     val captureCountdown = MutableStateFlow(0)
     val lastCapture = MutableStateFlow<Photo?>(null)
     val liveMetadata = MutableStateFlow("")
     val ftpStatus = MutableStateFlow("未启动接收")
+    val ftpRunning = MutableStateFlow(false)
     val ftpClient = FtpClientController(this)
     val bluetooth = BluetoothRemote(context, scope, settings) { notice.value = it }
     private val queue = Mutex()
+    private val galleryQueue = Mutex()
     private var liveJob: Job? = null
     private var connectionMonitor: Job? = null
     private var captureJob: Job? = null
@@ -224,6 +227,7 @@ class CameraRuntime(
                     if (connectionGeneration.get() != generation) return@launch
                     settings.put("camera.config", Json.encode(config))
                     currentCameraIds.value = emptySet()
+                    galleryHasMore.value = false
                     properties.value = choices
                     captureDates.value = dates
                     mutableCamera.value = CameraStatus(info = info, message = "已连接 ${info.model}")
@@ -272,6 +276,7 @@ class CameraRuntime(
         native.close()
         mutableCamera.value = CameraStatus(message = "相机已断开，手机中的照片已保留")
         currentCameraIds.value = emptySet()
+        galleryHasMore.value = false
         properties.value = emptyList()
         parameterUpdating.value = null
         captureDates.value = emptyList()
@@ -281,6 +286,24 @@ class CameraRuntime(
     fun browseRecent() {
         val day = captureDates.value.firstOrNull().orEmpty()
         selectCameraDay(day)
+    }
+
+    fun refreshCameraPhotos() {
+        selectCameraDay(galleryDay.value.takeIf { it in captureDates.value }
+            ?: captureDates.value.firstOrNull().orEmpty())
+    }
+
+    /** 批量选片只补齐当前相机索引，由用户随后决定下载格式 */
+    suspend fun readAllCameraPhotos() {
+        val generation = connectionGeneration.get()
+        while (mutableCamera.value.loadingPhotos) delay(50)
+        while (galleryHasMore.value) {
+            check(connectionGeneration.get() == generation && mutableCamera.value.info != null) { "相机连接已变化，请重新选择" }
+            val previous = cursor
+            loadPhotos().join()
+            check(cursor != previous || !galleryHasMore.value) { "相机列表未能继续读取，请重试" }
+        }
+        check(connectionGeneration.get() == generation && mutableCamera.value.info != null) { "相机已断开" }
     }
 
     fun selectCameraDay(day: String) {
@@ -298,69 +321,73 @@ class CameraRuntime(
 
     fun loadPhotos(reset: Boolean = false, slot: Int = currentSlot, sinceMillis: Long = 0) =
         scope.launch {
-            if (mutableCamera.value.loadingPhotos) return@launch
-            if (mutableCamera.value.info == null) {
-                notice.value = "请先连接相机"
-                return@launch
-            }
-            if (!reset && cursor == 0L && currentSlot == slot) {
-                notice.value = "请使用刷新开始读取相机照片"
-                return@launch
-            }
-            mutableCamera.value = mutableCamera.value.copy(loadingPhotos = true)
-            try {
-                if (reset || slot != currentSlot) {
-                    cursor = sinceMillis
-                    currentSlot = slot
-                    currentCameraIds.value = emptySet()
+            galleryQueue.withLock {
+                val generation = connectionGeneration.get()
+                if (mutableCamera.value.info == null) {
+                    notice.value = "请先连接相机"
+                    return@launch
                 }
-                val page = native.page(currentSlot, cursor)
-                val existingPhotos =
-                    database.photos().byIds(page.items.map { it.id }).associateBy { it.id }
-                val records =
-                    page.items
-                        .filter { it.files.any { file -> file.image } }
-                        .map { item ->
-                            val existing = existingPhotos[item.id]
-                            val merged =
-                                item.files.map { file ->
-                                    existing
-                                        ?.files()
-                                        ?.find { canReuseCameraFile(file, it) }
-                                        ?.let {
-                                            file.copy(
-                                                localUri = it.localUri,
-                                                originalPath = it.originalPath,
-                                            )
-                                        } ?: file
-                                }
-                            Photo(
-                                item.id,
-                                item.id,
-                                item.files.firstOrNull()?.name ?: "照片",
-                                PhotoSource.CAMERA.name,
-                                item.capturedAt,
-                                Json.encode(merged),
-                                item.contentId,
-                                item.slot,
-                                existing?.previewPath.orEmpty(),
-                                existing?.mark ?: PhotoMark.NONE.name,
-                                existing?.projectId.orEmpty(),
-                                if (item.groupId > 0)
-                                    "${mutableCamera.value.info?.id}:${item.groupId}"
-                                else item.id,
-                                existing?.published ?: false,
-                                existing?.localHidden ?: false,
-                            )
-                        }
-                database.photos().saveAll(records)
-                currentCameraIds.value = currentCameraIds.value + records.map { it.id }
-                cursor = page.nextCursor
-                notice.value = if (cursor == 0L) "本次列表已读取完成" else "已读取一页，继续下拉加载更多"
-            } catch (error: Exception) {
-                notice.value = error.message ?: "照片列表读取失败"
-            } finally {
-                mutableCamera.value = mutableCamera.value.copy(loadingPhotos = false)
+                if (!reset && cursor == 0L && currentSlot == slot) {
+                    notice.value = "请使用刷新开始读取相机照片"
+                    return@launch
+                }
+                mutableCamera.value = mutableCamera.value.copy(loadingPhotos = true)
+                try {
+                    if (reset || slot != currentSlot) {
+                        cursor = sinceMillis
+                        currentSlot = slot
+                        currentCameraIds.value = emptySet()
+                    }
+                    val page = native.page(currentSlot, cursor)
+                    if (generation != connectionGeneration.get()) return@withLock
+                    val existingPhotos =
+                        database.photos().byIds(page.items.map { it.id }).associateBy { it.id }
+                    val records =
+                        page.items
+                            .filter { it.files.any { file -> file.image } }
+                            .map { item ->
+                                val existing = existingPhotos[item.id]
+                                val merged =
+                                    item.files.map { file ->
+                                        existing
+                                            ?.files()
+                                            ?.find { canReuseCameraFile(file, it) }
+                                            ?.let {
+                                                file.copy(
+                                                    localUri = it.localUri,
+                                                    originalPath = it.originalPath,
+                                                )
+                                            } ?: file
+                                    }
+                                Photo(
+                                    item.id,
+                                    item.id,
+                                    item.files.firstOrNull()?.name ?: "照片",
+                                    PhotoSource.CAMERA.name,
+                                    item.capturedAt,
+                                    Json.encode(merged),
+                                    item.contentId,
+                                    item.slot,
+                                    existing?.previewPath.orEmpty(),
+                                    existing?.mark ?: PhotoMark.NONE.name,
+                                    existing?.projectId.orEmpty(),
+                                    if (item.groupId > 0)
+                                        "${mutableCamera.value.info?.id}:${item.groupId}"
+                                    else item.id,
+                                    existing?.published ?: false,
+                                    existing?.localHidden ?: false,
+                                )
+                            }
+                    database.photos().saveAll(records)
+                    currentCameraIds.value = currentCameraIds.value + records.map { it.id }
+                    cursor = page.nextCursor
+                    galleryHasMore.value = cursor != 0L
+                    notice.value = if (cursor == 0L) "本次列表已读取完成" else "已读取一页，继续下拉加载更多"
+                } catch (error: Exception) {
+                    notice.value = error.message ?: "照片列表读取失败"
+                } finally {
+                    if (generation == connectionGeneration.get()) mutableCamera.value = mutableCamera.value.copy(loadingPhotos = false)
+                }
             }
         }
 
@@ -1084,9 +1111,11 @@ class CameraRuntime(
                         scope.launch { runTasks() }
                     }
                 ftp!!.start(address, port, user, password)
+                ftpRunning.value = true
             } catch (error: Exception) {
                 ftp?.stop()
                 ftp = null
+                ftpRunning.value = false
                 ftpStatus.value = "启动失败"
                 notice.value = error.message.orEmpty()
             }
@@ -1095,6 +1124,7 @@ class CameraRuntime(
     fun stopFtp() {
         ftp?.stop()
         ftp = null
+        ftpRunning.value = false
         ftpStatus.value = "接收已停止，已保存照片不受影响"
     }
 

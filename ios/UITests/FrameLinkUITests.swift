@@ -20,6 +20,10 @@ final class FrameLinkUITests: XCTestCase {
     XCTAssertTrue(app.staticTexts["QA_6.ARW"].waitForExistence(timeout: 5))
     app.buttons["完成"].tap()
     app.buttons["关闭照片"].tap()
+    app.buttons["全选"].tap()
+    XCTAssertTrue(app.buttons["已选 6 ×"].waitForExistence(timeout: 5))
+    app.buttons["取消全选"].tap()
+    XCTAssertFalse(app.buttons["已选 6 ×"].exists)
   }
 
   func testDragSelectionCanDeselectInsideSelectedFilter() throws {
@@ -87,6 +91,27 @@ final class FrameLinkUITests: XCTestCase {
     attachment.name = "ios-live-glass"
     attachment.lifetime = .keepAlways
     add(attachment)
+    app.buttons["专业工具"].tap()
+    XCUIDevice.shared.orientation = .landscapeLeft
+    let panel = app.descendants(matching: .any).matching(identifier: "live-tools-panel").firstMatch
+    XCTAssertTrue(panel.waitForExistence(timeout: 5))
+    XCTAssertLessThanOrEqual(panel.frame.width, app.frame.width * 0.4)
+    app.buttons["预览辅助"].tap()
+    let histogramSwitch = app.switches["直方图"]
+    XCTAssertTrue(histogramSwitch.waitForExistence(timeout: 5), app.debugDescription)
+    if !histogramSwitch.isHittable { app.scrollViews["live-properties"].swipeUp() }
+    histogramSwitch.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+    XCTAssertEqual(String(describing: histogramSwitch.value ?? ""), "1")
+    app.buttons["收起工具"].tap()
+    let histogram = app.descendants(matching: .any).matching(identifier: "live-histogram").firstMatch
+    XCTAssertTrue(histogram.waitForExistence(timeout: 5), app.debugDescription)
+    XCTAssertLessThanOrEqual(histogram.frame.width, app.frame.width * 0.18)
+    XCTAssertLessThanOrEqual(histogram.frame.height, app.frame.height * 0.25)
+    let compact = XCTAttachment(screenshot: app.screenshot())
+    compact.name = "ios-live-small-histogram"
+    compact.lifetime = .keepAlways
+    add(compact)
+    XCUIDevice.shared.orientation = .portrait
     app.buttons["返回相机"].tap()
   }
 

@@ -44,18 +44,34 @@ interface LocalReviewDao {
     @Query("SELECT * FROM local_reviews WHERE id=:id") suspend fun find(id: String): LocalReview?
 
     @Upsert suspend fun save(review: LocalReview)
+    @Query("DELETE FROM local_reviews WHERE id=:id") suspend fun delete(id: String)
 }
 
 class LocalReviewRepository(private val context: Context, private val db: LocalDatabase) {
     private val writes = Mutex()
 
+    suspend fun rename(id: String, title: String) = writes.withLock { withContext(Dispatchers.IO) {
+        require(title.trim().isNotBlank() && title.trim().length <= 160) { "请填写160字以内的姓名、手机号或场次名称" }
+        val review = db.reviews().find(id) ?: error("选片记录不存在")
+        db.reviews().save(review.copy(title = title.trim(), updatedAt = System.currentTimeMillis()))
+    } }
+
+    suspend fun delete(id: String) = writes.withLock { withContext(Dispatchers.IO) {
+        UUID.fromString(id)
+        db.reviews().delete(id)
+        File(context.filesDir, "media/reviews/$id.csv").delete()
+        File(context.cacheDir, "selection-sheets/$id").deleteRecursively()
+        Unit
+    } }
+
     suspend fun create(title: String, photos: List<String>): LocalReview =
         withContext(Dispatchers.IO) {
             require(photos.isNotEmpty()) { "先选择一些照片，再进入客户选片" }
+            require(title.trim().isNotBlank() && title.trim().length <= 160) { "请填写160字以内的姓名、手机号或场次名称" }
             val review =
                 LocalReview(
                     UUID.randomUUID().toString(),
-                    title.take(160),
+                    title.trim(),
                     Json.encode(photos.distinct()),
                 )
             db.reviews().save(review)

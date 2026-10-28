@@ -194,6 +194,23 @@ func (s *Session) camera() (*ptpip.Client, context.Context, error) {
 	return s.client, s.ctx, nil
 }
 
+// Connected observes transport state without sending a command to the camera.
+func (s *Session) Connected() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.client == nil || s.ctx == nil {
+		return false
+	}
+	select {
+	case <-s.client.Done():
+		return false
+	case <-s.ctx.Done():
+		return false
+	default:
+		return true
+	}
+}
+
 // Dates returns camera wall-clock capture days, encoded as YYYY-MM-DD without applying phone timezone.
 func (s *Session) Dates(slot int) (string, error) {
 	s.op.Lock()
@@ -382,7 +399,7 @@ func (s *Session) Properties() (string, error) {
 	}
 	rows := make([]map[string]any, 0)
 	for _, p := range props {
-		info, known := propdb.Lookup(p.Code)
+		info, known := cameraPropertyInfo(p.Code)
 		if !known || !safeGroup(info.Group) {
 			continue
 		}
@@ -420,7 +437,7 @@ func (s *Session) SetProperty(code int, value int64) error {
 	}
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
-	info, known := propdb.Lookup(uint16(code))
+	info, known := cameraPropertyInfo(uint16(code))
 	if !known || !safeGroup(info.Group) || info.Danger != propdb.None {
 		return errors.New("此参数未开放编辑")
 	}

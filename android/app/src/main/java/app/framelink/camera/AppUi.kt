@@ -135,12 +135,19 @@ fun FrameLink(runtime: CameraRuntime) {
     var selection by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var viewer by rememberSaveable { mutableStateOf<String?>(null) }
     var removing by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var savingSelection by remember { mutableStateOf(false) }
+    var savedBatchId by rememberSaveable { mutableStateOf<String?>(null) }
     var localReview by rememberSaveable { mutableStateOf<String?>(null) }
+    var newReviewPhotos by remember { mutableStateOf<List<String>>(emptyList()) }
     var compare by remember { mutableStateOf(false) }
+    var comparingIds by remember { mutableStateOf<List<String>>(emptyList()) }
     var live by rememberSaveable { mutableStateOf(false) }
     var projectId by rememberSaveable { mutableStateOf<String?>(null) }
     val gridState = rememberLazyGridState()
     val snackbar = remember { SnackbarHostState() }
+    fun togglePhoto(id: String) {
+        selection = selection.toMutableSet().apply { if (!remove(id)) add(id) }.toList()
+    }
     val notifications =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val permissions =
@@ -172,8 +179,10 @@ fun FrameLink(runtime: CameraRuntime) {
             if (runtime.notice.value == message) runtime.notice.value = ""
         }
     }
+    LaunchedEffect(tab, live) { snackbar.currentSnackbarData?.dismiss() }
     LaunchedEffect(camera.info?.id) {
         if (camera.info != null && tab == Tab.GALLERY && source == "camera") runtime.browseRecent()
+        if (camera.info == null && source == "camera") selection = emptyList()
     }
     MaterialTheme(
         typography = UiTokens.typography,
@@ -348,18 +357,16 @@ fun FrameLink(runtime: CameraRuntime) {
                             gridState,
                             selection,
                             onSource = {
+                                if (source != it) {
+                                    selection = emptyList()
+                                    if (filter == "picked") filter = "all"
+                                }
                                 source = it
                                 if (it == "camera" && camera.info != null) runtime.loadPhotos(true)
                             },
                             onFilter = { filter = it },
-                            onSelect = { id ->
-                                selection =
-                                    ArrayList(
-                                        selection.toMutableList().apply {
-                                            if (contains(id)) remove(id) else add(id)
-                                        }
-                                    )
-                            },
+                            onSelect = ::togglePhoto,
+                            onSelectionChange = { selection = it },
                             onOpen = { viewer = it.id },
                             onImport = {
                                 picker.launch(arrayOf("image/*", "application/octet-stream"))
@@ -370,7 +377,8 @@ fun FrameLink(runtime: CameraRuntime) {
                                 selection = arrayListOf()
                                 tab = Tab.TRANSFERS
                             },
-                            onCompare = { compare = true },
+                            onCompare = { comparingIds = selection.take(2); compare = true },
+                            onSaveSelection = { savingSelection = true },
                             onRemove = { removing = it },
                             onUpload = {
                                 sheet =
@@ -378,18 +386,7 @@ fun FrameLink(runtime: CameraRuntime) {
                                     else Sheet.CLOUD
                             },
                             onReview = { chosen ->
-                                scope.launch {
-                                    runCatching {
-                                            runtime.reviews.create(
-                                                "现场选片 · " +
-                                                    SimpleDateFormat("MM-dd HH:mm", Locale.ROOT)
-                                                        .format(Date()),
-                                                chosen.map { it.id },
-                                            )
-                                        }
-                                        .onSuccess { localReview = it.id }
-                                        .onFailure { runtime.notice.value = it.message.orEmpty() }
-                                }
+                                if (chosen.isNotEmpty()) newReviewPhotos = chosen.map { it.id }
                             },
                         )
                     Tab.PROJECTS ->
@@ -400,6 +397,8 @@ fun FrameLink(runtime: CameraRuntime) {
                             onCloud = { sheet = Sheet.CLOUD },
                             onBack = { projectId = null },
                             onReview = { localReview = it },
+                            photos = photos,
+                            onBatch = { savedBatchId = it },
                         )
                     Tab.TRANSFERS ->
                         TransferScreen(
@@ -454,6 +453,31 @@ fun FrameLink(runtime: CameraRuntime) {
                 onPhoto = { viewer = it.id },
                 paused = viewer != null,
             )
+        if (newReviewPhotos.isNotEmpty()) ReviewNameDialog(
+            "现场选片 · " + SimpleDateFormat("MM-dd HH:mm", Locale.ROOT).format(Date()), true,
+            onClose = { newReviewPhotos = emptyList() },
+            save = { name ->
+                val created = runtime.reviews.create(name, newReviewPhotos)
+                newReviewPhotos = emptyList(); localReview = created.id
+            },
+        )
+        if (savingSelection) SaveSelectionDialog(runtime, selection,
+            onClose = { savingSelection = false },
+            onSaved = { savingSelection = false; savedBatchId = it.id; tab = Tab.PROJECTS },
+        )
+        savedBatchId?.let { id ->
+            SavedSelectionScreen(runtime, id, photos,
+                onClose = { savedBatchId = null }, onPhoto = { viewer = it.id },
+                onUse = { ids ->
+                    scope.launch {
+                        val chosen = ids.chunked(500).flatMap { runtime.database.photos().byIds(it) }
+                        runtime.database.photos().saveAll(chosen.filter { it.localHidden && it.imported }.map { it.copy(localHidden = false) })
+                        source = if (chosen.any { !it.imported && it.source == PhotoSource.CAMERA.name }) "camera" else "local"
+                        selection = ids; filter = "all"; tab = Tab.GALLERY; savedBatchId = null
+                    }
+                },
+            )
+        }
         photos
             .find { it.id == viewer }
             ?.let { photo ->
@@ -462,12 +486,15 @@ fun FrameLink(runtime: CameraRuntime) {
                     photo,
                     onClose = { viewer = null },
                     onRemove = { removing = listOf(photo.id) },
+                    selected = photo.id in selection,
+                    cameraConnected = camera.info != null,
+                    onSelect = { togglePhoto(photo.id) },
                     onMark = { mark ->
                         val previous = photo.mark
                         runtime.mark(photo, mark)
                         scope.launch {
                             if (
-                                snackbar.showSnackbar("标记已保存", "撤销") ==
+                                snackbar.showSnackbar("收藏已更新", "撤销", duration = SnackbarDuration.Short) ==
                                     SnackbarResult.ActionPerformed
                             )
                                 runtime.mark(photo, PhotoMark.valueOf(previous))
@@ -487,7 +514,9 @@ fun FrameLink(runtime: CameraRuntime) {
         if (compare)
             ComparePhotos(
                 runtime,
-                photos.filter { it.id in selection }.take(2),
+                photos.filter { it.id in comparingIds }.take(2),
+                selection = selection,
+                onSelect = { togglePhoto(it.id) },
                 onClose = { compare = false },
             )
     }
@@ -617,7 +646,7 @@ private fun CameraHome(
                     }
                     Column(Modifier.weight(1f).padding(end = 8.dp)) {
                         Text(
-                            status.info?.model?.replace("ILCE-", "α ") ?: "Sony α7C II",
+                            status.info?.model?.replace("ILCE-", "α ") ?: "连接你的相机",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
                             maxLines = 2,
@@ -946,23 +975,29 @@ private fun Gallery(
     onSource: (String) -> Unit,
     onFilter: (String) -> Unit,
     onSelect: (String) -> Unit,
+    onSelectionChange: (List<String>) -> Unit,
     onOpen: (Photo) -> Unit,
     onImport: () -> Unit,
     onConnect: () -> Unit,
     onDownload: (DownloadFormat) -> Unit,
     onCompare: () -> Unit,
+    onSaveSelection: () -> Unit,
     onRemove: (List<String>) -> Unit,
     onUpload: () -> Unit,
     onReview: (List<Photo>) -> Unit,
 ) {
     var download by remember { mutableStateOf(false) }
+    var moreSelection by remember { mutableStateOf(false) }
     var bursts by rememberSaveable { mutableStateOf(false) }
+    val selectionSet = remember(selection) { selection.toSet() }
     var burst by remember { mutableStateOf<List<Photo>?>(null) }
     val cameraDay by runtime.galleryDay.collectAsStateWithLifecycle()
     val listedIds by runtime.currentCameraIds.collectAsStateWithLifecycle()
     val availableDays by runtime.captureDates.collectAsStateWithLifecycle()
     var localDay by rememberSaveable { mutableStateOf("") }
     val chosenDay = if (source == "camera") cameraDay else localDay
+    val dragContext = "$source:$filter:$bursts:$chosenDay:${if (source == "camera") camera.info?.id.orEmpty() else ""}"
+    var dragGroups by remember(dragContext) { mutableStateOf<List<List<Photo>>?>(null) }
     var choosingDay by remember { mutableStateOf(false) }
     var follow by rememberSaveable {
         mutableStateOf(runtime.settings.get("gallery.follow") != "false")
@@ -975,11 +1010,10 @@ private fun Gallery(
         all.filter { photo ->
             (if (source == "local") photo.inLibrary
             else
-                photo.source == PhotoSource.CAMERA.name &&
-                    (camera.info == null || photo.id in listedIds)) &&
+                camera.info != null && photo.source == PhotoSource.CAMERA.name && photo.id in listedIds) &&
                 (chosenDay.isBlank() || photoDay(photo) == chosenDay) &&
                 when (filter) {
-                    "picked" -> photo.mark == PhotoMark.PICKED.name
+                    "picked" -> photo.id in selectionSet
                     "favorite" -> photo.mark == PhotoMark.FAVORITE.name
                     "new" -> !photo.imported
                     "raw" -> photo.files().any { it.raw }
@@ -989,6 +1023,7 @@ private fun Gallery(
     val groups =
         if (bursts) photos.groupBy { it.burstKey.ifBlank { it.id } }.values.toList()
         else photos.map { listOf(it) }
+    val displayedGroups = dragGroups ?: groups
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1064,7 +1099,7 @@ private fun Gallery(
             ) {
                 item {
                     TextButton(
-                        enabled = !camera.loadingPhotos,
+                        enabled = !camera.loadingPhotos && (source != "camera" || camera.info != null),
                         onClick = { choosingDay = true },
                         contentPadding = PaddingValues(horizontal = 4.dp),
                     ) {
@@ -1090,27 +1125,47 @@ private fun Gallery(
                     }
                 item {
                     Text(
-                        if (source == "camera") "已读取 ${photos.size} 张" else "${photos.size} 张",
+                        if (source == "camera" && camera.info == null) "相机未连接"
+                        else if (source == "camera") "已读取 ${photos.size} 张" else "${photos.size} 张",
                         fontSize = 11.sp,
                         color = Muted,
                     )
                 }
+                item { Text("长按滑动多选", fontSize = 10.sp, color = Muted) }
             }
         }
-        if (photos.isEmpty())
+        if (displayedGroups.isEmpty())
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 EmptyState(
-                    if (source == "camera") "在大屏上挑选照片" else "让喜欢的照片留在手机",
-                    if (source == "camera") "连接后可浏览卡内照片，选择需要的格式下载。" else "导入照片后可以收藏、对比和加入客户项目。",
-                    if (source == "camera") "连接或刷新相机" else "导入照片",
-                    if (source == "camera") onConnect else onImport,
+                    if (source == "camera" && camera.info == null) "相机已断开"
+                    else if (filter == "picked") "还没有选择照片"
+                    else if (source == "camera") "在大屏上挑选照片" else "让喜欢的照片留在手机",
+                    if (source == "camera" && camera.info == null) "重新连接后读取相机文件，已导入照片可在手机图库继续查看。"
+                    else if (filter == "picked") "勾选照片，或长按后滑动批量选择；大图与图库使用同一份选择。"
+                    else if (source == "camera") "连接后可浏览卡内照片，选择需要的格式下载。" else "导入照片后可以收藏、对比和加入客户项目。",
+                    if (source == "camera" && camera.info == null) "重新连接相机"
+                    else if (filter == "picked") "查看全部"
+                    else if (source == "camera") "连接或刷新相机" else "导入照片",
+                    if (source == "camera" && camera.info == null) onConnect
+                    else if (filter == "picked") { { onFilter("all") } }
+                    else if (source == "camera") onConnect else onImport,
                 )
             }
         else
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(100.dp),
                 state = state,
-                modifier = Modifier.weight(1f).testTag("gallery-grid"),
+                userScrollEnabled = dragGroups == null,
+                modifier = Modifier.weight(1f).testTag("gallery-grid")
+                    .galleryDragSelection(state, dragContext, displayedGroups.map { group -> group.map { it.id } }, selection,
+                        onSelectionChange,
+                        onDragging = { dragging ->
+                            dragGroups = if (dragging) groups else null
+                            if (dragging) {
+                                follow = false
+                                runtime.settings.put("gallery.follow", "false")
+                            }
+                        }),
                 contentPadding =
                     PaddingValues(
                         start = 8.dp,
@@ -1121,10 +1176,12 @@ private fun Gallery(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(groups, key = { it.first().id }) { group ->
+                items(displayedGroups, key = { it.first().id }) { group ->
                     val photo = group.first()
+                    val groupSelected = group.all { it.id in selectionSet }
+                    val partlySelected = !groupSelected && group.any { it.id in selectionSet }
                     Column(
-                        Modifier.clickable {
+                        Modifier.testTag("photo-${photo.id}").clickable {
                                 follow = false
                                 runtime.settings.put("gallery.follow", "false")
                                 if (group.size > 1) burst = group else onOpen(photo)
@@ -1134,17 +1191,20 @@ private fun Gallery(
                         Box(
                             Modifier.clip(UiTokens.photo)
                                 .then(
-                                    if (photo.id in selection)
+                                    if (groupSelected || partlySelected)
                                         Modifier.border(2.dp, Brand, UiTokens.photo)
                                     else Modifier
                                 )
                         ) {
                             PhotoThumbnail(runtime, photo, Modifier.fillMaxWidth().aspectRatio(1f))
-                            if (photo.id in selection)
+                            if (groupSelected || partlySelected)
                                 Box(Modifier.matchParentSize().background(Brand.copy(alpha = .10f)))
-                            Checkbox(
-                                checked = photo.id in selection,
-                                onCheckedChange = { onSelect(photo.id) },
+                            TriStateCheckbox(
+                                state = if (groupSelected) androidx.compose.ui.state.ToggleableState.On else if (partlySelected) androidx.compose.ui.state.ToggleableState.Indeterminate else androidx.compose.ui.state.ToggleableState.Off,
+                                onClick = {
+                                    val ids = group.map { it.id }.toSet()
+                                    onSelectionChange((if (groupSelected) selectionSet - ids else selectionSet + ids).toList())
+                                },
                                 colors =
                                     CheckboxDefaults.colors(
                                         uncheckedColor = Color.White,
@@ -1181,13 +1241,9 @@ private fun Gallery(
                                         modifier = Modifier.padding(5.dp),
                                     )
                                 }
-                            if (photo.mark != PhotoMark.NONE.name)
+                            if (photo.mark == PhotoMark.FAVORITE.name)
                                 Icon(
-                                    if (photo.mark == PhotoMark.FAVORITE.name)
-                                        Icons.Outlined.Favorite
-                                    else if (photo.mark == PhotoMark.REJECTED.name)
-                                        Icons.Outlined.Close
-                                    else Icons.Outlined.CheckCircle,
+                                    Icons.Outlined.Favorite,
                                     null,
                                     tint = Color.White,
                                     modifier =
@@ -1231,13 +1287,22 @@ private fun Gallery(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("已选 ${selection.size}", fontSize = 11.sp, color = Brand)
+                    TextButton(onClick = { onSelectionChange(emptyList()) }, contentPadding = PaddingValues(horizontal = 2.dp)) {
+                        Text("已选 ${selection.size}", fontSize = 11.sp, color = Brand)
+                        Icon(Icons.Outlined.Close, "清空本次选择", Modifier.padding(start = 4.dp).size(14.dp))
+                    }
                     TextButton(onClick = onCompare, enabled = selection.size == 2) {
                         Text("对比", fontSize = 11.sp)
                     }
-                    TextButton(onClick = onUpload) {
-                        Icon(Icons.Outlined.CloudUpload, null, Modifier.size(16.dp))
-                        Text("项目", fontSize = 11.sp, modifier = Modifier.padding(start = 5.dp))
+                    TextButton(onClick = onSaveSelection) {
+                        Icon(Icons.Outlined.BookmarkAdd, null, Modifier.size(16.dp))
+                        Text("保存", fontSize = 11.sp, modifier = Modifier.padding(start = 5.dp))
+                    }
+                    Box {
+                        IconButton(onClick = { moreSelection = true }) { Icon(Icons.Outlined.MoreHoriz, "更多选片操作", Modifier.size(19.dp)) }
+                        DropdownMenu(moreSelection, { moreSelection = false }) {
+                            DropdownMenuItem(text = { Text("加入云端项目") }, onClick = { moreSelection = false; onUpload() })
+                        }
                     }
                     if (source == "local")
                         TextButton(onClick = { onRemove(selection) }) {
@@ -1438,7 +1503,7 @@ private fun ConnectionSheet(runtime: CameraRuntime, onClose: () -> Unit) {
             }
         }
     }) {
-        Info("Sony α7C II · 同一Wi-Fi或相机热点")
+        Info("Sony 网络浏览与遥控 · 同一Wi-Fi或相机热点。其他具备FTP上传功能的相机可使用首页“FTP接收”。")
         Panel {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.CameraAlt, null, tint = Brand, modifier = Modifier.size(22.dp))
@@ -2465,6 +2530,9 @@ private fun PhotoViewer(
     photo: Photo,
     onClose: () -> Unit,
     onRemove: () -> Unit,
+    selected: Boolean,
+    cameraConnected: Boolean,
+    onSelect: () -> Unit,
     onMark: (PhotoMark) -> Unit,
 ) {
     val context = LocalContext.current
@@ -2538,11 +2606,7 @@ private fun PhotoViewer(
     }
     val glass = remember { HazeState() }
     DarkScene {
-        Dialog(
-            onDismissRequest = onClose,
-            properties =
-                DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-        ) {
+        FullScreenScene(onClose) {
             DarkDialogBars()
             Box(Modifier.fillMaxSize().background(Color(0xff111318)).padding(dialogSafePadding())) {
                 Box(
@@ -2643,7 +2707,10 @@ private fun PhotoViewer(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                if (original != null) "已导入原片" else "相机预览 · 清晰度以原片为准",
+                                if (original != null) "已导入原片"
+                                else if (photo.imported) "已导入RAW原片 · 当前显示预览"
+                                else if (photo.source == PhotoSource.CAMERA.name && !cameraConnected) "离线预览 · 相机已断开"
+                                else "相机预览 · 清晰度以原片为准",
                                 fontSize = 10.sp,
                                 color = Color.White.copy(alpha = .8f),
                                 modifier = Modifier.padding(top = 4.dp),
@@ -2681,26 +2748,7 @@ private fun PhotoViewer(
                                     else PhotoMark.FAVORITE
                                 )
                             }
-                            MarkAction(
-                                "选中",
-                                Icons.Outlined.CheckCircleOutline,
-                                photo.mark == PhotoMark.PICKED.name,
-                            ) {
-                                onMark(
-                                    if (photo.mark == PhotoMark.PICKED.name) PhotoMark.NONE
-                                    else PhotoMark.PICKED
-                                )
-                            }
-                            MarkAction(
-                                "排除",
-                                Icons.Outlined.Block,
-                                photo.mark == PhotoMark.REJECTED.name,
-                            ) {
-                                onMark(
-                                    if (photo.mark == PhotoMark.REJECTED.name) PhotoMark.NONE
-                                    else PhotoMark.REJECTED
-                                )
-                            }
+                            PhotoSelectionAction(selected, onSelect)
                             MarkAction("修图", Icons.Outlined.Tune, false) { share(true) }
                             MarkAction("分享", Icons.Outlined.IosShare, false) { share(false) }
                         }
@@ -2746,13 +2794,9 @@ private fun MarkAction(title: String, icon: ImageVector, active: Boolean, onClic
 }
 
 @Composable
-private fun ComparePhotos(runtime: CameraRuntime, photos: List<Photo>, onClose: () -> Unit) {
+private fun ComparePhotos(runtime: CameraRuntime, photos: List<Photo>, selection: List<String>, onSelect: (Photo) -> Unit, onClose: () -> Unit) {
     DarkScene {
-        Dialog(
-            onDismissRequest = onClose,
-            properties =
-                DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-        ) {
+        FullScreenScene(onClose) {
             DarkDialogBars()
             Column(
                 Modifier.fillMaxSize()
@@ -2786,9 +2830,9 @@ private fun ComparePhotos(runtime: CameraRuntime, photos: List<Photo>, onClose: 
                                 fontSize = 10.sp,
                                 modifier = Modifier.weight(1f),
                             )
-                            TextButton(onClick = { runtime.mark(photo, PhotoMark.PICKED) }) {
+                            TextButton(onClick = { onSelect(photo) }) {
                                 Text(
-                                    if (photo.mark == PhotoMark.PICKED.name) "已选" else "选中这张",
+                                    if (photo.id in selection) "已选择" else "选择这张",
                                     fontSize = 11.sp,
                                 )
                             }
@@ -2802,283 +2846,19 @@ private fun ComparePhotos(runtime: CameraRuntime, photos: List<Photo>, onClose: 
 }
 
 @Composable
-private fun LiveScreen(
-    runtime: CameraRuntime,
-    onClose: () -> Unit,
-    onPhoto: (Photo) -> Unit,
-    paused: Boolean,
-) {
-    val frame by runtime.frame.collectAsStateWithLifecycle()
-    val connectedCamera by runtime.camera.collectAsStateWithLifecycle()
-    val properties by runtime.properties.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-    var pro by remember { mutableStateOf(false) }
-    var grid by rememberSaveable { mutableStateOf(true) }
-    var zebra by rememberSaveable { mutableStateOf(false) }
-    var peak by rememberSaveable { mutableStateOf(false) }
-    var histogram by remember { mutableStateOf(IntArray(64)) }
-    var timer by rememberSaveable { mutableIntStateOf(0) }
-    var shooting by remember { mutableStateOf(false) }
-    var property by remember { mutableStateOf<CameraProperty?>(null) }
-    val countdown by runtime.captureCountdown.collectAsStateWithLifecycle()
-    val latest by runtime.lastCapture.collectAsStateWithLifecycle()
-    val cameraNotice by runtime.notice.collectAsStateWithLifecycle()
-    LaunchedEffect(paused) {
-        if (paused) {
-            runtime.cancelCountdown()
-            runtime.stopLive()
-        } else runtime.startLive()
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            runtime.cancelCountdown()
-            runtime.stopLive()
-        }
-    }
-    DarkScene {
-        Dialog(
-            onDismissRequest = onClose,
-            properties =
-                DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-        ) {
-            DarkDialogBars()
-            Column(
-                Modifier.fillMaxSize().background(Color(0xff0e1015)).padding(dialogSafePadding())
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Outlined.ArrowBack, "返回相机", tint = Color.White)
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text("取景拍摄", color = Color.White, fontSize = 15.sp)
-                        Text(
-                            connectedCamera.info?.model.orEmpty(),
-                            color = Color(0xff77808f),
-                            fontSize = 9.sp,
-                        )
-                    }
-                    TextButton(onClick = { pro = !pro }) {
-                        Text(
-                            if (pro) "简洁布局" else "专业工具",
-                            color = Color(0xff9bb9d7),
-                            fontSize = 11.sp,
-                        )
-                    }
-                }
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    AndroidView(
-                        factory = { context ->
-                            LiveViewSurface(context).also {
-                                it.histogram = { bins -> histogram = bins }
-                            }
-                        },
-                        update = { view ->
-                            view.zebra = zebra
-                            view.peaking = peak
-                            frame?.let { view.submit(it) }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                        onRelease = { it.onPause() },
-                    )
-                    if (frame == null) Text("等待相机取景画面", fontSize = 12.sp, color = Color(0xff6e7888))
-                    if (grid)
-                        Canvas(Modifier.fillMaxSize()) {
-                            for (i in 1..2) {
-                                drawLine(
-                                    Color.White.copy(alpha = .14f),
-                                    Offset(size.width * i / 3, 0f),
-                                    Offset(size.width * i / 3, size.height),
-                                    1f,
-                                )
-                                drawLine(
-                                    Color.White.copy(alpha = .14f),
-                                    Offset(0f, size.height * i / 3),
-                                    Offset(size.width, size.height * i / 3),
-                                    1f,
-                                )
-                            }
-                        }
-                }
-                if (pro) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                    ) {
-                        TextButton(onClick = { grid = !grid }) {
-                            Text(
-                                "网格 ${if(grid)"开"else"关"}",
-                                fontSize = 10.sp,
-                                color = Color(0xff9fb2c8),
-                            )
-                        }
-                        TextButton(onClick = { peak = !peak }) {
-                            Text(
-                                "峰值 ${if(peak)"开"else"关"}",
-                                fontSize = 10.sp,
-                                color = Color(0xff9fb2c8),
-                            )
-                        }
-                        TextButton(onClick = { zebra = !zebra }) {
-                            Text(
-                                "过曝 ${if(zebra)"开"else"关"}",
-                                fontSize = 10.sp,
-                                color = Color(0xff9fb2c8),
-                            )
-                        }
-                    }
-                    Canvas(Modifier.fillMaxWidth().height(36.dp).padding(horizontal = 30.dp)) {
-                        val max = (histogram.maxOrNull() ?: 1).coerceAtLeast(1)
-                        histogram.forEachIndexed { index, value ->
-                            val x = index * size.width / 64
-                            drawLine(
-                                Color(0xff7b8fa6),
-                                Offset(x, size.height),
-                                Offset(x, size.height - value.toFloat() / max * size.height),
-                                size.width / 70,
-                            )
-                        }
-                    }
-                    Text(
-                        "辅助分析基于取景预览，不代表RAW数据",
-                        fontSize = 8.sp,
-                        color = Color(0xff586473),
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                    )
-                }
-                LazyRow(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(
-                        properties.filter { it.writable }.take(if (pro) 12 else 4),
-                        key = { it.code },
-                    ) { item ->
-                        Column(
-                            Modifier.clip(RoundedCornerShape(11.dp))
-                                .background(Color(0xff1c2029))
-                                .clickable { property = item }
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
-                        ) {
-                            Text(item.name, fontSize = 8.sp, color = Color(0xff69788b))
-                            Text(
-                                item.label,
-                                fontSize = 12.sp,
-                                color = Color.White,
-                                modifier = Modifier.padding(top = 5.dp),
-                            )
-                        }
-                    }
-                }
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 36.dp, vertical = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    TextButton(
-                        onClick = {
-                            timer =
-                                when (timer) {
-                                    0 -> 3
-                                    3 -> 10
-                                    else -> 0
-                                }
-                        }
-                    ) {
-                        Text(
-                            if (timer == 0) "无延时" else "${timer}s",
-                            fontSize = 12.sp,
-                            color = Color(0xff8d9caf),
-                        )
-                    }
-                    Box(
-                        Modifier.size(74.dp)
-                            .semantics { contentDescription = "拍摄" }
-                            .border(2.dp, Color.White, CircleShape)
-                            .padding(6.dp)
-                            .clip(CircleShape)
-                            .background(if (shooting) Color(0xff8799a8) else Color.White)
-                            .clickable(enabled = !shooting || countdown > 0) {
-                                if (countdown > 0) {
-                                    runtime.cancelCountdown()
-                                    shooting = false
-                                } else {
-                                    shooting = true
-                                    scope.launch {
-                                        runtime.capture(timer).join()
-                                        shooting = false
-                                    }
-                                }
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (countdown > 0)
-                            Text(countdown.toString(), fontSize = 29.sp, color = Brand)
-                        else if (shooting)
-                            CircularProgressIndicator(
-                                Modifier.size(25.dp),
-                                strokeWidth = 2.dp,
-                                color = Brand,
-                            )
-                    }
-                    if (latest != null)
-                        Box(
-                            Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)).clickable {
-                                onPhoto(latest!!)
-                            }
-                        ) {
-                            AsyncImage(
-                                model = latest!!.displayUri,
-                                contentDescription = "查看拍后照片",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop,
-                            )
-                        }
-                    else
-                        IconButton(
-                            onClick = {
-                                runtime.stopLive()
-                                runtime.startLive()
-                            }
-                        ) {
-                            Icon(Icons.Outlined.Refresh, "重新打开取景", tint = Color(0xff8d9caf))
-                        }
-                }
-                if (cameraNotice.isNotBlank())
-                    Text(
-                        cameraNotice,
-                        color = Color(0xff9ba9bb),
-                        fontSize = 10.sp,
-                        maxLines = 2,
-                        modifier = Modifier.padding(horizontal = 25.dp).padding(bottom = 9.dp),
-                    )
-            }
-        }
-        property?.let { item ->
-            AlertDialog(
-                onDismissRequest = { property = null },
-                title = { Text(item.name) },
-                text = {
-                    LazyColumn {
-                        items(item.choices) { choice ->
-                            TextButton(
-                                onClick = {
-                                    runtime.setProperty(item, choice.value)
-                                    property = null
-                                }
-                            ) {
-                                Text(choice.label)
-                            }
-                        }
-                    }
-                },
-                confirmButton = { TextButton(onClick = { property = null }) { Text("关闭") } },
-            )
-        }
+private fun PhotoSelectionAction(selected: Boolean, onClick: () -> Unit) {
+    Column(
+        Modifier.clip(UiTokens.control)
+            .background(if (selected) Brand else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 13.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(if (selected) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked, null, tint = Color.White, modifier = Modifier.size(22.dp))
+        Text(if (selected) "已选择" else "选择", color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp))
     }
 }
+
 
 private fun photoDay(photo: Photo): String =
     photo.files().firstOrNull()?.cameraDay?.takeIf { it.isNotBlank() }
@@ -3103,17 +2883,25 @@ internal fun dialogSafePadding(): PaddingValues {
     val view = LocalView.current
     val density = androidx.compose.ui.platform.LocalDensity.current
     val compose = WindowInsets.safeDrawing.asPaddingValues()
+    val windowInsets = if (Build.VERSION.SDK_INT >= 30) {
+        val nativeInsets = context.getSystemService(android.view.WindowManager::class.java).currentWindowMetrics.windowInsets
+            .getInsetsIgnoringVisibility(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+        androidx.core.graphics.Insets.of(nativeInsets.left, nativeInsets.top, nativeInsets.right, nativeInsets.bottom)
+    } else androidx.core.graphics.Insets.NONE
     val native =
         androidx.core.view.ViewCompat.getRootWindowInsets(view)
             ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
             ?.bottom ?: 0
     val resource = context.resources.getIdentifier("navigation_bar_height", "dimen", "android")
     val fallback = if (resource == 0) 0 else context.resources.getDimensionPixelSize(resource)
-    val bottom = with(density) { maxOf(native, fallback).toDp() }
+    val bottom = with(density) { maxOf(native, fallback, windowInsets.bottom).toDp() } + 12.dp
+    val top = with(density) { windowInsets.top.toDp() }
+    val left = with(density) { windowInsets.left.toDp() }
+    val right = with(density) { windowInsets.right.toDp() }
     return PaddingValues(
-        start = compose.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
-        top = compose.calculateTopPadding(),
-        end = compose.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
+        start = maxOf(compose.calculateStartPadding(androidx.compose.ui.unit.LayoutDirection.Ltr), left),
+        top = maxOf(compose.calculateTopPadding(), top),
+        end = maxOf(compose.calculateEndPadding(androidx.compose.ui.unit.LayoutDirection.Ltr), right),
         bottom = maxOf(compose.calculateBottomPadding(), bottom),
     )
 }

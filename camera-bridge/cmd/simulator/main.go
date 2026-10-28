@@ -97,8 +97,15 @@ func main() {
 	defer stream.Close()
 	props := []ptpip.SonyProp{{Code: ptpip.SonyPropLiveViewURL, Type: 0xffff, Enabled: 1, Current: ptpip.SonyValue{Str: "http://localhost:16001/liveview"}},
 		{Code: 0x500F, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 100}, Form: 2, Settable: []ptpip.SonyValue{{Int: 100}, {Int: 200}, {Int: 400}}},
+		{Code: 0x5007, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 350}, Form: 2, Settable: []ptpip.SonyValue{{Int: 280}, {Int: 350}, {Int: 400}}},
+		{Code: 0xD20D, Type: 6, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 65536 + 125}, Form: 2, Settable: []ptpip.SonyValue{{Int: 65536 + 125}, {Int: 65536 + 250}}},
+		{Code: 0xD21E, Type: 6, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 400}, Form: 2, Settable: []ptpip.SonyValue{{Int: 100}, {Int: 400}, {Int: 0xffffff}}},
+		{Code: 0x5010, Type: 6, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 0}, Form: 2, Settable: []ptpip.SonyValue{{Int: 0}, {Int: 300}}},
+		{Code: 0x500A, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 32772}, Form: 2, Settable: []ptpip.SonyValue{{Int: 2}, {Int: 32772}, {Int: 32773}, {Int: 1}}},
+		{Code: 0x5005, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 2}, Form: 2, Settable: []ptpip.SonyValue{{Int: 2}, {Int: 4}, {Int: 0x8010}}},
+		{Code: 0xD22C, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 1}, Form: 2, Settable: []ptpip.SonyValue{{Int: 1}, {Int: 0x103}, {Int: 0x205}}},
 		{Code: ptpip.SonyPropTransferSize, Type: 4, Enabled: 1, Current: ptpip.SonyValue{Int: ptpip.SonyTransferOriginal}}}
-	server, err := ptpiptest.Start(ptpiptest.Options{Dir: *dir, A6700: true, Model: "QA SIMULATED CAMERA", SerialNumber: "FRAMELINK-QA-NOT-HARDWARE", Preview: preview, Props: props})
+	server, err := ptpiptest.Start(ptpiptest.Options{Dir: *dir, A6700: true, Model: "QA SIMULATED CAMERA", SerialNumber: "FRAMELINK-QA-NOT-HARDWARE", Preview: preview, Props: props, ControlCodes: []uint16{0xD2C1, 0xD2C2}})
 	if err != nil {
 		panic(err)
 	}
@@ -127,7 +134,12 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		stats := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		stats := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if request.Method == http.MethodPost && request.URL.Path == "/drop" {
+				server.DropConnections()
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 			fmt.Fprint(w, sshServer.AuthAttempts.Load())
 		})}
 		go stats.Serve(statsListener)

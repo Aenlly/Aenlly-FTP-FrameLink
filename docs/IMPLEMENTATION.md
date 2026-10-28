@@ -1,81 +1,83 @@
 # 实施与验收报告
 
-当前版本：光屿FrameLink 0.1.3开发测试版
+版本：FrameLink 0.1.4开发预览。Android、iOS、相机协议与本地选片的源码、软件测试和真机结果分别记录；本文件不代表已完成正式发布。
 
-**源码实现、安装包构建和本地软件验收已完成；完整V1的A7C II实体机与发布验收尚未完成。** 用户反馈过同Wi-Fi下15740端口连接被拒绝，本轮改进身份确认和连接引导；尚无真实机身连接成功结果。没有拍摄用户照片、删除卡内数据或公开部署服务
+## 本轮改动
 
-## 已开发能力
-
-| 子系统 | 实现范围 |
+| 部分 | 变化 |
 |---|---|
-| Android | 相机、图库、项目、传输，连接引导、日期和筛选、RAW/JPEG分组、对比、标记、原生取景、专业辅助、倒计时与拍后查看 |
-| 协议 | 锁定alpha2go，Android AAR，SSH指纹自动读取、首次确认与变化提示、认证信息记忆、独立相机socket绑定、卡内分页、预览、分块下载、参数与取景 |
-| FTP | 只接收、二进制原片、唯一文件、fsync、任务持久化后回复226，重启恢复已落盘文件；图库处理独立排队 |
-| FTP客户端 | FTP/显式FTPS、加密账号、目录与搜索、上下级、多选下载、上传、新建文件夹、任务进度、取消和重试 |
-| 接收配置 | 自定义端口、系统授权保存目录、独立压缩副本、JPEG质量和尺寸、格式范围、副本相册同步 |
-| 界面 | 紧凑连接状态、两项主要操作与四项快捷工具、最近照片、密集图库、深浅场景主题、加载失败与重试、克制玻璃浮层 |
-| 蓝牙 | 扫描、配对、订阅、半按与快门、连接状态、上次设备、通知栏入口 |
-| 本地 | Room照片与任务、原片与相册URI分开、预览缓存、取消重试、仅移出图库或删除本机文件、Room1→2→3迁移 |
-| 现场选片 | 无需登录，独立场次、客户选择留言、锁定和重开、CSV导出；与摄影师收藏和标记分开 |
-| 云服务 | Java17/Spring Boot、邀请注册、会话摘要、隔离、配额、私有资源、预览采样、EXIF方向与定位移除 |
-| 客户和交付 | 访问码、自动保存、设备草稿、冲突、提交版本、确认与重开、关联成片、下载授权、撤销 |
-| 工作台同步 | 轻量版本检查；仅变更后读取详情，返回窗口和恢复联网时同步 |
+| 相机图库 | 断线后隐藏上次相机会话列表，保留本机导入；重新连接后读取当前卡内内容 |
+| 选择 | 网格、大图和双图比较共用一次选择；撤下旧“排除／持久选中”入口，历史数据保留 |
+| 批量操作 | 长按滑动选择、回滑恢复、连续取消、边缘滚动、连拍整组选中；普通滑动仍滚动 |
+| 选片记录 | 保存命名批次、元数据快照、封面和时间，支持恢复选择、改名、删除与图文单 |
+| 客户现场 | 姓名、手机号或场次名称；独立选择和留言、完成重开、改名及删除记录，不删除原片 |
+| 取景 | 中文参数与Sony扩展枚举，未知值不盲选；参数单次写入后读回确认，显示实收图像尺寸 |
+| 全屏布局 | 旋转重建窗口，关闭厂商Dialog的额外系统栏偏移，统一处理状态栏、切口和手势区 |
+| 玻璃取景 | 画面按完整窗口等比显示；横屏默认隐藏控制，单击显示／收起小型玻璃菜单，菜单不改变画面尺寸 |
+| 渲染 | TextureView进入合成树供玻璃采样，独立GL线程解码与渲染，只保留最新帧；基础取景不计算直方图 |
+| 反馈 | 收藏提示使用短时Snackbar，切页关闭旧提示；删除方式在文件统计时也可选择，确认需等待统计 |
+| 安装兼容 | 明确限制arm64与x86_64，避免第三方32位库使不受支持的设备误安装后启动失败；检查ELF与ZIP的16KiB对齐 |
+| iOS | 新增SwiftUI工程、原生Liquid Glass及旧系统Material、相机桥、FTP、本地图库、选片记录和任务 |
+| 文档 | 中英日README精简并增加韩语，以协议说明兼容范围，保留原作者与依赖许可证 |
 
-本地连接、导入、标记和现场客户选片不依赖云账号。云上传仅处理主动选定的预览或成片，默认等待非计费网络
+原有Android FTP接收、FTP／显式FTPS客户端、蓝牙快门、本地导入、系统修图分享、相册副本、云端客户选片和交付继续保留。原片按原始字节写入，压缩与预览单独生成。Room迁移3→4保留照片、任务和客户记录。
 
-## 已验证
+## 平台范围
 
-| 层级 | 结果 | 证据 |
+| 能力 | Android | iOS首版 |
 |---|---|---|
-| Android构建 | 通过；app.framelink.camera，min26/target36，arm64/x86_64 | build-logs/android-tests-build.log |
-| Android JVM | 11项通过：照片分组与配置、路径校验、FTP流字节与摘要、异常和取消、指纹比较、可操作错误提示 | android/app/build/test-results/testDebugUnitTest/ |
-| Android安装运行 | Android15/API35、arm64独立FrameLinkQA模拟器 | build-logs/android-instrument.log |
-| Android验收 | 16项通过：原有9项，加指纹确认与记忆1项，照片移除、文件及相册副本删除、共享与目录保护、迁移、界面操作和缓存异常6项 | OK (16 tests) |
-| FTP数据流对照 | 同一32MiB＋73字节文件，预热后每条路径7轮；输出write调用4097→129，字节与摘要均通过 | [条件与逐轮数据](FTP_PERFORMANCE.md)；build-logs/ftp-benchmark.log |
-| 0.1.1小屏记录 | 360×640dp、字体120%，FTP连接下载到大图流程通过，四个主要入口首屏可见；本行是上一版记录 | build-logs/android-instrument-small-font.log；artifacts/android-home-small-large-font.png |
-| 0.1.3摄影界面 | 3项通过：默认屏、小屏120%字体、手势导航；授权真实样片、六个入口、多选、完整比较、大图缩放像素、末张照片与系统区域 | build-logs/android-visual-phone.log、android-visual-small.log、android-visual-gesture.log |
-| 0.1.3连接小屏 | 360×640dp、字体120%，密码显隐、首次确认、取消、记忆重连和指纹变化流程通过 | build-logs/android-identity-small.log |
-| Go桥 | 5项通过，含5MiB RAW/JPEG字节一致性、不锁机身模式、读取公钥时零认证、握手取消与超时 | build-logs/bridge.log |
-| 上游 | 5个包测试通过 | build-logs/upstream.log |
-| 云服务 | 11项通过：并发版本、历史、链接失效、配额回滚、交付权限、上传前鉴权、方向与元数据 | cloud/target/surefire-reports/ |
-| 网页 | 类型和生产构建通过，5项自动保存队列测试通过 | build-logs/web.log |
-| 网页端到端 | 8个真实交互场景通过；1440×1000和390×844；上传、刷新保留、自动同步、成片字节、撤销 | artifacts/web-e2e-results.json |
-| Android静态 | lintDebug通过，0错误；仍有依赖更新及第三方代码警告 | android/app/build/reports/lint-results-debug.xml |
-| 原生库和包 | ELF LOAD段0x4000对齐，冻结时另验16KB ZIP对齐和证书 | artifacts/artifact-manifest.json |
+| 索尼无线浏览、预览、下载、取景与参数 | 已实现 | 已实现，复用同一Go协议桥 |
+| 本地导入、选择、收藏、批次、客户记录 | 已实现 | 已实现 |
+| FTP接收与FTP／显式FTPS客户端 | 已实现 | 已实现；接收需保持前台 |
+| 双图比较、连拍合组 | 已实现 | 尚未接入 |
+| 蓝牙遥控 | 已实现，真机待验收 | 尚未接入 |
+| 云端账号、远程客户选片与交付 | 已实现，可自行部署 | 尚未接入 |
 
-功能测试使用本地合成图片和测试账号，视觉检查使用授权摄影样片，没有读取真实客户照片、联系人或机身密码。完整成功与失败日志保存在build-logs，失败日志按时间归档
+iOS原片以文件路径传过桥，导入和摘要以256KiB分块进行，预览采样解码。索引使用原子JSON保存，相机密码与受信任指纹使用Keychain。后台停止取景和FTP服务；运行中的任务在下次启动显示中断，避免假装后台仍在线。
 
-0.1.3新增自动读取并确认相机指纹、加密连接记忆、密码显隐、固定连接按钮，以及图库和大图中的两种移除方式。照片模型增加本机隐藏状态，旧数据通过迁移保留；本轮重跑Go桥、Android构建、JVM、安装回归、三种规格视觉检查与lint。云端、网页与上游源码未变，沿用前轮结果，冻结清单记录各检查时间。连接与删除的范围见[操作记录](CONNECTION_AND_REMOVAL.md)，上一轮FTP数据流对照见[性能记录](FTP_PERFORMANCE.md)，界面规则见[视觉验收](VISUAL_QA.md)
+Go FTP模块供iOS使用，Android继续使用原有Apache实现。接收只提供上传，唯一文件与回执落盘后回复成功；客户端支持被动模式、UTF-8、显式FTPS验证、上传临时文件与同名检查。标准FTP不能提供跨客户端的原子禁止覆盖，需服务器权限配合。
 
-本机JDK17.0.8的C1编译器在lint分析Kotlin UAST时两次触发`assembler_aarch64.hpp:267 / Field too big for insn`。仅对lint检查进程排除该分析方法的JIT编译后通过，未关闭lint规则或更改APK编译参数。诊断保留在`android/hs_err_pid39027.log`与`android/hs_err_pid41218.log`，这些日志不提交。复现同类JDK错误时可临时运行：
+## 软件检查
+
+完整日志位于本机忽略目录build-logs，冻结清单记录最终检查时间。失败尝试保留，不用截取日志末尾代替退出状态。
+
+本轮已取得Android JVM18项、安装回归26项、Go桥12项、Swift核心5项XCTest及14条核心检查、iOS安装交互4项通过记录。iOS涵盖已选筛选下拖动取消、本地记录、大图选择同步、FTP入口与密码显隐、模拟相机浏览／原片下载／取景；均在专用测试设备中执行，最终状态以冻结清单为准。
+
+- Android：JVM单元测试、安装回归、取景横屏与菜单、数据库迁移、文件删除保护、客户记录和任务恢复
+- Go：协议连接状态、身份握手、原片字节、FTP往返、同名与长度保护、不可信证书拒绝，并检查数据竞争
+- iOS：原片导入／移除／恢复、客户记录独立、路径保护、滑动范围、FTP回执恢复与中断任务的核心测试；模拟器和设备架构分别构建，UI单独运行
+- 界面：Android默认屏、小屏120%字体和手势导航；授权样片只用于模拟器，来源见[视觉记录](VISUAL_QA.md)
+- 云端和网页：本轮未改业务源码，沿用先前11项服务端、5项网页队列和8项网页端到端结果；H2与本地私有文件不能代替MySQL/S3部署验收
+
+最终数量与退出码以artifact-manifest.json及本机对应日志为准，不将上一版结果标成新版本真机通过。
+
+本机JDK17.0.8曾在Kotlin UAST分析触发C1编译器错误。只对lint进程排除该方法的JIT后通过，未关闭规则或修改APK编译参数：
 
 ```sh
 JAVA_TOOL_OPTIONS='-XX:CompileCommand=exclude,org.jetbrains.uast.kotlin.FirKotlinUastResolveProviderService::getArgumentForParameter' python3 scripts/check.py android-lint
 ```
 
-## 验证边界
+## 真机已取得的证据
 
-- 协议测试通过ADB反向端口连接本机模拟相机，模拟器到电脑Wi-Fi路由不可用；结果只证明JNI、协议和界面通路，不证明真实无线兼容
-- 模拟相机明确标记QA SIMULATED CAMERA；测试程序不包含在Android包内
-- 实际Android运行环境是4KB页模拟器；库和包对齐已经检查，16KB页系统运行尚未验收
-- 云端实测为H2 MySQL模式和本地私有文件。MySQL/S3适配已实现，实际MySQL/MinIO/S3、HTTPS与公网交付未验证或部署
-- A7C II具体固件、真实蓝牙、HEIF/ARW预览、千张目录、锁屏、OEM省电、卡切换和连续传输仍需真机
-- 没有同机同网络同照片对照数据，没有发布提速、耗电或延迟提升结论。三秒首屏、二百毫秒缓存切图仍是目标
-- FTP客户端本机测试使用Apache FtpServer；生产FTPS服务器、SAF系统文件提供方与OEM后台策略仍需实机验收
-- 玻璃折射在Android15模拟器验收；旧Android模糊/半透明降级、真实GPU性能与耗电尚未实机验收
-- 0.1.3尚未在实体手机安装验收；需要继续验证A7C II访问身份验证、实际文件提供方的删除授权与锁屏恢复
-- APK使用Android Debug证书。正式私钥签名、商店提交、云端上线及正式产品发布未执行
-- 代码协作分支为feature/framelink-v1，保留上游历史；源码分享与正式发布分别管理，协作方式见REVIEW.md
+2026-10-28，Xiaomi 17（25113PN0EC，Android17/API37）与Sony ILCE-7CM2（固件2.01）在共同路由器Wi-Fi上连接。已读取真实参数和1024×680 JPEG取景；取景参数中文映射与光圈写入／原值恢复取得读回结果。
 
-## 交付物
+在玻璃取景重排前，真机流程实际走过网格与大图选择同步、长按选择、命名记录、图文单、导入和断开后的列表状态。自动化末尾曾因再次点击已选页签而停止，未将该次运行标记为整条通过。
 
-- artifacts/FrameLink-0.1.3-debug.apk：可安装开发包
-- artifacts/FrameLink-0.1.3-source.zip：源码、上游、许可证和构建脚本
-- artifacts/artifact-manifest.json：散列、证书、检查和待验收标记
-- artifacts/android-home-initial.png、android-gallery.png、android-live.png、android-captured.png、android-local-review.png：原生运行截图
-- artifacts/android-home-bento.png、android-ftp-receiver.png、android-ftp-client.png、android-photo-glass.png：0.1.1原生运行截图
-- artifacts/visual-phone-*.png、visual-small-*.png、visual-gesture-*.png：0.1.3真实摄影样片界面；代表截图随README保存在docs/images
-- artifacts/camera-identity-*.png、camera-connection-password-visible.png、photo-removal-choices.png：0.1.3本机合成设备的连接确认、密码显隐与移除操作截图
-- artifacts/web-owner-desktop.png、web-client-mobile.png：网页真实交互截图
+窗口修复前快门底部为2616px，手势安全线为2591px；修复后为2466px，已位于安全线之上。后续又改为全屏画面和玻璃浮动菜单，最新渲染／菜单需继续单独复核，不能用旧布局坐标替代。
 
-按[真机清单](HARDWARE_ACCEPTANCE.md)继续记录设备、固件和网络；M0实体机通过前保持开发测试版，不写成完整V1业务交付成功
+真实照片、数据库、诊断、密码和指纹均保存在本机忽略目录，不进入开源仓库。覆盖安装前已备份本机索引与配置，保留原有照片。相机卡不执行删除、格式化、固件或设置恢复操作。
+
+## 取景分辨率
+
+1024×680是当前通道的真实输出，不是机身最高能力的结论。当前PTP/IP＋SSH实现没有已验证的1920×1080切换；不会用放大预览冒充1080p。界面等比显示最大完整画面，因此宽高比不同的屏幕可能留边，菜单不再挤小画面。
+
+## 仍需验收
+
+- 最新Android玻璃取景的实体手机横竖屏、GPU表现、连续运行、耗电与延迟
+- iPhone实体机签名安装、真实局域网权限、相机无线及FTP兼容；模拟器使用本机临时签名验证Keychain与Go桥，不代替实体机
+- 更多索尼机型与固件；FTP接收按相机上传能力适配，不承诺所有相机和认证方式通用
+- 实体相机蓝牙、FTP自动上传、HEIF／RAW格式、卡切换、千张目录及长时间后台恢复
+- 实际MySQL／S3、公网HTTPS、邀请测试、正式签名、商店和公开服务发布
+- 相同相机、手机、网络与照片集的性能对照；当前没有真实吞吐、耗电或延迟提速结论
+
+[真机清单](HARDWARE_ACCEPTANCE.md) · [选片与取景](SELECTION_AND_PREVIEW.md) · [协作指南](REVIEW.md) · [iOS工程](../ios/README.md)

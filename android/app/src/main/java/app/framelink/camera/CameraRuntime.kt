@@ -52,6 +52,7 @@ class CameraRuntime(
         )
     val cloud = CloudClient(settings)
     val reviews = LocalReviewRepository(context, database)
+    val batches = SelectionBatchRepository(context, database)
     val photoRemoval = PhotoRemovalRepository(context, database)
     val native = NativeCamera(context)
     val photos = database.photos().observe()
@@ -62,6 +63,7 @@ class CameraRuntime(
     val frame = mutableFrame.asStateFlow()
     val notice = MutableStateFlow("")
     val properties = MutableStateFlow<List<CameraProperty>>(emptyList())
+    val parameterUpdating = MutableStateFlow<Int?>(null)
     val captureDates = MutableStateFlow<List<String>>(emptyList())
     val galleryDay = MutableStateFlow("")
     val currentCameraIds = MutableStateFlow<Set<String>>(emptySet())
@@ -73,6 +75,7 @@ class CameraRuntime(
     val bluetooth = BluetoothRemote(context, scope, settings) { notice.value = it }
     private val queue = Mutex()
     private var liveJob: Job? = null
+    private var connectionMonitor: Job? = null
     private var captureJob: Job? = null
     private val connectionGeneration = AtomicLong()
     val cameraIdentityPrompt = MutableStateFlow<CameraIdentityPrompt?>(null)
@@ -118,6 +121,18 @@ class CameraRuntime(
                     wakeNetwork()
                 }
             }
+        )
+        manager.registerNetworkCallback(
+            android.net.NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(),
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onLost(network: android.net.Network) {
+                    scope.launch {
+                        synchronized(this@CameraRuntime) {
+                            if (mutableCamera.value.info != null && native.usesNetwork(network)) disconnect()
+                        }
+                    }
+                }
+            },
         )
     }
 
@@ -166,7 +181,9 @@ class CameraRuntime(
         runCatching { Json.decode<ConnectionConfig>(settings.get("camera.config")) }
             .getOrDefault(ConnectionConfig())
 
+    @Synchronized
     fun connect(input: ConnectionConfig): Job {
+        connectionMonitor?.cancel()
         val generation = connectionGeneration.incrementAndGet()
         pendingCameraConnection = null
         cameraIdentityPrompt.value = null
@@ -201,25 +218,36 @@ class CameraRuntime(
                     config = config.copy(fingerprint = identity.fingerprint)
                 }
                 val info = native.connect(config)
-                settings.put("camera.config", Json.encode(config))
-                currentCameraIds.value = emptySet()
-                properties.value = native.properties()
-                captureDates.value = runCatching { native.dates(1) }.getOrDefault(emptyList())
-                if (connectionGeneration.get() != generation) {
-                    native.close()
-                    return@launch
+                val choices = native.properties()
+                val dates = runCatching { native.dates(1) }.getOrDefault(emptyList())
+                synchronized(this@CameraRuntime) {
+                    if (connectionGeneration.get() != generation) return@launch
+                    settings.put("camera.config", Json.encode(config))
+                    currentCameraIds.value = emptySet()
+                    properties.value = choices
+                    captureDates.value = dates
+                    mutableCamera.value = CameraStatus(info = info, message = "已连接 ${info.model}")
+                    connectionMonitor = scope.launch {
+                        while (isActive) {
+                            delay(1000)
+                            synchronized(this@CameraRuntime) {
+                                if (connectionGeneration.get() == generation && !native.connected()) disconnect()
+                            }
+                        }
+                    }
                 }
-                mutableCamera.value = CameraStatus(info = info, message = "已连接 ${info.model}")
                 database
                     .tasks()
                     .recover(TransferState.WAITING_CONNECTION.name, TransferState.QUEUED.name, "")
                 runTasks()
             } catch (error: Exception) {
-                if (connectionGeneration.get() == generation) {
-                    android.util.Log.e("FrameLink", "Camera connection failed", error)
-                    native.close()
-                    mutableCamera.value = CameraStatus(message = cameraConnectionMessage(error))
-                    notice.value = mutableCamera.value.message
+                synchronized(this@CameraRuntime) {
+                    if (connectionGeneration.get() == generation) {
+                        android.util.Log.e("FrameLink", "Camera connection failed", error)
+                        native.close()
+                        mutableCamera.value = CameraStatus(message = cameraConnectionMessage(error))
+                        notice.value = mutableCamera.value.message
+                    }
                 }
             }
         }
@@ -232,16 +260,22 @@ class CameraRuntime(
         connect(pending.config.copy(fingerprint = pending.identity.fingerprint))
     }
 
+    @Synchronized
     fun disconnect() {
+        connectionMonitor?.cancel()
+        connectionMonitor = null
         connectionGeneration.incrementAndGet()
         pendingCameraConnection = null
         cameraIdentityPrompt.value = null
         cancelCountdown()
         stopLive()
         native.close()
-        mutableCamera.value = CameraStatus(message = "相机已断开，已保存照片和选择")
+        mutableCamera.value = CameraStatus(message = "相机已断开，手机中的照片已保留")
+        currentCameraIds.value = emptySet()
         properties.value = emptyList()
+        parameterUpdating.value = null
         captureDates.value = emptyList()
+        galleryDay.value = ""
     }
 
     fun browseRecent() {
@@ -292,7 +326,7 @@ class CameraRuntime(
                                 item.files.map { file ->
                                     existing
                                         ?.files()
-                                        ?.find { it.fileId == file.fileId }
+                                        ?.find { canReuseCameraFile(file, it) }
                                         ?.let {
                                             file.copy(
                                                 localUri = it.localUri,
@@ -1014,11 +1048,26 @@ class CameraRuntime(
 
     fun setProperty(property: CameraProperty, value: Long) =
         scope.launch {
+            if (!parameterUpdating.compareAndSet(null, property.code)) { notice.value = "正在应用相机设置，请稍候"; return@launch }
+            val generation = connectionGeneration.get()
             try {
                 native.setProperty(property.code, value)
-                properties.value = native.properties()
+                var updated = native.properties()
+                for (attempt in 0 until 10) {
+                    if (updated.firstOrNull { it.code == property.code }?.value == value) break
+                    delay(150)
+                    updated = native.properties()
+                }
+                if (generation == connectionGeneration.get()) {
+                    properties.value = updated
+                    if (updated.firstOrNull { it.code == property.code }?.value != value)
+                        notice.value = "设置已发送，机身状态尚未更新，请在相机上核对"
+                }
             } catch (error: Exception) {
-                notice.value = error.message.orEmpty()
+                android.util.Log.w("FrameLink", "Camera property update failed", error)
+                notice.value = error.message?.takeIf { it.any { character -> character.code in 0x4e00..0x9fff } } ?: "相机未确认此设置，请检查机身模式与连接后重试"
+            } finally {
+                if (generation == connectionGeneration.get()) parameterUpdating.value = null
             }
         }
 

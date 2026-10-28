@@ -11,7 +11,7 @@ python3 scripts/bootstrap.py
 sh scripts/build-android.sh
 ```
 
-生成`artifacts/FrameLink-0.1.3-debug.apk`。这是Android开发证书签名的测试包，正式签名、商店提交与公开发布是独立步骤
+生成`artifacts/FrameLink-0.1.4-debug.apk`。这是Android开发证书签名的测试包，正式签名、商店提交与公开发布是独立步骤
 
 ## 连接相机
 
@@ -26,6 +26,8 @@ sh scripts/build-android.sh
 确认身份前不会发送认证信息，正式连接继续核对已确认的公钥。仅当机身已关闭访问身份验证时，才关闭App的“使用相机访问身份验证”开关。App只为相机socket绑定局域网，不改变云端请求的默认网络。部分手机连接无互联网Wi-Fi时需要在系统提示中选择保留连接
 
 ## 移除照片
+
+选片操作、命名批次、图文选片单、中文取景与断线行为见[相机选片与取景](../docs/SELECTION_AND_PREVIEW.md)。大图与外层复选框同步；长按照片后滑动可多选，回滑调整范围，停在边缘继续滚动。断开后“相机内”不显示旧列表，已导入原片继续可用
 
 在“图库→已导入”多选后点“移除”，或打开照片后点右上角删除图标：
 

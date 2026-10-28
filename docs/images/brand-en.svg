@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="220" viewBox="0 0 1120 220" role="img" aria-labelledby="title description">
   <title id="title">Aenlly-FTP · FrameLink 光屿</title>
-  <desc id="description">An open-source Android camera assistant for capture, selection, and delivery</desc>
+  <desc id="description">An open-source camera assistant for capture, selection, and delivery</desc>
   <defs><linearGradient id="wash" x2="1" y2="1"><stop stop-color="#F5F5F7"/><stop offset="1" stop-color="#E9EFF2"/></linearGradient></defs>
   <rect width="1120" height="220" rx="24" fill="url(#wash)"/>
   <rect x="48" y="62" width="96" height="96" rx="28" fill="#344F66"/>
@@ -9,9 +9,9 @@
   </g>
   <g font-family="system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
     <text x="178" y="95" font-size="36" font-weight="650" fill="#1F252C">Aenlly-FTP · FrameLink</text>
-    <text x="179" y="133" font-size="22" fill="#526777">Camera tools for Android</text>
+    <text x="179" y="133" font-size="22" fill="#526777">Open-source camera companion</text>
     <text x="180" y="165" font-size="12" letter-spacing="2" fill="#68717D">FTP · PTP/IP · BLUETOOTH · LOCAL LIBRARY</text>
     <rect x="930" y="62" width="140" height="30" rx="15" fill="#E2E8EC"/>
-    <text x="1000" y="82" text-anchor="middle" font-size="12" font-weight="600" fill="#526777">0.1.3 DEV PREVIEW</text>
+    <text x="1000" y="82" text-anchor="middle" font-size="12" font-weight="600" fill="#526777">0.1.4 DEV PREVIEW</text>
   </g>
 </svg>

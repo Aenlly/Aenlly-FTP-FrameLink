@@ -15,7 +15,7 @@ Haze版权归Christopher Banes与Haze项目贡献者所有。Apache Commons Net�
 
 alpha2go本地兼容改动：`SSHConfig`增加可选`DialContext`，供Android仅将相机socket绑定到局域网，保持云端网络独立；默认行为保持上游实现
 
-alpha2go测试工具兼容改动：`ptpiptest.Options`增加可选JPEG预览数据，仅供独立模拟协议验收使用；默认测试响应保持上游实现，模拟器程序不包含在Android安装包中
+alpha2go测试工具兼容改动：`ptpiptest.Options`增加JPEG预览、QA设备身份和可选控制能力列表，测试连接可主动断开；模拟器明确声明所模拟的自动对焦与快门能力。未配置时保持原测试默认行为，仅供独立协议验收，不包含在App安装包中
 
 ## 文档中的摄影作品
 

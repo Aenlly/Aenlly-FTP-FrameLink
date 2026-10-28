@@ -23,3 +23,9 @@ __pycache__/
 **/hs_err_pid*.log
 **/replay_pid*.log
 *.hprof
+.build/
+.swiftpm/
+ios/Frameworks/
+ios/DerivedData*/
+**/xcuserdata/
+*.xcuserstate

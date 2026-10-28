@@ -69,8 +69,8 @@ interface TaskDao {
 }
 
 @Database(
-    entities = [Photo::class, TransferTask::class, LocalReview::class],
-    version = 3,
+    entities = [Photo::class, TransferTask::class, LocalReview::class, SelectionBatch::class],
+    version = 4,
     exportSchema = false,
 )
 abstract class LocalDatabase : RoomDatabase() {
@@ -79,8 +79,14 @@ abstract class LocalDatabase : RoomDatabase() {
     abstract fun tasks(): TaskDao
 
     abstract fun reviews(): LocalReviewDao
+    abstract fun batches(): SelectionBatchDao
 
     companion object {
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS selection_batches (id TEXT NOT NULL PRIMARY KEY,title TEXT NOT NULL,photoIdsJson TEXT NOT NULL,photosJson TEXT NOT NULL,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL)")
+            }
+        }
         val MIGRATION_2_3 =
             object : androidx.room.migration.Migration(2, 3) {
                 override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {

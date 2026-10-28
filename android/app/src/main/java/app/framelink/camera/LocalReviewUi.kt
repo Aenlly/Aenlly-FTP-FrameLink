@@ -20,6 +20,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -46,9 +47,17 @@ internal fun ProjectHub(
     onBack: () -> Unit,
     onCloud: () -> Unit,
     onReview: (String) -> Unit,
+    photos: List<Photo>,
+    onBatch: (String) -> Unit,
 ) {
     var cloud by rememberSaveable { mutableStateOf(false) }
+    var menu by remember { mutableStateOf<LocalReview?>(null) }
+    var renaming by remember { mutableStateOf<LocalReview?>(null) }
+    var deleting by remember { mutableStateOf<LocalReview?>(null) }
+    val scope = rememberCoroutineScope()
     val reviews by runtime.database.reviews().observe().collectAsStateWithLifecycle(emptyList())
+    val batches by runtime.database.batches().observe().collectAsStateWithLifecycle(emptyList())
+    val photoMap = remember(photos) { photos.associateBy { it.id } }
     if (cloud || projectId != null) {
         Column(Modifier.fillMaxSize()) {
             if (projectId == null)
@@ -90,6 +99,20 @@ internal fun ProjectHub(
                 }
             }
         }
+        item { SectionTitle("我的选片") }
+        if (batches.isEmpty()) item { Info("在图库勾选照片后点击“保存”，为这一批选片命名。无需登录，可回看并分享图文选片单。") }
+        items(batches, key = { "batch:${it.id}" }) { batch ->
+            val ids = remember(batch.photoIdsJson) { batch.photoIds() }
+            Panel(Modifier.clickable { onBatch(batch.id) }) {
+                Text(batch.title, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Info("${ids.size} 张已选 · " + java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.ROOT).format(java.util.Date(batch.createdAt)))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    remember(batch.photosJson) { batch.snapshots().take(3) }.mapNotNull { saved -> photoMap[saved.id]?.takeIf { it.name == saved.name && it.capturedAt == saved.capturedAt } }.forEach { photo ->
+                        PhotoThumbnail(runtime, photo, Modifier.weight(1f).aspectRatio(1.35f).clip(UiTokens.photo))
+                    }
+                }
+            }
+        }
         item { SectionTitle("本地现场选片") }
         if (reviews.isEmpty()) item { Info("在图库选择照片，点击人物图标进入现场客户模式。无需账号，记录与摄影师标记分开保存。") }
         items(reviews, key = { it.id }) { review ->
@@ -97,16 +120,30 @@ internal fun ProjectHub(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Outlined.PeopleOutline, null, tint = Brand)
                     Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                        Text(review.title, fontSize = 14.sp)
+                        Text(review.title, fontSize = 14.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         Info(
                             "${review.photoIds().size} 张照片 · ${review.choices().values.count{it.selected}} 张客户已选"
                         )
                     }
                     Text(if (review.locked) "已完成" else "选片中", fontSize = 10.sp, color = Muted)
+                    Box {
+                        IconButton(onClick = { menu = review }) { Icon(Icons.Outlined.MoreHoriz, "管理现场选片 ${review.title}") }
+                        DropdownMenu(menu?.id == review.id, { menu = null }) {
+                            DropdownMenuItem(text = { Text("修改姓名或场次名称") }, onClick = { menu = null; renaming = review })
+                            DropdownMenuItem(text = { Text("删除选片记录") }, onClick = { menu = null; deleting = review })
+                        }
+                    }
                 }
             }
         }
     }
+    renaming?.let { review -> ReviewNameDialog(review.title, false, { renaming = null }) { name -> runtime.reviews.rename(review.id, name); renaming = null } }
+    deleting?.let { review -> AlertDialog(
+        onDismissRequest = { deleting = null }, title = { Text("删除这次客户选片？") },
+        text = { Text("删除“${review.title}”的选择和留言记录，照片原文件、其他场次和云端项目保留。") },
+        confirmButton = { TextButton(onClick = { scope.launch { runtime.reviews.delete(review.id); deleting = null } }) { Text("删除记录") } },
+        dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } },
+    ) }
 }
 
 @Composable
@@ -123,9 +160,12 @@ internal fun LocalReviewScreen(
     var viewing by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
+    var selectedOnly by rememberSaveable { mutableStateOf(false) }
+    var exportingSheet by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
     val ids = remember(review?.photoIdsJson) { review?.photoIds()?.toSet().orEmpty() }
-    val visible = remember(photos, ids) { photos.filter { it.id in ids } }
     val choices = remember(review?.choicesJson) { review?.choices().orEmpty() }
+    val visible = remember(photos, ids, choices, selectedOnly) { photos.filter { it.id in ids && (!selectedOnly || choices[it.id]?.selected == true) } }
     fun choose(photo: Photo, selected: Boolean? = null, comment: String? = null) {
         runtime.scope.launch {
             saving = true
@@ -138,11 +178,7 @@ internal fun LocalReviewScreen(
             }
         }
     }
-    Dialog(
-        onDismissRequest = onClose,
-        properties =
-            DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-    ) {
+    FullScreenScene(onClose) {
         Column(Modifier.fillMaxSize().background(CanvasColor).padding(dialogSafePadding())) {
             Row(
                 Modifier.fillMaxWidth().padding(20.dp),
@@ -156,6 +192,7 @@ internal fun LocalReviewScreen(
                     )
                     Info("客户模式 · 无需登录")
                 }
+                IconButton(onClick = { renaming = true }) { Icon(Icons.Outlined.Edit, "修改现场选片名称") }
                 IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "退出现场选片") }
             }
             if (error.isNotBlank())
@@ -165,6 +202,10 @@ internal fun LocalReviewScreen(
                     fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = 22.dp),
                 )
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(!selectedOnly, { selectedOnly = false }, { Text("全部 ${ids.size}") })
+                FilterChip(selectedOnly, { selectedOnly = true }, { Text("客户已选 ${choices.values.count { it.selected }}") })
+            }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(145.dp),
                 modifier = Modifier.weight(1f).testTag("review-grid"),
@@ -185,9 +226,16 @@ internal fun LocalReviewScreen(
                                 choice.selected,
                                 { choose(photo, selected = it) },
                                 enabled = review?.locked == false,
+                                colors = CheckboxDefaults.colors(checkedColor = Brand, uncheckedColor = Color.White, checkmarkColor = Color.White),
                                 modifier =
                                     Modifier.align(Alignment.TopEnd).semantics {
                                         contentDescription = "客户选择 ${photo.name}"
+                                    }.drawBehind {
+                                        val edge = 22.dp.toPx()
+                                        drawRoundRect(Color.Black.copy(alpha = .35f),
+                                            topLeft = androidx.compose.ui.geometry.Offset(center.x - edge / 2, center.y - edge / 2),
+                                            size = androidx.compose.ui.geometry.Size(edge, edge),
+                                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()))
                                     },
                             )
                         }
@@ -242,14 +290,28 @@ internal fun LocalReviewScreen(
                             }
                     }
                     if (review?.locked == true)
-                        TextButton(onClick = { scope.launch { runtime.reviews.lock(id, false) } }) {
-                            Text("摄影师开放修改", fontSize = 10.sp)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            TextButton(onClick = { scope.launch { runtime.reviews.lock(id, false) } }) { Text("摄影师开放修改", fontSize = 11.sp) }
+                            TextButton(onClick = {
+                                val record = review ?: return@TextButton
+                                val selected = record.photoIds().filter { choices[it]?.selected == true }
+                                if (selected.isEmpty()) { error = "客户还没有选择照片"; return@TextButton }
+                                exportingSheet = true
+                                scope.launch {
+                                    val byId = photos.associateBy { it.id }
+                                    runCatching {
+                                        runtime.batches.contactSheets(SelectionBatch(record.id, record.title, Json.encode(selected), Json.encode(selected.mapNotNull { byId[it]?.copy() }), record.createdAt, record.updatedAt))
+                                    }.onSuccess { shareContactSheets(context, it) }.onFailure { error = it.message ?: "选片单生成失败" }
+                                    exportingSheet = false
+                                }
+                            }, enabled = !exportingSheet) { Text(if (exportingSheet) "生成中…" else "图文选片单", fontSize = 11.sp) }
                         }
                     else Info("选择只记录在本场次，不改变摄影师自己的收藏和标记。")
                 }
             }
         }
     }
+    if (renaming) ReviewNameDialog(review?.title.orEmpty(), false, { renaming = false }) { name -> runtime.reviews.rename(id, name); renaming = false }
     visible
         .find { it.id == viewing }
         ?.let { photo ->
@@ -261,19 +323,13 @@ internal fun LocalReviewScreen(
                     runCatching { runtime.ensurePreview(photo, true) }.onSuccess { model = it }
                 }
             }
-            Dialog(
-                onDismissRequest = { viewing = null },
-                properties =
-                    DialogProperties(
-                        usePlatformDefaultWidth = false,
-                        decorFitsSystemWindows = false,
-                    ),
-            ) {
+            FullScreenScene({ viewing = null }) {
                 DarkDialogBars()
                 Column(
                     Modifier.fillMaxSize()
                         .background(Color(0xff111318))
                         .padding(dialogSafePadding())
+                        .imePadding()
                         .padding(20.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -308,6 +364,9 @@ internal fun LocalReviewScreen(
                             OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = Color.White,
                                 unfocusedTextColor = Color.White,
+                                disabledTextColor = Color.White.copy(alpha = .7f),
+                                focusedLabelColor = Color(0xffa5c5e4),
+                                unfocusedLabelColor = Color(0xffa4afbe),
                             ),
                     )
                     Button(
@@ -316,7 +375,7 @@ internal fun LocalReviewScreen(
                         modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                     ) {
                         Icon(Icons.Outlined.FavoriteBorder, null, Modifier.size(18.dp))
-                        Text(if (choice.selected) "客户已选中" else "选择这张")
+                        Text(if (choice.selected) "客户已选中" else "客户选择这张")
                     }
                 }
             }

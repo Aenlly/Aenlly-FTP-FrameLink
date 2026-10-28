@@ -37,8 +37,9 @@ type Options struct {
 	Model        string // default "ILCE-6700"
 	SerialNumber string
 	Props        []ptpip.SonyProp // Sony extended properties (0x9209); default: a few small ones
-	Preview      []byte // optional synthetic JPEG for application UI acceptance
+	Preview      []byte           // optional synthetic JPEG for application UI acceptance
 	FailControl  uint16           // 0x9207 for this code answers GeneralError when the value is 2 (pressed)
+	ControlCodes []uint16         // optional advertised controls; nil preserves the upstream autofocus-only default
 }
 
 // Server is a running fake camera.
@@ -535,8 +536,14 @@ func (s *Server) op(sess *session, op uint16, params []uint32) (uint16, []uint32
 		b = binary.LittleEndian.AppendUint32(b, 2)
 		b = binary.LittleEndian.AppendUint16(b, 0x5004)
 		b = binary.LittleEndian.AppendUint16(b, 0xD200)
-		b = binary.LittleEndian.AppendUint32(b, 1)
-		b = binary.LittleEndian.AppendUint16(b, 0xD2C1)
+		controls := s.opts.ControlCodes
+		if controls == nil {
+			controls = []uint16{0xD2C1}
+		}
+		b = binary.LittleEndian.AppendUint32(b, uint32(len(controls)))
+		for _, code := range controls {
+			b = binary.LittleEndian.AppendUint16(b, code)
+		}
 		return ptpip.RespOK, nil, b, nil
 	case ptpip.OpSonyGetAllExtDevicePropInfo: // changedOnly (param 0) is ignored: always the full list
 		if !s.opts.Sony {
@@ -991,7 +998,9 @@ func (s *Server) remote(op uint16, params []uint32) (uint16, []uint32, []byte, e
 		cs, _ := s.contents(param(1) >> 24)
 		for _, c := range cs {
 			if fileID := int(param(1) & 0xFFFF); c.c.ID == param(0) && fileID >= 1 && fileID <= len(c.paths) && (param(2) == 1 || param(2) == 2) {
-				if len(s.opts.Preview)>0 { return ptpip.RespOK,nil,s.opts.Preview,nil }
+				if len(s.opts.Preview) > 0 {
+					return ptpip.RespOK, nil, s.opts.Preview, nil
+				}
 				return ptpip.RespOK, nil, CompressedData(param(2)), nil
 			}
 		}

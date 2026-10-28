@@ -5,13 +5,14 @@ import hashlib
 import json
 import pathlib
 import shutil
+import struct
 import subprocess
 import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-version='0.1.3'
-checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark']
+version='0.1.4'
+checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark','ios','ios-core','ios-ui','ios-device']
 for name in checks:
     result=root/'build-logs'/f'{name}.exit'
     if not result.exists() or result.read_text().strip()!='0': raise SystemExit(f'检查尚未通过：{name}')
@@ -21,8 +22,27 @@ apk=artifacts/f'FrameLink-{version}-debug.apk'
 shutil.copyfile(root/'android/app/build/outputs/apk/debug/app-debug.apk',apk)
 tools=root/'.tools/android-sdk/build-tools/36.0.0'
 certificate=subprocess.check_output([str(tools/'apksigner'),'verify','--print-certs',str(apk)],text=True)
+previous=artifacts/'FrameLink-0.1.3-debug.apk'
+if previous.exists():
+    old_certificate=subprocess.check_output([str(tools/'apksigner'),'verify','--print-certs',str(previous)],text=True)
+    def digest_line(value):
+        return next(line for line in value.splitlines() if 'certificate SHA-256 digest:' in line)
+    if digest_line(certificate)!=digest_line(old_certificate): raise SystemExit('开发包签名变化，不能用于覆盖安装')
 alignment=subprocess.run([str(tools/'zipalign'),'-c','-P','16','4',str(apk)],capture_output=True,text=True)
 if alignment.returncode: raise SystemExit(alignment.stdout+alignment.stderr)
+with zipfile.ZipFile(apk) as package:
+    for name in package.namelist():
+        if not name.startswith('lib/') or not name.endswith('.so'): continue
+        data=package.read(name)
+        if data[:5]!=b'\x7fELF\x02': raise SystemExit('包含不受支持的32位原生库：'+name)
+        offset=struct.unpack_from('<Q',data,32)[0]
+        step,count=struct.unpack_from('<HH',data,54)
+        for index in range(count):
+            at=offset+index*step
+            if struct.unpack_from('<I',data,at)[0]!=1: continue
+            position,address=struct.unpack_from('<QQ',data,at+8)
+            page=struct.unpack_from('<Q',data,at+48)[0]
+            if page<16384 or position%page!=address%page: raise SystemExit('原生库不满足16KiB段对齐：'+name)
 files=subprocess.check_output(['git','ls-files','--cached'],cwd=root,text=True).splitlines()
 source=artifacts/f'FrameLink-{version}-source.zip'
 with zipfile.ZipFile(source,'w',zipfile.ZIP_DEFLATED) as archive:
@@ -30,6 +50,15 @@ with zipfile.ZipFile(source,'w',zipfile.ZIP_DEFLATED) as archive:
         path=root/relative
         if path.is_file(): archive.write(path,'camera-assistant/'+relative)
 result={'version':version,'qualification':'development-preview','package':'app.framelink.camera','apk':apk.name,'apkBytes':apk.stat().st_size,'apkSha256':hashlib.sha256(apk.read_bytes()).hexdigest(),'signing':'Android Debug certificate','certificate':certificate.strip(),'zip16KBAlignment':True,'checks':{name:0 for name in checks},'checkLogUpdatedAt':{name:datetime.datetime.fromtimestamp((root/'build-logs'/f'{name}.log').stat().st_mtime,datetime.timezone.utc).isoformat() for name in checks},'webE2eCases':len(e2e['steps']),'visualSamples':'licensed-real-photography','syntheticProtocolTest':True,'sonyA7CIIHardwareVerified':False,'bluetoothHardwareVerified':False,'productionPublished':False,'sourceArchive':source.name,'frozenAt':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+ios=artifacts/f'FrameLink-{version}-ios-simulator.zip'
+if not ios.exists(): raise SystemExit('缺少iOS模拟器包')
+result['ios']={'simulatorArchive':ios.name,'bytes':ios.stat().st_size,'sha256':hashlib.sha256(ios.read_bytes()).hexdigest(),'signing':'local-ad-hoc','physicalIPhoneVerified':False,'uiCases':4,'coreTests':5,'coreChecks':14}
+result['hardwareEvidence']={'sonyModel':'ILCE-7CM2','firmware':'2.01','phone':'Xiaomi17 Android17','readParametersAndLiveFrame':True,'receivedFramePixels':[1024,680],'latestGlassScenePhysicalVerified':False}
+result['sourceArchiveSha256']=hashlib.sha256(source.read_bytes()).hexdigest()
+result['elf16KBAlignment']=True
+alias=artifacts/f'FrameLink-{version}-glass-{datetime.datetime.now().strftime("%Y%m%d-%H%M")}-debug.apk'
+shutil.copyfile(apk,alias)
+result['timestampedApk']=alias.name
 (artifacts/'artifact-manifest.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
 print(str(apk))
 print('SHA256 '+result['apkSha256'])

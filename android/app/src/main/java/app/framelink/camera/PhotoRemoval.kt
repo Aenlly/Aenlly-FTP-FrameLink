@@ -38,7 +38,8 @@ class PhotoRemovalRepository(private val context: Context, private val db: Local
         val otherAssets = all.filter { it.id !in selectedIds }.flatMap { assets(it, related[it.id].orEmpty()) }.toSet()
         val chosen = selected.associate { it.id to assets(it, related[it.id].orEmpty()) }
         val shared = chosen.values.flatten().toSet().intersect(otherAssets)
-        val reviews = db.reviews().all().count { review -> review.photoIds().any { it in selectedIds } }
+        val reviews = db.reviews().all().count { review -> review.photoIds().any { it in selectedIds } } +
+            db.batches().all().count { batch -> batch.photoIds().any { it in selectedIds } }
         return PhotoRemovalPlan(selected, chosen.mapValues { (_, files) -> files - shared }, shared.size, reviews)
     }
 

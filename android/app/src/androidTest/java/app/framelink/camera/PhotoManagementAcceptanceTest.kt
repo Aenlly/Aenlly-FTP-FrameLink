@@ -168,7 +168,7 @@ class PhotoManagementAcceptanceTest {
             db.openHelper.writableDatabase.execSQL("ALTER TABLE photos DROP COLUMN localHidden")
             db.openHelper.writableDatabase.version = 2
             db.close()
-            db = Room.databaseBuilder(context, LocalDatabase::class.java, name).addMigrations(LocalDatabase.MIGRATION_2_3).build()
+            db = Room.databaseBuilder(context, LocalDatabase::class.java, name).addMigrations(LocalDatabase.MIGRATION_2_3, LocalDatabase.MIGRATION_3_4).build()
             val restored = db.photos().find(photo.id)!!
             assertEquals(photo.filesJson, restored.filesJson)
             assertFalse(restored.localHidden)
@@ -204,7 +204,7 @@ class PhotoManagementAcceptanceTest {
             compose.onNodeWithText(second.name).performClick()
             compose.onNodeWithContentDescription("移除照片").performClick()
             compose.onNodeWithText("删除本机文件并移除").performClick()
-            compose.waitUntil(10000) { !compose.onNodeWithText("确认删除文件").fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) }
+            compose.waitUntil(10000) { compose.onAllNodesWithText("确认删除文件").fetchSemanticsNodes().singleOrNull()?.config?.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) == false }
             compose.onNodeWithText("确认删除文件").performClick()
             compose.waitUntil(10000) { runBlocking { runtime.database.photos().find(second.id)!!.localHidden } }
             assertFalse(secondFile.exists())

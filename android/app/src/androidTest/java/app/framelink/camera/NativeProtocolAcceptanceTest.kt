@@ -23,6 +23,7 @@ class NativeProtocolAcceptanceTest {
             assertTrue(info.model.contains("SIMULATED"))
             assertFalse(info.hardwareVerified)
             assertTrue(info.canBrowse)
+            assertTrue(info.canCapture)
             val page = camera.page(1, 0)
             assertTrue(page.items.isNotEmpty())
             val item = page.items.first { p -> p.files.any { it.name == "QA_DSC00001.JPG" } }

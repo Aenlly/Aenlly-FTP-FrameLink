@@ -15,6 +15,11 @@ import org.json.JSONObject
 /** 只为相机socket绑定局域网，云端保持Android默认互联网路径 */
 class NativeCamera(private val context: Context) {
     private val session = Bridge.newSession()
+    @Volatile private var boundNetwork: android.net.Network? = null
+
+    fun connected(): Boolean = session.connected()
+
+    fun usesNetwork(network: android.net.Network): Boolean = boundNetwork == network
 
     fun connect(config: ConnectionConfig): CameraInfo {
         session.setNetworkBinder(cameraNetwork(config.host))
@@ -52,6 +57,7 @@ class NativeCamera(private val context: Context) {
                         }
                     }
             }
+        boundNetwork = network
         return if (network == null) null
             else
                 object : NetworkBinder {
@@ -108,6 +114,7 @@ class NativeCamera(private val context: Context) {
     }
 
     fun close() {
+        boundNetwork = null
         session.close()
     }
 

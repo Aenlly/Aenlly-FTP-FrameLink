@@ -12,7 +12,7 @@ class CameraApp : Application() {
         go.Seq.setContext(this)
         val database =
             Room.databaseBuilder(this, LocalDatabase::class.java, "framelink.db")
-                .addMigrations(LocalDatabase.MIGRATION_1_2, LocalDatabase.MIGRATION_2_3)
+                .addMigrations(LocalDatabase.MIGRATION_1_2, LocalDatabase.MIGRATION_2_3, LocalDatabase.MIGRATION_3_4)
                 .build()
         runtime = CameraRuntime(this, database, SecureSettings(this))
     }

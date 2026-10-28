@@ -88,7 +88,7 @@ internal fun PhotoRemovalDialog(
                 if (plan == null && error.isBlank()) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 listOf(false to "仅从图库移除", true to "删除本机文件并移除").forEach { (removeFiles, label) ->
                     Row(
-                        Modifier.fillMaxWidth().clickable(enabled = !busy && !waiting && plan != null) { deleteFiles = removeFiles },
+                        Modifier.fillMaxWidth().clickable(enabled = !busy && !waiting) { deleteFiles = removeFiles },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(selected = deleteFiles == removeFiles, onClick = null)
@@ -102,7 +102,7 @@ internal fun PhotoRemovalDialog(
                 )
                 plan?.let { current ->
                     Text("包含RAW与JPEG时，按整组处理。", fontSize = 12.sp, color = Muted)
-                    if (current.reviewCount > 0) Text("涉及 ${current.reviewCount} 个现场选片记录。已保存的选择和留言保留；删除文件后，本机可能无法继续查看这些照片。", fontSize = 12.sp, color = Muted)
+                    if (current.reviewCount > 0) Text("涉及 ${current.reviewCount} 个选片记录。已保存的批次、选择和留言保留；删除文件后，本机可能无法继续查看这些照片。", fontSize = 12.sp, color = Muted)
                     if (current.retainedShared > 0) Text("${current.retainedShared} 个文件仍被其他照片记录引用，将保留这些共享文件。", fontSize = 12.sp, color = Muted)
                 }
                 if (busy || waiting) Text(if (waiting) "等待系统授权…" else "正在处理照片…", fontSize = 13.sp, color = Brand)

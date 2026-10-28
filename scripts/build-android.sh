@@ -15,12 +15,16 @@ if [ ! -f "$GOBIN/gomobile" ]; then
   go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20261011034528-197770444867
   go install golang.org/x/mobile/cmd/gobind@v0.0.0-20261011034528-197770444867
 fi
+if [ ! -f "$GOBIN/gobind" ]; then
+  go install golang.org/x/mobile/cmd/gobind@v0.0.0-20261011034528-197770444867
+fi
 mkdir -p "$TASK_ROOT/android/app/libs"
 cd "$TASK_ROOT/camera-bridge"
 go mod tidy
-gomobile init
+# init会重新安装gobind@latest；这里使用已固定的工具，不拉取浮动版本
+mkdir -p "$GOPATH/pkg/gomobile"
 gomobile bind -target=android/arm64,android/amd64 -androidapi=26 -ldflags='-extldflags=-Wl,-z,max-page-size=16384' -javapkg=app.framelink.nativecamera -o "$TASK_ROOT/android/app/libs/camera.aar" ./bridge
 cd "$TASK_ROOT/android"
 ./gradlew --no-daemon testDebugUnitTest assembleDebug
 mkdir -p "$TASK_ROOT/artifacts"
-cp app/build/outputs/apk/debug/app-debug.apk "$TASK_ROOT/artifacts/FrameLink-0.1.3-debug.apk"
+cp app/build/outputs/apk/debug/app-debug.apk "$TASK_ROOT/artifacts/FrameLink-0.1.4-debug.apk"

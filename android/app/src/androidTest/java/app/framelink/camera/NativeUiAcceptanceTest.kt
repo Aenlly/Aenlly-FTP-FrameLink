@@ -70,6 +70,7 @@ class NativeUiAcceptanceTest {
             }
             compose.onNodeWithText("图库", useUnmergedTree = true).performClick()
             compose.onNodeWithContentDescription("现场客户选片").performClick()
+            compose.onNodeWithText("开始选片").performClick()
             compose.waitUntil(10000) {
                 compose.onAllNodesWithTag("review-grid").fetchSemanticsNodes().isNotEmpty()
             }
@@ -88,6 +89,7 @@ class NativeUiAcceptanceTest {
             compose.onNodeWithText("相机", useUnmergedTree = true).performClick()
             compose.onNodeWithText("取景拍摄").performClick()
             compose.waitUntil(30000) { runtime.frame.value?.isNotEmpty() == true }
+            dismissFullscreenEducation()
             compose.onNodeWithText("专业工具").performClick()
             screenshot("android-live")
             compose.onNodeWithContentDescription("拍摄").performClick()

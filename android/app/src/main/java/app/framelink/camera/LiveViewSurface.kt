@@ -6,14 +6,20 @@ import android.graphics.BitmapFactory
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.GLUtils
+import android.opengl.EGL14
+import android.graphics.SurfaceTexture
+import android.os.Handler
+import android.os.HandlerThread
+import android.view.TextureView
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
 /** 原生取景渲染：仅保留最新帧，纹理上传完成后复用解码位图 */
-class LiveViewSurface(context: Context) : GLSurfaceView(context), GLSurfaceView.Renderer {
+class LiveViewSurface(context: Context) : TextureView(context), GLSurfaceView.Renderer {
     private val pending = AtomicReference<ByteArray?>()
     private var program = 0
     private var texture = 0
@@ -22,8 +28,18 @@ class LiveViewSurface(context: Context) : GLSurfaceView(context), GLSurfaceView.
     private var height = 1
     @Volatile var zebra = false
     @Volatile var peaking = false
-    var histogram: ((IntArray) -> Unit)? = null
+    @Volatile var histogram: ((IntArray) -> Unit)? = null
+    @Volatile var frameSize: ((Int, Int) -> Unit)? = null
+    @Volatile var failure: ((String) -> Unit)? = null
+    @Volatile var framePresented: (() -> Unit)? = null
     private var lastAnalysis = 0L
+    private var worker: HandlerThread? = null
+    @Volatile private var renderHandler: Handler? = null
+    private val drawPending = AtomicBoolean(false)
+    private var display = EGL14.EGL_NO_DISPLAY
+    private var eglContext = EGL14.EGL_NO_CONTEXT
+    private var eglSurface = EGL14.EGL_NO_SURFACE
+    @Volatile private var paused = false
     private val vertices =
         ByteBuffer.allocateDirect(16 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
             put(floatArrayOf(-1f, -1f, 0f, 1f, 1f, -1f, 1f, 1f, -1f, 1f, 0f, 0f, 1f, 1f, 1f, 0f))
@@ -31,10 +47,88 @@ class LiveViewSurface(context: Context) : GLSurfaceView(context), GLSurfaceView.
         }
 
     init {
-        setEGLContextClientVersion(2)
-        setRenderer(this)
-        renderMode = RENDERMODE_WHEN_DIRTY
         keepScreenOn = true
+        // TextureView进入普通合成树，玻璃浮层可采样实时画面；仍在独立GL线程解码和上传纹理
+        surfaceTextureListener = object : SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+                paused = false
+                val handler = renderHandler ?: HandlerThread("FrameLinkLiveGL").let { thread ->
+                    thread.start(); worker = thread; Handler(thread.looper).also { renderHandler = it }
+                }
+                handler.post {
+                  try {
+                    display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+                    val version = IntArray(2)
+                    check(EGL14.eglInitialize(display, version, 0, version, 1))
+                    val attributes = intArrayOf(EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT, EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_NONE)
+                    val configurations = arrayOfNulls<android.opengl.EGLConfig>(1)
+                    val count = IntArray(1)
+                    check(EGL14.eglChooseConfig(display, attributes, 0, configurations, 0, 1, count, 0) && count[0] > 0)
+                    eglContext = EGL14.eglCreateContext(display, configurations[0], EGL14.EGL_NO_CONTEXT, intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE), 0)
+                    eglSurface = EGL14.eglCreateWindowSurface(display, configurations[0], surface, intArrayOf(EGL14.EGL_NONE), 0)
+                    check(EGL14.eglMakeCurrent(display, eglSurface, eglSurface, eglContext))
+                    onSurfaceCreated(null, null)
+                    onSurfaceChanged(null, width, height)
+                    requestRender()
+                  } catch (error: Exception) {
+                    android.util.Log.e("FrameLinkLive", "Preview renderer initialization failed", error)
+                    releaseRenderer()
+                    failure?.invoke("取景画面暂不可用，请重新打开")
+                  }
+                }
+            }
+            override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
+                renderHandler?.post { onSurfaceChanged(null, width, height); requestRender() }
+            }
+            override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                val handler = renderHandler
+                if (handler == null) surface.release()
+                else handler.post { releaseRenderer(); surface.release() }
+                return false
+            }
+            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) { framePresented?.invoke() }
+        }
+    }
+
+    fun onPause() {
+        paused = true
+        pending.set(null)
+        val handler = renderHandler
+        val thread = worker
+        renderHandler = null
+        worker = null
+        handler?.post { releaseRenderer(); thread?.quitSafely() }
+    }
+
+    private fun requestRender() {
+        val handler = renderHandler ?: return
+        if (!drawPending.compareAndSet(false, true)) return
+        handler.post {
+            drawPending.set(false)
+            if (!paused && eglSurface != EGL14.EGL_NO_SURFACE) {
+                try {
+                    onDrawFrame(null)
+                    check(EGL14.eglSwapBuffers(display, eglSurface))
+                } catch (error: Exception) {
+                    android.util.Log.e("FrameLinkLive", "Preview renderer interrupted", error)
+                    releaseRenderer()
+                    failure?.invoke("取景画面暂不可用，请重新打开")
+                }
+            }
+        }
+    }
+
+    private fun releaseRenderer() {
+        bitmap?.recycle(); bitmap = null
+        if (display != EGL14.EGL_NO_DISPLAY) {
+            EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
+            if (eglSurface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, eglSurface)
+            if (eglContext != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(display, eglContext)
+            EGL14.eglTerminate(display)
+        }
+        eglSurface = EGL14.EGL_NO_SURFACE
+        eglContext = EGL14.EGL_NO_CONTEXT
+        display = EGL14.EGL_NO_DISPLAY
     }
 
     fun submit(frame: ByteArray) {
@@ -110,9 +204,10 @@ class LiveViewSurface(context: Context) : GLSurfaceView(context), GLSurfaceView.
             if (decoded != null) {
                 if (bitmap != null && bitmap !== decoded) bitmap?.recycle()
                 bitmap = decoded
+                frameSize?.invoke(decoded.width, decoded.height)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
                 GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, decoded, 0)
-                if (System.currentTimeMillis() - lastAnalysis > 500) {
+                if (histogram != null && System.currentTimeMillis() - lastAnalysis > 500) {
                     lastAnalysis = System.currentTimeMillis()
                     val bins = IntArray(64)
                     val step = maxOf(1, decoded.width / 80)

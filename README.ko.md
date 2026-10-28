@@ -1,10 +1,10 @@
 # Aenlly-FTP · FrameLink
-<p align="center"><img src="docs/images/brand-en.svg" alt="FrameLink" width="100%"></p>
+<p align="center"><img src="design/brand/framelink-icon.png" alt="FrameLink" width="88"></p>
 <p align="center"><a href="README.md">中文</a> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <strong>한국어</strong></p>
 
 카메라에 연결하고, 사진을 살펴보고, 필요한 사진만 가져옵니다. FrameLink는 Aenlly-FTP를 바탕으로 FTP 전송을 유지하면서 무선 라이브 뷰, 현장 사진 선택, 선택형 클라우드 납품 기능을 개발하는 오픈 소스 앱입니다.
 
-**0.1.4 개발 프리뷰** · Android 8.0 이상 · iOS 17 이상 프로젝트 · GPL-3.0
+**0.1.5 개발 프리뷰** · Android 8.0 이상 · iOS 17 이상 프로젝트 · GPL-3.0
 
 ## 화면
 | 카메라 | 갤러리 | 사진 보기 |
@@ -42,7 +42,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android 결과물: `artifacts/FrameLink-0.1.4-debug.apk`. iOS 스크립트는 시뮬레이터용 앱을 빌드합니다. iPhone에 설치하려면 Xcode에서 서명을 설정하세요. 현재 앱의 표시 언어는 중국어입니다. [Android](android/README.md) · [iOS](ios/README.md) · [서버](cloud/README.md) · [웹](web/README.md)
+Android 결과물: `artifacts/FrameLink-0.1.5-debug.apk`. iOS 스크립트는 시뮬레이터용 앱을 빌드합니다. iPhone에 설치하려면 Xcode에서 서명을 설정하세요. 현재 앱의 표시 언어는 중국어입니다. [Android](android/README.md) · [iOS](ios/README.md) · [서버](cloud/README.md) · [웹](web/README.md)
 
 ## 기여
 기종 호환성, 재현 가능한 오류, 사용성 의견을 환영합니다. 휴대전화 OS, 카메라 모델과 펌웨어, 연결 방식, 재현 단계를 적어 주세요. 비밀번호나 개인 원본 사진은 올리지 마세요.

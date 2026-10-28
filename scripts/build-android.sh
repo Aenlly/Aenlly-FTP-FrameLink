@@ -27,4 +27,4 @@ gomobile bind -target=android/arm64,android/amd64 -androidapi=26 -ldflags='-extl
 cd "$TASK_ROOT/android"
 ./gradlew --no-daemon testDebugUnitTest assembleDebug
 mkdir -p "$TASK_ROOT/artifacts"
-cp app/build/outputs/apk/debug/app-debug.apk "$TASK_ROOT/artifacts/FrameLink-0.1.4-debug.apk"
+cp app/build/outputs/apk/debug/app-debug.apk "$TASK_ROOT/artifacts/FrameLink-0.1.5-debug.apk"

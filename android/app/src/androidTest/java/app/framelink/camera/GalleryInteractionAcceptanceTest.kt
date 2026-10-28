@@ -17,11 +17,14 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
+import org.junit.After
 import org.junit.runner.RunWith
 
 /** 仅操作独立模拟器的合成照片与本机模拟相机，验证选择与断线行为 */
 @RunWith(AndroidJUnit4::class)
 class GalleryInteractionAcceptanceTest {
+    private var previousLayout:String?=null
+    @After fun restoreLayout(){previousLayout?.let{runtime.settings.put("gallery.layout",it)}}
     @get:Rule(order = 0) val compose = createAndroidComposeRule<MainActivity>()
     @get:Rule(order = 1) val notifications = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
     private val runtime get() = androidx.test.core.app.ApplicationProvider.getApplicationContext<CameraApp>().runtime
@@ -176,8 +179,11 @@ class GalleryInteractionAcceptanceTest {
     }
 
     private fun gallery() {
+        if(previousLayout==null) previousLayout=runtime.settings.get("gallery.layout")
         compose.onNodeWithTag("tab-gallery").performClick()
         compose.onNodeWithText("已导入").performClick()
+        compose.onNodeWithContentDescription("显示方式").performClick()
+        compose.onNodeWithText("小图",substring=false).performClick()
         compose.onNodeWithTag("gallery-grid").performScrollToIndex(0)
     }
 

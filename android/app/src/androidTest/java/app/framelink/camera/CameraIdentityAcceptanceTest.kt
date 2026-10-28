@@ -60,18 +60,18 @@ class CameraIdentityAcceptanceTest {
             assertEquals(fingerprint, SecureSettings(compose.activity).get(trustKey))
             runtime.disconnect()
             compose.onNodeWithText("连接相机").performClick()
-            compose.onNode(hasSetTextAction() and hasText("访问认证账号")).assertTextContains("qa-camera")
-            connect()
             compose.waitUntil(30000) { runtime.camera.value.info != null }
             compose.waitUntil(10000) { compose.onAllNodesWithTag("camera-connect-action").fetchSemanticsNodes().isEmpty() }
             assertNull(runtime.cameraIdentityPrompt.value)
+            compose.onNodeWithContentDescription("相机连接设置").performClick()
+            compose.onNode(hasSetTextAction() and hasText("访问认证账号")).performScrollTo().assertTextContains("qa-camera")
+            compose.onNodeWithContentDescription("关闭").performClick()
             runtime.disconnect()
             runtime.settings.put(trustKey, "SHA256:previous-camera-key")
             // 已确认的按地址保存的指纹优先于上次成功配置，变化时不能自动接受
-            runtime.settings.put("camera.config", Json.encode(remembered.copy(fingerprint = "")))
-            compose.onNodeWithText("连接相机").performClick()
+            runtime.settings.put("camera.config", Json.encode(remembered))
             val previousAttempts = attempts()
-            connect()
+            compose.onNodeWithText("连接相机").performClick()
             compose.waitUntil(15000) { runtime.cameraIdentityPrompt.value != null }
             compose.onNodeWithText("相机身份发生变化").assertIsDisplayed()
             compose.waitForIdle()

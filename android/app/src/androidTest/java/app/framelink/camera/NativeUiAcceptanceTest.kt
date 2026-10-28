@@ -28,7 +28,7 @@ class NativeUiAcceptanceTest {
         val runtime = (compose.activity.application as CameraApp).runtime
         try {
             compose.onNodeWithText("相机", useUnmergedTree = true).performClick()
-            compose.onNodeWithText("连接相机").performClick()
+            compose.onNodeWithContentDescription("相机连接设置").performClick()
             val authentication = compose.onNodeWithContentDescription("使用相机访问身份验证")
             if (authentication.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.ToggleableState] == androidx.compose.ui.state.ToggleableState.On)
                 authentication.performScrollTo().performClick()
@@ -90,8 +90,10 @@ class NativeUiAcceptanceTest {
             compose.onNodeWithText("取景拍摄").performClick()
             compose.waitUntil(30000) { runtime.frame.value?.isNotEmpty() == true }
             dismissFullscreenEducation()
-            compose.onNodeWithText("专业工具").performClick()
             screenshot("android-live")
+            compose.onNodeWithText("专业工具").performClick()
+            screenshot("android-live-tools")
+            compose.onNodeWithContentDescription("收起工具").performClick()
             compose.onNodeWithContentDescription("拍摄").performClick()
             compose.waitUntil(30000) { runtime.lastCapture.value != null }
             compose.onNodeWithContentDescription("查看拍后照片").performClick()

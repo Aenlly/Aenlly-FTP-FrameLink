@@ -29,6 +29,14 @@ public struct CameraFile: Codable, Hashable, Sendable {
       || ["JPG", "JPEG", "PNG", "HIF", "HEIF", "HEIC"].contains(
         (name as NSString).pathExtension.uppercased())
   }
+  public var formatTitle: String {
+    if isRaw { return "RAW" }
+    switch (name as NSString).pathExtension.uppercased() {
+    case "JPG", "JPEG": return "JPEG"
+    case "HIF", "HEIF", "HEIC": return "HEIF"
+    default: return (name as NSString).pathExtension.uppercased()
+    }
+  }
 }
 
 public struct Photo: Codable, Identifiable, Hashable, Sendable {
@@ -60,6 +68,24 @@ public struct Photo: Codable, Identifiable, Hashable, Sendable {
   }
   public var imported: Bool { files.contains { $0.localPath != nil } }
   public var inLibrary: Bool { !hidden && (imported || source == .capture) }
+  public var formatTitle: String {
+    files.reduce(into: [String]()) { value, file in
+      if !value.contains(file.formatTitle) { value.append(file.formatTitle) }
+    }.joined(separator: " + ")
+  }
+  public var displayTitle: String {
+    Set(files.map(\.formatTitle)).count > 1 ? (name as NSString).deletingPathExtension : name
+  }
+  public var hasUnimportedFiles: Bool { files.contains { $0.isPhoto && $0.localPath == nil } }
+  public var importTitle: String {
+    var formats: [String] = []
+    for file in files where !formats.contains(file.formatTitle) { formats.append(file.formatTitle) }
+    return formats.map { format in
+      let group = files.filter { $0.formatTitle == format }
+      let saved = group.filter { $0.localPath != nil }.count
+      return format + " " + (saved == 0 ? "未导入" : saved == group.count ? "已导入" : "部分已导入")
+    }.joined(separator: " · ")
+  }
 }
 
 public struct SelectionBatch: Codable, Identifiable, Sendable {
@@ -125,6 +151,7 @@ public struct TransferTask: Codable, Identifiable, Sendable {
 }
 
 public struct CameraInfo: Codable, Sendable {
+  public var displayName: String { model == "ILCE-7CM2" ? "Sony α7C II" : model }
   public let id: String
   public let model: String
   public let firmware: String

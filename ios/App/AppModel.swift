@@ -14,6 +14,8 @@ final class AppModel: ObservableObject {
   @Published var gallerySource = 0
   @Published var cameraMessage = "连接相机，浏览照片或开启取景"
   @Published var connecting = false
+  @Published var needsConnectionSettings = false
+  @Published var connectionFailure = ""
   @Published var identityPrompt: CameraIdentity?
   @Published var previousFingerprint = ""
   @Published var notice: String?
@@ -30,6 +32,8 @@ final class AppModel: ObservableObject {
   @Published var queueBusy = false
   @Published var propertyUpdating = false
   private var pendingConfig: CameraConfig?
+  private var afterConnect: (() -> Void)?
+  private var openSettingsAfterFailure = false
   private var monitor: Task<Void, Never>?
   private var liveTask: Task<Void, Never>?
   private var liveGeneration = UUID()
@@ -79,14 +83,36 @@ final class AppModel: ObservableObject {
           }
         }
       }
+      if acceptance && ProcessInfo.processInfo.arguments.contains("--ui-paired-fixture"),
+        var photo = library.photos.first(where: { $0.name == "QA_6.jpg" }), photo.files.count == 1
+      {
+        photo.files.append(CameraFile(fileId: 2, name: "QA_6.ARW", size: 30_000_000))
+        try? library.update(photo)
+      }
     #endif
   }
   func savedCamera() -> CameraConfig {
     (try? vault.read("camera", as: CameraConfig.self)) ?? CameraConfig()
   }
   func savedFTP() -> FTPProfile { (try? vault.read("ftp", as: FTPProfile.self)) ?? FTPProfile() }
-  func connect(_ config: CameraConfig) {
+  @discardableResult func reconnectSaved(onReady: @escaping () -> Void = {}) -> Bool {
+    if connecting { return true }
+    guard cameraInfo == nil else { return false }
+    let saved = savedCamera()
+    guard
+      !saved.host.isEmpty
+        && (saved.user.isEmpty || (!saved.password.isEmpty && !saved.fingerprint.isEmpty))
+    else { return false }
+    connect(saved, openSettingsOnFailure: true, onReady: onReady)
+    return true
+  }
+  func connect(
+    _ config: CameraConfig, openSettingsOnFailure: Bool = false, onReady: (() -> Void)? = nil
+  ) {
     disconnect()
+    afterConnect = onReady
+    openSettingsAfterFailure = openSettingsOnFailure
+    connectionFailure = ""
     let token = generation
     connecting = true
     cameraMessage = "正在连接相机"
@@ -115,8 +141,11 @@ final class AppModel: ObservableObject {
         guard token == generation else { return }
         properties = values
         cameraInfo = info
-        cameraMessage = "已连接 \(info.model)"
+        cameraMessage = "已连接 \(info.displayName)"
         connecting = false
+        let ready = afterConnect
+        afterConnect = nil
+        ready?()
         monitor = Task {
           while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -132,7 +161,12 @@ final class AppModel: ObservableObject {
         connecting = false
         camera.close()
         cameraMessage = "连接未完成，请检查相机地址、网络与遥控设置"
-        notice = error.localizedDescription
+        if openSettingsOnFailure {
+          connectionFailure = "未能直接重连，请检查保存的地址和相机设置"
+          needsConnectionSettings = true
+        } else {
+          notice = error.localizedDescription
+        }
       }
     }
   }
@@ -143,10 +177,11 @@ final class AppModel: ObservableObject {
       config.fingerprint = identity.fingerprint
       identityPrompt = nil
       pendingConfig = nil
-      connect(config)
+      connect(config, openSettingsOnFailure: openSettingsAfterFailure, onReady: afterConnect)
     } catch { notice = error.localizedDescription }
   }
   func disconnect() {
+    afterConnect = nil
     if gallerySource == 1 { library.selection = [] }
     generation = UUID()
     monitor?.cancel()

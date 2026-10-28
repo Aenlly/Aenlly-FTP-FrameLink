@@ -1,10 +1,10 @@
 # Aenlly-FTP · FrameLink
-<p align="center"><img src="docs/images/brand.svg" alt="FrameLink 光屿" width="100%"></p>
+<p align="center"><img src="design/brand/framelink-icon.png" alt="FrameLink 光屿" width="88"></p>
 <p align="center"><strong>中文</strong> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a></p>
 
 连接相机、看图选片、按需导入。FrameLink是从Aenlly-FTP继续开发的开源相机助手，保留FTP收发，也提供无线取景、客户现场选片和可选的云端交付。
 
-**0.1.4开发预览** · Android 8.0+ · iOS 17+工程 · GPL-3.0
+**0.1.5开发预览** · Android 8.0+ · iOS 17+工程 · GPL-3.0
 
 ## 看看界面
 | 相机 | 图库 | 大图 |
@@ -42,7 +42,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android输出：`artifacts/FrameLink-0.1.4-debug.apk`。iOS脚本构建模拟器App，iPhone安装需在Xcode配置自己的签名。[Android](android/README.md) · [iOS](ios/README.md) · [云服务](cloud/README.md) · [客户网页](web/README.md)
+Android输出：`artifacts/FrameLink-0.1.5-debug.apk`。iOS脚本构建模拟器App，iPhone安装需在Xcode配置自己的签名。[Android](android/README.md) · [iOS](ios/README.md) · [云服务](cloud/README.md) · [客户网页](web/README.md)
 
 ## 一起开发
 欢迎报告机型兼容、传输问题和不好用的地方。请附手机系统、相机型号与固件、连接方式、复现步骤；不要上传密码或客户原片。

@@ -66,6 +66,26 @@ struct PhotoThumbnail: View {
   }
 }
 
+enum GalleryStyle: String, CaseIterable {
+  case small, medium, large, list
+  var title: String {
+    switch self {
+    case .small: return "小图"
+    case .medium: return "中图"
+    case .large: return "大图"
+    case .list: return "列表"
+    }
+  }
+  var cellSize: CGFloat {
+    switch self {
+    case .small: return 92
+    case .medium: return 135
+    case .large: return 180
+    case .list: return 84
+    }
+  }
+}
+
 private struct CellFrames: PreferenceKey {
   static var defaultValue: [String: CGRect] = [:]
   static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
@@ -78,6 +98,7 @@ struct SelectablePhotoGrid: View {
   let photos: [Photo]
   @Binding var selection: Set<String>
   var selectionEnabled = true
+  var style: GalleryStyle = .medium
   var contextKey = ""
   var onDragging: (Bool) -> Void = { _ in }
   var open: (Photo) -> Void
@@ -93,9 +114,17 @@ struct SelectablePhotoGrid: View {
     GeometryReader { viewport in
       ScrollViewReader { proxy in
         ScrollView {
-          LazyVGrid(columns: [GridItem(.adaptive(minimum: 135), spacing: 12)], spacing: 16) {
+          LazyVGrid(
+            columns: style == .list
+              ? [GridItem(.flexible())]
+              : [GridItem(.adaptive(minimum: style.cellSize), spacing: 12)], spacing: 16
+          ) {
             ForEach(displayedPhotos) { photo in
-              VStack(alignment: .leading, spacing: 7) {
+              let itemLayout =
+                style == .list
+                ? AnyLayout(HStackLayout(alignment: .center, spacing: 14))
+                : AnyLayout(VStackLayout(alignment: .leading, spacing: 7))
+              itemLayout {
                 ZStack(alignment: .topTrailing) {
                   Button {
                     if range == nil && !tapSuppressed { open(photo) }
@@ -116,13 +145,36 @@ struct SelectablePhotoGrid: View {
                   }.buttonStyle(.plain).disabled(!selectionEnabled).accessibilityLabel(
                     "选择 \(photo.name)")
                 }.aspectRatio(1, contentMode: .fit)
+                  .frame(width: style == .list ? 84 : nil, height: style == .list ? 84 : nil)
                   .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                   .overlay(
                     RoundedRectangle(cornerRadius: 22).stroke(
-                      selection.contains(photo.id) ? Palette.accent : .clear, lineWidth: 3))
-                Text(photo.name).font(.caption).lineLimit(1).foregroundStyle(.secondary)
-                  .onTapGesture { if range == nil && !tapSuppressed { open(photo) } }
-              }.id(photo.id).contentShape(Rectangle())
+                      selection.contains(photo.id) ? Palette.accent : .clear, lineWidth: 3)
+                  )
+                  .overlay(alignment: .bottomLeading) {
+                    Text(photo.formatTitle).font(.system(size: 9, weight: .medium)).foregroundStyle(
+                      .white
+                    ).padding(.horizontal, 6).padding(.vertical, 3).background(
+                      .black.opacity(0.5), in: Capsule()
+                    ).padding(6).allowsHitTesting(false)
+                  }
+                VStack(alignment: .leading, spacing: 5) {
+                  Text(photo.displayTitle).font(style == .list ? .subheadline : .caption).lineLimit(
+                    1
+                  ).foregroundStyle(.primary)
+                  Text(photo.importTitle).font(.system(size: 10)).foregroundStyle(.secondary)
+                    .lineLimit(2)
+                  if style == .list {
+                    Text(photo.files.map(\.name).joined(separator: " / ")).font(.caption2)
+                      .foregroundStyle(.secondary).lineLimit(1)
+                  }
+                }.frame(maxWidth: .infinity, alignment: .leading).onTapGesture {
+                  if range == nil && !tapSuppressed { open(photo) }
+                }
+              }.padding(style == .list ? 12 : 0).background(
+                style == .list ? Color(uiColor: .secondarySystemGroupedBackground) : .clear,
+                in: RoundedRectangle(cornerRadius: 18)
+              ).id(photo.id).contentShape(Rectangle())
                 .background(
                   GeometryReader { geometry in
                     Color.clear.preference(
@@ -227,6 +279,8 @@ struct GalleryView: View {
   @State private var naming: NamePurpose?
   @State private var remove = false
   @State private var format = false
+  @AppStorage("gallery.layout") private var layoutKey = "medium"
+  private var layout: GalleryStyle { GalleryStyle(rawValue: layoutKey) ?? .medium }
   private var photos: [Photo] {
     let candidates =
       source == 0
@@ -236,7 +290,7 @@ struct GalleryView: View {
       }
     return candidates.filter {
       filter == 0 || (filter == 1 && library.selection.contains($0.id))
-        || (filter == 2 && $0.favorite) || (filter == 3 && !$0.imported)
+        || (filter == 2 && $0.favorite) || (filter == 3 && $0.hasUnimportedFiles)
         || (filter == 4 && $0.files.contains(where: { $0.isRaw }))
     }
   }
@@ -277,7 +331,8 @@ struct GalleryView: View {
         } description: {
           Text("重新连接后再读取相机照片。已导入原片仍在手机中。")
         } actions: {
-          Button("连接相机") { connect = true }.buttonStyle(.borderedProminent)
+          Button("连接相机") { if !model.reconnectSaved() { connect = true } }.buttonStyle(
+            .borderedProminent)
         }
       } else if photos.isEmpty && !dragging {
         ContentUnavailableView(
@@ -285,8 +340,8 @@ struct GalleryView: View {
           description: Text(source == 0 ? "使用右上角导入手机或读卡器文件。" : "可尝试刷新相机内容或调整筛选条件。"))
       } else {
         SelectablePhotoGrid(
-          photos: photos, selection: $library.selection,
-          contextKey: "\(source):\(filter):\(model.cameraInfo?.id ?? "")",
+          photos: photos, selection: $library.selection, style: layout,
+          contextKey: "\(source):\(filter):\(layoutKey):\(model.cameraInfo?.id ?? "")",
           onDragging: { dragging = $0 }
         ) { viewer = $0 }
       }
@@ -296,6 +351,21 @@ struct GalleryView: View {
       }
     }.background(Palette.background).navigationTitle("图库").navigationBarTitleDisplayMode(.inline)
       .toolbar {
+        Menu {
+          ForEach(GalleryStyle.allCases, id: \.rawValue) { option in
+            Button {
+              layoutKey = option.rawValue
+            } label: {
+              if option == layout {
+                Label(option.title, systemImage: "checkmark")
+              } else {
+                Text(option.title)
+              }
+            }
+          }
+        } label: {
+          Image(systemName: layout == .list ? "list.bullet" : "square.grid.2x2")
+        }.accessibilityLabel("显示方式")
         Menu {
           Button("从照片图库选择") { choosingPhotos = true }
           Button("从文件或读卡器导入") { importing = true }
@@ -415,6 +485,7 @@ struct PhotoViewer: View {
   let initial: String
   @State private var current = ""
   @State private var shared: SharedFiles?
+  @State private var filesInfo = false
   var body: some View {
     ZStack {
       Color.black.ignoresSafeArea()
@@ -433,7 +504,7 @@ struct PhotoViewer: View {
         }.accessibilityLabel("关闭照片")
         Spacer()
         VStack(spacing: 4) {
-          Text(selected?.name ?? "照片").lineLimit(1)
+          Text(selected?.displayTitle ?? "照片").lineLimit(1)
           Text(
             selected?.imported == true
               ? (selected?.files.contains { !$0.isRaw && $0.localPath != nil } == true
@@ -442,6 +513,11 @@ struct PhotoViewer: View {
             .foregroundStyle(.white.opacity(0.7))
         }
         Spacer()
+        Button {
+          filesInfo = true
+        } label: {
+          Image(systemName: "doc.text")
+        }.accessibilityLabel("文件信息")
         Button {
           if let selected { try? library.favorite(selected.id) }
         } label: {
@@ -482,6 +558,27 @@ struct PhotoViewer: View {
     }
     .onAppear { current = initial }
     .sheet(item: $shared) { ShareSheet(items: $0.urls) }
+    .sheet(isPresented: $filesInfo) {
+      NavigationStack {
+        List {
+          if let selected {
+            Text(selected.importTitle).font(.footnote)
+            ForEach(Array(selected.files.enumerated()), id: \.offset) { _, file in
+              VStack(alignment: .leading, spacing: 6) {
+                Text(file.name)
+                Text(
+                  file.formatTitle + " · "
+                    + ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file) + " · "
+                    + (file.localPath == nil ? "未导入" : "已导入")
+                ).font(.caption).foregroundStyle(.secondary)
+              }
+            }
+          }
+        }.navigationTitle("原始文件").navigationBarTitleDisplayMode(.inline).toolbar {
+          Button("完成") { filesInfo = false }
+        }
+      }.presentationDetents([.medium, .large])
+    }
   }
   private var selected: Photo? {
     library.photos.first { $0.id == current } ?? photos.first { $0.id == current }

@@ -130,6 +130,9 @@ fun FrameLink(runtime: CameraRuntime) {
     val message by runtime.notice.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.CAMERA) }
     var sheet by remember { mutableStateOf<Sheet?>(null) }
+    var connectionFailure by remember { mutableStateOf("") }
+    var reconnectAttempt by remember { mutableIntStateOf(0) }
+    var afterReconnect by remember { mutableStateOf<(() -> Unit)?>(null) }
     var source by rememberSaveable { mutableStateOf("local") }
     var filter by rememberSaveable { mutableStateOf("all") }
     var selection by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
@@ -145,6 +148,28 @@ fun FrameLink(runtime: CameraRuntime) {
     var projectId by rememberSaveable { mutableStateOf<String?>(null) }
     val gridState = rememberLazyGridState()
     val snackbar = remember { SnackbarHostState() }
+    fun connectionSettings(error: String = "", keepIntent: Boolean = false) {
+        reconnectAttempt++
+        if (!keepIntent) afterReconnect = null
+        connectionFailure = error
+        sheet = Sheet.CONNECT
+    }
+    fun reconnect(onReady: () -> Unit = {}) {
+        val status = runtime.camera.value
+        if (status.connecting) return
+        if (status.info != null) { onReady(); return }
+        val saved = runtime.savedConnection()
+        afterReconnect = onReady
+        if (!saved.canReconnectDirectly()) { connectionSettings(keepIntent = true); return }
+        val attempt = ++reconnectAttempt
+        scope.launch {
+            runtime.connect(saved).join()
+            if (attempt == reconnectAttempt && runtime.camera.value.info == null) {
+                if (runtime.cameraIdentityPrompt.value != null) connectionSettings(keepIntent = true)
+                else connectionSettings(runtime.camera.value.message, keepIntent = true)
+            }
+        }
+    }
     fun togglePhoto(id: String) {
         selection = selection.toMutableSet().apply { if (!remove(id)) add(id) }.toList()
     }
@@ -181,6 +206,7 @@ fun FrameLink(runtime: CameraRuntime) {
     }
     LaunchedEffect(tab, live) { snackbar.currentSnackbarData?.dismiss() }
     LaunchedEffect(camera.info?.id) {
+        if (camera.info != null) afterReconnect?.let { ready -> afterReconnect = null; ready() }
         if (camera.info != null && tab == Tab.GALLERY && source == "camera") runtime.browseRecent()
         if (camera.info == null && source == "camera") selection = emptyList()
     }
@@ -269,12 +295,7 @@ fun FrameLink(runtime: CameraRuntime) {
                                 .background(Color(0xff29435c)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(
-                                Icons.Outlined.Camera,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp),
-                            )
+                            androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.brand_icon),null,Modifier.fillMaxSize())
                         }
                     Column(Modifier.weight(1f).padding(start = 10.dp)) {
                         Text(
@@ -312,12 +333,13 @@ fun FrameLink(runtime: CameraRuntime) {
                             camera,
                             onConnect = {
                                 notifyPermission()
-                                sheet = Sheet.CONNECT
+                                reconnect()
                             },
+                            onConnectionSettings = { connectionSettings() },
                             onBrowse = {
                                 source = "camera"
                                 tab = Tab.GALLERY
-                                if (camera.info == null) sheet = Sheet.CONNECT
+                                if (camera.info == null) reconnect()
                                 else runtime.browseRecent()
                             },
                             onFtp = {
@@ -333,7 +355,7 @@ fun FrameLink(runtime: CameraRuntime) {
                             },
                             onRemote = {
                                 if (camera.info?.canLiveView == true) live = true
-                                else sheet = Sheet.CONNECT
+                                else reconnect { if (runtime.camera.value.info?.canLiveView == true) live = true else runtime.notice.value = "当前机身模式未提供取景，请检查相机设置" }
                             },
                             onBluetooth = {
                                 val required =
@@ -371,7 +393,7 @@ fun FrameLink(runtime: CameraRuntime) {
                             onImport = {
                                 picker.launch(arrayOf("image/*", "application/octet-stream"))
                             },
-                            onConnect = { sheet = Sheet.CONNECT },
+                            onConnect = { reconnect { runtime.loadPhotos(true) } },
                             onDownload = { format ->
                                 runtime.enqueueDownload(selection, format)
                                 selection = arrayListOf()
@@ -411,7 +433,10 @@ fun FrameLink(runtime: CameraRuntime) {
             }
         }
         when (sheet) {
-            Sheet.CONNECT -> ConnectionSheet(runtime, onClose = { sheet = null })
+            Sheet.CONNECT -> ConnectionSheet(runtime, connectionFailure, onClose = {
+                sheet = null
+                if (runtime.camera.value.info == null) { afterReconnect = null; reconnectAttempt++ }
+            })
             Sheet.FTP -> FtpSheet(runtime, onClose = { sheet = null })
             Sheet.FTP_CLIENT ->
                 FtpClientScreen(
@@ -452,6 +477,7 @@ fun FrameLink(runtime: CameraRuntime) {
                 onClose = { live = false },
                 onPhoto = { viewer = it.id },
                 paused = viewer != null,
+                onGallery = { live = false; source = "camera"; tab = Tab.GALLERY; runtime.browseRecent() },
             )
         if (newReviewPhotos.isNotEmpty()) ReviewNameDialog(
             "现场选片 · " + SimpleDateFormat("MM-dd HH:mm", Locale.ROOT).format(Date()), true,
@@ -614,6 +640,7 @@ private fun CameraHome(
     photos: List<Photo>,
     status: CameraStatus,
     onConnect: () -> Unit,
+    onConnectionSettings: () -> Unit,
     onBrowse: () -> Unit,
     onFtp: () -> Unit,
     onFtpClient: () -> Unit,
@@ -636,7 +663,7 @@ private fun CameraHome(
                     Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(onClick = onConnect) {
+                    IconButton(onClick = onConnectionSettings) {
                         Icon(
                             Icons.Outlined.SettingsInputAntenna,
                             "相机连接设置",
@@ -646,7 +673,7 @@ private fun CameraHome(
                     }
                     Column(Modifier.weight(1f).padding(end = 8.dp)) {
                         Text(
-                            status.info?.model?.replace("ILCE-", "α ") ?: "连接你的相机",
+                            status.info?.displayName() ?: "连接你的相机",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
                             maxLines = 2,
@@ -794,12 +821,12 @@ private fun CameraHome(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(
-                    "已选 ${photos.count { it.mark == PhotoMark.PICKED.name }}",
+                    "已选 ${imported.count { it.mark == PhotoMark.PICKED.name }}",
                     fontSize = 11.sp,
                     color = Muted,
                 )
                 Text(
-                    "收藏 ${photos.count { it.mark == PhotoMark.FAVORITE.name }}",
+                    "收藏 ${imported.count { it.mark == PhotoMark.FAVORITE.name }}",
                     fontSize = 11.sp,
                     color = Muted,
                 )
@@ -989,6 +1016,8 @@ private fun Gallery(
     var download by remember { mutableStateOf(false) }
     var moreSelection by remember { mutableStateOf(false) }
     var bursts by rememberSaveable { mutableStateOf(false) }
+    var layout by remember { mutableStateOf(GalleryLayout.from(runtime.settings.get("gallery.layout"))) }
+    var choosingLayout by remember { mutableStateOf(false) }
     val selectionSet = remember(selection) { selection.toSet() }
     var burst by remember { mutableStateOf<List<Photo>?>(null) }
     val cameraDay by runtime.galleryDay.collectAsStateWithLifecycle()
@@ -996,7 +1025,7 @@ private fun Gallery(
     val availableDays by runtime.captureDates.collectAsStateWithLifecycle()
     var localDay by rememberSaveable { mutableStateOf("") }
     val chosenDay = if (source == "camera") cameraDay else localDay
-    val dragContext = "$source:$filter:$bursts:$chosenDay:${if (source == "camera") camera.info?.id.orEmpty() else ""}"
+    val dragContext = "$source:$filter:$bursts:$chosenDay:${layout.key}:${if (source == "camera") camera.info?.id.orEmpty() else ""}"
     var dragGroups by remember(dragContext) { mutableStateOf<List<List<Photo>>?>(null) }
     var choosingDay by remember { mutableStateOf(false) }
     var follow by rememberSaveable {
@@ -1015,7 +1044,7 @@ private fun Gallery(
                 when (filter) {
                     "picked" -> photo.id in selectionSet
                     "favorite" -> photo.mark == PhotoMark.FAVORITE.name
-                    "new" -> !photo.imported
+                    "new" -> photo.hasUnimportedFiles()
                     "raw" -> photo.files().any { it.raw }
                     else -> true
                 }
@@ -1065,6 +1094,12 @@ private fun Gallery(
                         tint = Brand,
                         modifier = Modifier.size(UiTokens.icon),
                     )
+                }
+                Box {
+                    IconButton(onClick={choosingLayout=true}) { Icon(if(layout==GalleryLayout.LIST) Icons.Outlined.ViewList else Icons.Outlined.GridView,"显示方式",tint=Brand,modifier=Modifier.size(UiTokens.icon)) }
+                    DropdownMenu(choosingLayout,{choosingLayout=false}) {
+                        GalleryLayout.entries.forEach { option -> DropdownMenuItem(text={Text(option.title)},leadingIcon={if(option==layout) Icon(Icons.Outlined.Check,null)},onClick={layout=option;runtime.settings.put("gallery.layout",option.key);choosingLayout=false}) }
+                    }
                 }
                 if (source == "camera")
                     IconButton(
@@ -1153,7 +1188,7 @@ private fun Gallery(
             }
         else
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(100.dp),
+                columns = if(layout == GalleryLayout.LIST) GridCells.Fixed(1) else GridCells.Adaptive(layout.cellDp.dp),
                 state = state,
                 userScrollEnabled = dragGroups == null,
                 modifier = Modifier.weight(1f).testTag("gallery-grid")
@@ -1173,103 +1208,13 @@ private fun Gallery(
                         top = 4.dp,
                         bottom = if (selection.isEmpty()) 144.dp else 8.dp,
                     ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(displayedGroups, key = { it.first().id }) { group ->
-                    val photo = group.first()
-                    val groupSelected = group.all { it.id in selectionSet }
-                    val partlySelected = !groupSelected && group.any { it.id in selectionSet }
-                    Column(
-                        Modifier.testTag("photo-${photo.id}").clickable {
-                                follow = false
-                                runtime.settings.put("gallery.follow", "false")
-                                if (group.size > 1) burst = group else onOpen(photo)
-                            }
-                            .semantics { contentDescription = "查看 ${photo.name}" }
-                    ) {
-                        Box(
-                            Modifier.clip(UiTokens.photo)
-                                .then(
-                                    if (groupSelected || partlySelected)
-                                        Modifier.border(2.dp, Brand, UiTokens.photo)
-                                    else Modifier
-                                )
-                        ) {
-                            PhotoThumbnail(runtime, photo, Modifier.fillMaxWidth().aspectRatio(1f))
-                            if (groupSelected || partlySelected)
-                                Box(Modifier.matchParentSize().background(Brand.copy(alpha = .10f)))
-                            TriStateCheckbox(
-                                state = if (groupSelected) androidx.compose.ui.state.ToggleableState.On else if (partlySelected) androidx.compose.ui.state.ToggleableState.Indeterminate else androidx.compose.ui.state.ToggleableState.Off,
-                                onClick = {
-                                    val ids = group.map { it.id }.toSet()
-                                    onSelectionChange((if (groupSelected) selectionSet - ids else selectionSet + ids).toList())
-                                },
-                                colors =
-                                    CheckboxDefaults.colors(
-                                        uncheckedColor = Color.White,
-                                        checkedColor = Brand,
-                                        checkmarkColor = Color.White,
-                                    ),
-                                modifier =
-                                    Modifier.align(Alignment.TopEnd)
-                                        .drawBehind {
-                                            val edge = 22.dp.toPx()
-                                            drawRoundRect(
-                                                Color.Black.copy(alpha = .35f),
-                                                topLeft =
-                                                    Offset(
-                                                        center.x - edge / 2,
-                                                        center.y - edge / 2,
-                                                    ),
-                                                size = Size(edge, edge),
-                                                cornerRadius = CornerRadius(4.dp.toPx()),
-                                            )
-                                        }
-                                        .semantics { contentDescription = "选择 ${photo.name}" },
-                            )
-                            if (group.size > 1)
-                                Surface(
-                                    Modifier.align(Alignment.BottomStart).padding(8.dp),
-                                    color = Color.Black.copy(alpha = .5f),
-                                    shape = RoundedCornerShape(5.dp),
-                                ) {
-                                    Text(
-                                        "连拍 ${group.size}",
-                                        fontSize = 9.sp,
-                                        color = Color.White,
-                                        modifier = Modifier.padding(5.dp),
-                                    )
-                                }
-                            if (photo.mark == PhotoMark.FAVORITE.name)
-                                Icon(
-                                    Icons.Outlined.Favorite,
-                                    null,
-                                    tint = Color.White,
-                                    modifier =
-                                        Modifier.align(Alignment.BottomEnd)
-                                            .padding(5.dp)
-                                            .background(Color.Black.copy(alpha = .6f), CircleShape)
-                                            .padding(4.dp)
-                                            .size(17.dp),
-                                )
-                        }
-                        Text(
-                            photo.name,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            fontSize = 10.sp,
-                            color = Muted,
-                            modifier = Modifier.padding(horizontal = 3.dp).padding(top = 4.dp),
-                        )
-                        Text(
-                            if (photo.imported) "已导入 · ${photo.files().size} 个文件"
-                            else "相机预览 · ${photo.files().size} 个文件",
-                            fontSize = 9.sp,
-                            color = Muted,
-                            modifier = Modifier.padding(horizontal = 3.dp).padding(top = 1.dp),
-                        )
-                    }
+                    GalleryMediaItem(runtime, group, selectionSet, layout == GalleryLayout.LIST,
+                        onOpen = { follow = false; runtime.settings.put("gallery.follow","false"); if(group.size>1) burst=group else onOpen(group.first()) },
+                        onSelection = onSelectionChange)
                 }
                 if (source == "camera")
                     item {
@@ -1457,7 +1402,7 @@ internal fun ModalSheet(
 }
 
 @Composable
-private fun ConnectionSheet(runtime: CameraRuntime, onClose: () -> Unit) {
+private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "", onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
@@ -1482,6 +1427,7 @@ private fun ConnectionSheet(runtime: CameraRuntime, onClose: () -> Unit) {
     }
     ModalSheet("连接相机", ::closeConnection, footer = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (!submitted && initialFailure.isNotBlank()) Text("未能直接重连：$initialFailure", color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
             if (submitted && status.info == null && identityPrompt == null) {
                 Text(status.message, color = if (status.connecting) Brand else MaterialTheme.colorScheme.error, fontSize = 13.sp)
             }
@@ -2537,10 +2483,11 @@ private fun PhotoViewer(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val original = photo.files().firstOrNull { !it.raw && it.localUri.isNotBlank() }
-    var model by remember(photo.id) { mutableStateOf(original?.localUri ?: photo.displayUri) }
+    val original = photo.files().firstOrNull { !it.raw && it.savedUri.isNotBlank() }
+    var model by remember(photo.id) { mutableStateOf(original?.savedUri ?: photo.displayUri) }
     var viewerLoading by remember(photo.id) { mutableStateOf(true) }
     var viewerFailure by remember(photo.id) { mutableStateOf("") }
+    var filesInfo by remember { mutableStateOf(false) }
     var retryKey by remember(photo.id) { mutableIntStateOf(0) }
     var scale by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
@@ -2608,6 +2555,7 @@ private fun PhotoViewer(
     DarkScene {
         FullScreenScene(onClose) {
             DarkDialogBars()
+            if (filesInfo) PhotoFilesDialog(photo) { filesInfo = false }
             Box(Modifier.fillMaxSize().background(Color(0xff111318)).padding(dialogSafePadding())) {
                 Box(
                     Modifier.fillMaxSize()
@@ -2700,7 +2648,7 @@ private fun PhotoViewer(
                     ) {
                         Column(Modifier.weight(1f)) {
                             Text(
-                                photo.name,
+                                photo.displayTitle(),
                                 color = Color.White,
                                 fontSize = 13.sp,
                                 maxLines = 1,
@@ -2715,6 +2663,7 @@ private fun PhotoViewer(
                                 color = Color.White.copy(alpha = .8f),
                                 modifier = Modifier.padding(top = 4.dp),
                             )
+                            Text(photo.importTitle(),fontSize=10.sp,color=Color.White.copy(alpha=.75f),maxLines=2)
                         }
                         if (scale > 1.01f)
                             Text(
@@ -2723,6 +2672,7 @@ private fun PhotoViewer(
                                 fontSize = 12.sp,
                                 modifier = Modifier.padding(horizontal = 6.dp),
                             )
+                        IconButton(onClick={filesInfo=true}) { Icon(Icons.Outlined.Info,"文件信息",tint=Color.White) }
                         if (photo.inLibrary)
                             IconButton(onClick = onRemove) {
                                 Icon(Icons.Outlined.DeleteOutline, "移除照片", tint = Color.White)

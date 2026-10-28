@@ -48,7 +48,10 @@ class VisualAcceptanceTest {
                     copy,
                 )
             }
+        val previous = runBlocking { runtime.database.photos().all().filter { it.id !in ids && it.inLibrary } }
+        try {
         runBlocking {
+            runtime.database.photos().saveAll(previous.map { it.copy(localHidden = true) })
             runtime.importUris(uris).join()
             ids.forEachIndexed { index, id ->
                 val photo = checkNotNull(runtime.database.photos().find(id)) { "样片没有正常导入：$id" }
@@ -63,6 +66,8 @@ class VisualAcceptanceTest {
             }
         }
         compose.onNodeWithTag("tab-camera").performClick()
+        compose.onNodeWithText("已选 0").assertIsDisplayed()
+        compose.onNodeWithText("收藏 6").assertIsDisplayed()
         for (label in listOf("选片下载", "取景拍摄", "FTP 接收", "FTP 客户端", "快速快门", "本机导入")) compose
             .onNodeWithText(label)
             .assertIsDisplayed()
@@ -124,6 +129,7 @@ class VisualAcceptanceTest {
         compose.onNodeWithText("清理预览缓存").performScrollTo().assertIsDisplayed()
         screenshot("settings")
         compose.onNodeWithContentDescription("关闭").performClick()
+        } finally { runBlocking { runtime.database.photos().saveAll(previous) } }
     }
 
     private fun screenshot(name: String): String {

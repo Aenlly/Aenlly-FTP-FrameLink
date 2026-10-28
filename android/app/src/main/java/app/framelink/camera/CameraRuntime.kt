@@ -207,7 +207,7 @@ class CameraRuntime(
                         settings.get("camera.trust.${MediaFiles.key(config.host)}").ifBlank {
                             savedConnection().takeIf { it.host == config.host }?.fingerprint.orEmpty()
                         }
-                    val expected = config.fingerprint.ifBlank { trusted }
+                    val expected = trusted.ifBlank { config.fingerprint }
                     if (!sameCameraFingerprint(expected, identity.fingerprint)) {
                         val id = UUID.randomUUID().toString()
                         pendingCameraConnection = PendingCameraConnection(id, generation, config, identity)

@@ -1,6 +1,27 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  func testGalleryLayoutsPreservePairedFormatInformation() throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication()
+    app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-paired-fixture"]
+    app.launch()
+    app.buttons["图库"].tap()
+    XCTAssertTrue(app.staticTexts["JPEG + RAW"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.staticTexts["JPEG 已导入 · RAW 未导入"].exists)
+    for title in ["小图", "中图", "大图", "列表"] {
+      app.buttons["显示方式"].tap()
+      app.buttons[title].tap()
+      XCTAssertTrue(app.buttons["选择 QA_6.jpg"].exists)
+    }
+    app.buttons["查看 QA_6.jpg"].tap()
+    app.buttons["文件信息"].tap()
+    XCTAssertTrue(app.staticTexts["QA_6.ARW"].waitForExistence(timeout: 5))
+    app.buttons["完成"].tap()
+    app.buttons["关闭照片"].tap()
+  }
+
   func testDragSelectionCanDeselectInsideSelectedFilter() throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait
@@ -25,7 +46,7 @@ final class FrameLinkUITests: XCTestCase {
     app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures"]
     app.launch()
     app.buttons["相机"].tap()
-    app.buttons["连接"].tap()
+    app.buttons["相机连接设置"].tap()
     let host = app.textFields["例如 192.168.1.20"]
     XCTAssertTrue(host.waitForExistence(timeout: 5))
     host.tap()
@@ -39,6 +60,10 @@ final class FrameLinkUITests: XCTestCase {
     XCTAssertTrue(app.buttons["连接相机"].isEnabled)
     app.buttons["连接相机"].tap()
     XCTAssertTrue(app.staticTexts["QA SIMULATED CAMERA"].waitForExistence(timeout: 20))
+    app.buttons["断开相机"].tap()
+    app.buttons["连接"].tap()
+    XCTAssertTrue(app.staticTexts["QA SIMULATED CAMERA"].waitForExistence(timeout: 20))
+    XCTAssertFalse(host.exists)
     app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "选片下载")).firstMatch.tap()
     let photo = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "选择 QA_DSC"))
       .firstMatch
@@ -50,9 +75,11 @@ final class FrameLinkUITests: XCTestCase {
     XCTAssertTrue(app.staticTexts["已完成"].firstMatch.waitForExistence(timeout: 20))
     app.buttons["相机"].tap()
     app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "取景拍摄")).firstMatch.tap()
+    app.buttons["连接信息"].tap()
     XCTAssertTrue(
       app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "1200×900")).firstMatch
         .waitForExistence(timeout: 20))
+    app.buttons["完成"].tap()
     app.buttons["沉浸取景"].tap()
     app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     XCTAssertTrue(app.buttons["专业工具"].waitForExistence(timeout: 5))

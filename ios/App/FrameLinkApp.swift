@@ -90,6 +90,12 @@ struct RootView: View {
       }.tag(3)
     }
     .sheet(isPresented: $connect) { ConnectCameraView() }
+    .onChange(of: model.needsConnectionSettings) { _, needed in
+      if needed {
+        model.needsConnectionSettings = false
+        connect = true
+      }
+    }
     .alert(
       "确认相机身份",
       isPresented: Binding(
@@ -125,14 +131,19 @@ struct CameraHomeView: View {
       VStack(spacing: 16) {
         GlassCard {
           HStack(spacing: 14) {
-            Image(systemName: "camera.aperture").font(.system(size: 30)).foregroundStyle(
-              Palette.accent)
+            Button {
+              connect = true
+            } label: {
+              Image(systemName: "camera").font(.system(size: 30)).foregroundStyle(Palette.accent)
+            }.accessibilityLabel("相机连接设置")
             VStack(alignment: .leading, spacing: 5) {
-              Text(model.cameraInfo?.model ?? "连接你的相机").font(.headline)
+              Text(model.cameraInfo?.displayName ?? "连接你的相机").font(.headline)
               Text(model.cameraMessage).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            Button(model.connecting ? "连接中" : "连接") { connect = true }.disabled(model.connecting)
+            Button(model.connecting ? "连接中" : model.cameraInfo == nil ? "连接" : "管理") {
+              if !model.reconnectSaved() { connect = true }
+            }.disabled(model.connecting)
           }
           if model.cameraInfo != nil {
             Divider().padding(.vertical, 10)
@@ -145,7 +156,13 @@ struct CameraHomeView: View {
             action: goGallery)
           HomeAction(
             title: "取景拍摄", subtitle: "画面优先，轻松遥控", icon: "viewfinder",
-            action: { if model.cameraInfo != nil { live = true } else { connect = true } })
+            action: {
+              if model.cameraInfo != nil {
+                live = true
+              } else if !model.reconnectSaved(onReady: { live = true }) {
+                connect = true
+              }
+            })
         }
         GlassCard {
           VStack(spacing: 16) {
@@ -198,7 +215,12 @@ struct CameraHomeView: View {
           Image(systemName: "gearshape")
         }
       }
-      .fullScreenCover(isPresented: $live) { LiveCameraView() }
+      .fullScreenCover(isPresented: $live) {
+        LiveCameraView(onGallery: {
+          live = false
+          goGallery()
+        })
+      }
   }
 }
 
@@ -250,6 +272,9 @@ struct ConnectCameraView: View {
     NavigationStack {
       Form {
         Section { Text("手机和相机接入同一个Wi-Fi，在相机开启电脑遥控或相应的无线控制功能。").font(.subheadline) }
+        if !model.connectionFailure.isEmpty {
+          Section { Text(model.connectionFailure).font(.footnote).foregroundStyle(.red) }
+        }
         Section("相机地址") {
           TextField("例如 192.168.1.20", text: $config.host).textInputAutocapitalization(.never)
             .autocorrectionDisabled().keyboardType(.URL)
@@ -306,7 +331,7 @@ struct SettingsView: View {
   var body: some View {
     List {
       Section("FrameLink") {
-        LabeledContent("版本", value: "0.1.4")
+        LabeledContent("版本", value: "0.1.5")
         Text("本地拍摄与选片无需登录。原片保存在App文件目录，卸载前请先导出。").font(.footnote)
       }
       Section("连接能力") {

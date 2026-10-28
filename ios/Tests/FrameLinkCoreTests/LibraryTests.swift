@@ -3,6 +3,17 @@ import XCTest
 @testable import FrameLinkCore
 
 final class LibraryTests: XCTestCase {
+  func testPairedFormatsKeepSeparateImportState() {
+    let photo = Photo(
+      id: "one", name: "DSC001.JPG", source: .camera,
+      files: [
+        CameraFile(name: "DSC001.JPG", localPath: "media/a.jpg"), CameraFile(name: "DSC001.ARW"),
+      ])
+    XCTAssertEqual(photo.displayTitle, "DSC001")
+    XCTAssertEqual(photo.formatTitle, "JPEG + RAW")
+    XCTAssertEqual(photo.importTitle, "JPEG 已导入 · RAW 未导入")
+    XCTAssertTrue(photo.hasUnimportedFiles)
+  }
   @MainActor func testReceiptRecoveryDoesNotReviveDeletedFilesAndRunningTasksBecomeInterrupted()
     async throws
   {

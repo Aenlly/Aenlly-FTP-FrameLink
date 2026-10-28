@@ -70,6 +70,12 @@ internal object CameraPropertyText {
 
     fun recognized(property: CameraProperty): Boolean = property.code in names
 
+    fun controls(properties: List<CameraProperty>): List<CameraProperty> {
+        val supported = properties.filter { recognized(it) && label(it) != null }
+        val exposure = supported.filter { it.code in exposureOrder }.sortedBy { exposureOrder.indexOf(it.code) }.distinctBy { name(it) }
+        return exposure + supported.filter { it.code !in exposureOrder }
+    }
+
     fun quick(properties: List<CameraProperty>): List<CameraProperty> {
         val ranked = properties.filter { it.code in exposureOrder }.sortedBy { exposureOrder.indexOf(it.code) }.distinctBy { name(it) }
         return (ranked + properties.filter { it.code in setOf(0x500A, 0xD22C, 0x5005) }).distinctBy { it.code }.take(4)

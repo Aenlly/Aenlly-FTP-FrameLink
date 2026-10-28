@@ -52,6 +52,7 @@ class PhysicalCoreUiAcceptanceTest {
         waitFor(45000) { runtime.camera.value.info != null || runtime.cameraIdentityPrompt.value != null }
         assertNull(runtime.cameraIdentityPrompt.value)
         assertEquals("ILCE-7CM2", runtime.camera.value.info!!.model)
+        if (!hasText("取景拍摄")) clickText("相机")
     }
 
     @Test
@@ -88,6 +89,7 @@ class PhysicalCoreUiAcceptanceTest {
             val sheets = runBlocking { runtime.batches.contactSheets(batch) }
             assertTrue(sheets.isNotEmpty() && sheets.all { it.length() > 1000 })
             clickDescription("关闭选片记录")
+            if (!hasText("相机内")) clickText("图库")
             val download = page.firstOrNull { !it.imported && it.downloadFiles(DownloadFormat.JPEG).isNotEmpty() } ?: first
             val format = if (download.downloadFiles(DownloadFormat.JPEG).isNotEmpty()) DownloadFormat.JPEG else DownloadFormat.RAW
             runBlocking { runtime.enqueueDownload(listOf(download.id), format).join() }
@@ -127,7 +129,7 @@ class PhysicalCoreUiAcceptanceTest {
                 // 参数栏可以水平滚动，使用坐标仅滑动这一条控件区域
                 repeat(4) {
                     if (!hasText("对焦模式")) {
-                        nodes().firstOrNull { it.isScrollable && it.collectionInfo?.rowCount == 1 }
+                        nodes().firstOrNull { it.isScrollable }
                             ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
                         SystemClock.sleep(250)
                     }
@@ -147,14 +149,23 @@ class PhysicalCoreUiAcceptanceTest {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }; val frame = runtime.frame.value!!
             BitmapFactory.decodeByteArray(frame, 0, frame.size, options)
             screenshot("physical-live-chinese")
+            clickDescription("收起工具")
             clickDescription("沉浸取景"); waitFor { findDescription("显示取景控制") != null }
             clickDescription("显示取景控制")
             assertTrue(automation.setRotation(UiAutomation.ROTATION_FREEZE_90))
             waitFor { app.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && findDescription("显示取景控制")?.stateDescription == "取景画面已显示" }
             val landscapeBounds = Rect(); automation.rootInActiveWindow.getBoundsInScreen(landscapeBounds)
             val screen = app.getSystemService(android.view.WindowManager::class.java).maximumWindowMetrics.bounds
-            assertEquals("横屏全屏窗口必须覆盖实际屏幕", screen, landscapeBounds)
+            // 无障碍矩形可能向下取整，允许两个物理像素的边界舍入差
+            assertTrue("横屏全屏窗口必须覆盖实际屏幕，屏幕=$screen，窗口=$landscapeBounds",
+                kotlin.math.abs(screen.left-landscapeBounds.left) <= 2 && kotlin.math.abs(screen.top-landscapeBounds.top) <= 2 &&
+                    kotlin.math.abs(screen.right-landscapeBounds.right) <= 2 && kotlin.math.abs(screen.bottom-landscapeBounds.bottom) <= 2)
             screenshot("physical-live-landscape")
+            clickDescription("显示取景控制")
+            waitFor { findDescription("拍摄") != null && hasText("专业工具") }
+            val menuBounds = Rect(); automation.rootInActiveWindow.getBoundsInScreen(menuBounds)
+            assertEquals("显示菜单不能挤小取景窗口", landscapeBounds, menuBounds)
+            screenshot("physical-live-landscape-glass")
             assertTrue(automation.setRotation(UiAutomation.ROTATION_FREEZE_0))
             waitFor { app.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT && findDescription("沉浸取景") != null }
             aperture = runtime.properties.value.firstOrNull { it.code == 0x5007 && it.writable }
@@ -247,6 +258,7 @@ class PhysicalCoreUiAcceptanceTest {
         event(MotionEvent.ACTION_UP, endX, endY); SystemClock.sleep(250)
     }
     private fun screenshot(name: String) {
+        check(automation.rootInActiveWindow?.packageName == app.packageName) { "手机已切换应用，停止截图" }
         val bitmap = automation.takeScreenshot() ?: error("手机截图不可用")
         val file = File(app.getExternalFilesDir(null), "qa-shots/$name.png").apply { parentFile!!.mkdirs() }
         file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()

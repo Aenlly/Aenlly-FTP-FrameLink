@@ -11,7 +11,7 @@ import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-version='0.1.4'
+version='0.1.5'
 checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark','ios','ios-core','ios-ui','ios-device']
 for name in checks:
     result=root/'build-logs'/f'{name}.exit'
@@ -52,8 +52,12 @@ with zipfile.ZipFile(source,'w',zipfile.ZIP_DEFLATED) as archive:
 result={'version':version,'qualification':'development-preview','package':'app.framelink.camera','apk':apk.name,'apkBytes':apk.stat().st_size,'apkSha256':hashlib.sha256(apk.read_bytes()).hexdigest(),'signing':'Android Debug certificate','certificate':certificate.strip(),'zip16KBAlignment':True,'checks':{name:0 for name in checks},'checkLogUpdatedAt':{name:datetime.datetime.fromtimestamp((root/'build-logs'/f'{name}.log').stat().st_mtime,datetime.timezone.utc).isoformat() for name in checks},'webE2eCases':len(e2e['steps']),'visualSamples':'licensed-real-photography','syntheticProtocolTest':True,'sonyA7CIIHardwareVerified':False,'bluetoothHardwareVerified':False,'productionPublished':False,'sourceArchive':source.name,'frozenAt':datetime.datetime.now(datetime.timezone.utc).isoformat()}
 ios=artifacts/f'FrameLink-{version}-ios-simulator.zip'
 if not ios.exists(): raise SystemExit('缺少iOS模拟器包')
-result['ios']={'simulatorArchive':ios.name,'bytes':ios.stat().st_size,'sha256':hashlib.sha256(ios.read_bytes()).hexdigest(),'signing':'local-ad-hoc','physicalIPhoneVerified':False,'uiCases':4,'coreTests':5,'coreChecks':14}
-result['hardwareEvidence']={'sonyModel':'ILCE-7CM2','firmware':'2.01','phone':'Xiaomi17 Android17','readParametersAndLiveFrame':True,'receivedFramePixels':[1024,680],'latestGlassScenePhysicalVerified':False}
+result['ios']={'simulatorArchive':ios.name,'bytes':ios.stat().st_size,'sha256':hashlib.sha256(ios.read_bytes()).hexdigest(),'signing':'local-ad-hoc','physicalIPhoneVerified':False,'uiCases':5,'coreTests':6,'coreChecks':14}
+result['hardwareEvidence']={'latestGlassScenePhysicalVerified':False}
+evidence=artifacts/f'hardware-acceptance-{version}.json'
+if evidence.exists():
+    verified=json.loads(evidence.read_text())
+    if verified.get('apkSha256')==result['apkSha256']: result['hardwareEvidence']=verified
 result['sourceArchiveSha256']=hashlib.sha256(source.read_bytes()).hexdigest()
 result['elf16KBAlignment']=True
 alias=artifacts/f'FrameLink-{version}-glass-{datetime.datetime.now().strftime("%Y%m%d-%H%M")}-debug.apk'

@@ -42,6 +42,8 @@ class LiveViewUsabilityAcceptanceTest {
             compose.onNodeWithContentDescription("拍摄").assertIsDisplayed()
             assertEquals("显示菜单不应缩小画面", pictureBounds, compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow)
             val shutter = compose.onNodeWithContentDescription("拍摄").fetchSemanticsNode().boundsInWindow
+            compose.waitForIdle()
+            acceptanceScreenshot(compose.activity, "live-landscape-before-shutter-check")
             compose.waitUntil(8000) {
                 val image = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
                 if (image == null) false else try {
@@ -90,7 +92,7 @@ class LiveViewUsabilityAcceptanceTest {
             compose.onNodeWithContentDescription("显示取景控制").assertIsDisplayed()
             acceptanceScreenshot(compose.activity, "live-immersive-preview")
             compose.onNodeWithTag("live-preview").performTouchInput { click() }
-            compose.onNodeWithTag("live-properties").assertIsDisplayed()
+            compose.onNodeWithTag("live-quick-properties").assertIsDisplayed()
             compose.onNodeWithContentDescription("返回相机").performClick()
         } finally { runtime.disconnect() }
     }

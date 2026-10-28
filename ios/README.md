@@ -2,12 +2,12 @@
 
 SwiftUI原生应用，最低iOS17，适配iPhone与iPad。四个入口为相机、图库、项目和传输；iOS26采用系统Liquid Glass，旧系统使用Material浮层。
 
-取景画面使用完整窗口，横屏默认收起菜单，单击画面才显示玻璃浮动控件；菜单不占用预览布局空间。
+竖屏采用顶部快捷操作、快门区与专业面板，横屏使用完整窗口并默认收起菜单，单击画面才显示玻璃浮动控件。技术型号与实收尺寸在连接详情查看。
 
 ## 当前范围
 
 - 索尼PTP/IP＋SSH连接、首次指纹确认与Keychain记忆，卡内分页、预览、原片下载、取景与中文参数
-- 本地文件导入、网格和大图共享选择、长按拖选、收藏、命名选片批次和图文单
+- 本地文件导入、网格／列表与大图共享选择，小中大缩略图、独立格式与导入状态、长按拖选、收藏、命名批次和图文单
 - 客户独立选择、留言、姓名／手机号记录、改名、完成重开和删除记录
 - FTP接收、FTP／显式FTPS客户端、目录、上传下载、新建文件夹和持久化任务
 - 仅移出列表与删除App内副本；不操作相机卡删除
@@ -24,7 +24,7 @@ sh scripts/build-ios.sh
 open ios/FrameLink.xcodeproj
 ```
 
-脚本生成`ios/Frameworks/Camera.xcframework`并构建iOS Simulator App，输出`artifacts/FrameLink-0.1.4-ios-simulator.zip`。相机协议与FTP直接调用Go桥，原片以文件路径传递，不把整张RAW搬过Swift桥。
+脚本生成`ios/Frameworks/Camera.xcframework`并构建iOS Simulator App，输出`artifacts/FrameLink-0.1.5-ios-simulator.zip`。相机协议与FTP直接调用Go桥，原片以文件路径传递，不把整张RAW搬过Swift桥。
 
 模拟器使用本机临时签名，以便Keychain正常保存连接信息，不需要开发者账号。相机框架为静态库，只链接、不重复嵌入。实体iPhone仍需配置自己的开发团队与签名。
 

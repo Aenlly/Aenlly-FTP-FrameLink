@@ -12,6 +12,6 @@
     <text x="179" y="133" font-size="22" fill="#526777">Open-source camera companion</text>
     <text x="180" y="165" font-size="12" letter-spacing="2" fill="#68717D">FTP · PTP/IP · BLUETOOTH · LOCAL LIBRARY</text>
     <rect x="930" y="62" width="140" height="30" rx="15" fill="#E2E8EC"/>
-    <text x="1000" y="82" text-anchor="middle" font-size="12" font-weight="600" fill="#526777">0.1.4 DEV PREVIEW</text>
+    <text x="1000" y="82" text-anchor="middle" font-size="12" font-weight="600" fill="#526777">0.1.5 DEV PREVIEW</text>
   </g>
 </svg>

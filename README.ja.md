@@ -1,10 +1,10 @@
 # Aenlly-FTP · FrameLink
-<p align="center"><img src="docs/images/brand-ja.svg" alt="FrameLink" width="100%"></p>
+<p align="center"><img src="design/brand/framelink-icon.png" alt="FrameLink" width="88"></p>
 <p align="center"><a href="README.md">中文</a> · <a href="README.en.md">English</a> · <strong>日本語</strong> · <a href="README.ko.md">한국어</a></p>
 
 カメラにつなぎ、写真を見て、必要なものだけ取り込む。FrameLinkはAenlly-FTPをもとに、FTP転送に加えてライブビュー、現場での写真選定、任意のクラウド納品を開発しているオープンソースアプリです。
 
-**0.1.4 開発プレビュー** · Android 8.0以降 · iOS 17以降のプロジェクト · GPL-3.0
+**0.1.5 開発プレビュー** · Android 8.0以降 · iOS 17以降のプロジェクト · GPL-3.0
 
 ## 画面
 | カメラ | ギャラリー | 写真表示 |
@@ -42,7 +42,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android出力：`artifacts/FrameLink-0.1.4-debug.apk`。iOSスクリプトはシミュレーター用Appを生成します。iPhoneへのインストールにはXcodeで署名を設定してください。現在のアプリ表示言語は中国語です。[Android](android/README.md) · [iOS](ios/README.md) · [サーバー](cloud/README.md) · [Web](web/README.md)
+Android出力：`artifacts/FrameLink-0.1.5-debug.apk`。iOSスクリプトはシミュレーター用Appを生成します。iPhoneへのインストールにはXcodeで署名を設定してください。現在のアプリ表示言語は中国語です。[Android](android/README.md) · [iOS](ios/README.md) · [サーバー](cloud/README.md) · [Web](web/README.md)
 
 ## 開発に参加
 対応機種の報告、不具合の再現手順、使い勝手への意見を歓迎します。スマートフォンのOS、カメラの型番とファームウェア、接続方法を記載し、パスワードや個人の原本写真は送らないでください。

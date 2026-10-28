@@ -33,4 +33,12 @@ class CameraPropertyTextTest {
         assertEquals("+0.3 EV", CameraPropertyText.label(property.copy(code = 0x5010, value = 300)))
         assertEquals("自动", CameraPropertyText.label(property.copy(code = 0x500F, value = 0xffffff)))
     }
+    @Test fun vendorExposureControlsReplaceDuplicateStandardValues() {
+        val standard=CameraProperty(0x500F,"ISO",100,"100",false)
+        val vendor=standard.copy(code=0xD21E,value=400)
+        val controls=CameraPropertyText.controls(listOf(standard,vendor))
+        assertEquals(1,controls.size)
+        assertEquals(0xD21E,controls.single().code)
+        assertEquals("ISO 400",CameraPropertyText.compact(controls.single()))
+    }
 }

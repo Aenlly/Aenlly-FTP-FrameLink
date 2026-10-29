@@ -94,9 +94,10 @@ class NativeUiAcceptanceTest {
             compose.waitUntil(30000) { runtime.frame.value?.isNotEmpty() == true }
             dismissFullscreenEducation()
             screenshot("android-live")
-            compose.onNodeWithText("专业工具").performClick()
+            compose.onNodeWithContentDescription("更多控制").performClick()
             screenshot("android-live-tools")
             compose.onNodeWithContentDescription("收起工具").performClick()
+            compose.onNodeWithContentDescription("专业模式").performClick()
             compose.onNodeWithTag("live-preview").performTouchInput { click() }
             compose.waitUntil(10000) { !runtime.focusBusy.value }
             val latestFocus = runtime.focusAt(.25f, .5f).let { runtime.focusAt(.75f, .5f) }
@@ -134,6 +135,7 @@ class NativeUiAcceptanceTest {
             compose.onNodeWithTag("tab-camera").performClick()
             compose.onNodeWithText("取景拍摄").performClick()
             compose.waitUntil(20000) { runtime.frame.value?.isNotEmpty() == true }
+            compose.onNodeWithContentDescription("更多控制").performClick()
             compose.onNodeWithContentDescription("拍摄设置").performClick()
             compose.onNodeWithContentDescription("拍后自动导入").assertIsOff().performClick()
             compose.onNodeWithText("完成", substring = false).performClick()

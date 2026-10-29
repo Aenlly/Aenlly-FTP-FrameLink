@@ -3,6 +3,7 @@ package app.framelink.camera
 import android.os.Build
 import android.view.Gravity
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,13 @@ internal fun FullScreenScene(onClose: () -> Unit, content: @Composable () -> Uni
         val view = LocalView.current
         DisposableEffect(view, configuration.orientation, configuration.screenWidthDp, configuration.screenHeightDp) {
             val window = (view.parent as? DialogWindowProvider)?.window
+            val announce = Runnable {
+                if (view.isAttachedToWindow) {
+                    val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+                    event.contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE
+                    view.sendAccessibilityEventUnchecked(event)
+                }
+            }
             val resize = Runnable { window?.let {
                 WindowCompat.setDecorFitsSystemWindows(it, false)
                 it.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
@@ -37,9 +45,11 @@ internal fun FullScreenScene(onClose: () -> Unit, content: @Composable () -> Uni
                     // 某些系统仍先按状态栏/切口移动Dialog窗口；内容层会自行处理安全区域
                     it.attributes = it.attributes.apply { setFitInsetsTypes(0) }
                 }
+                // 旋转布局完成后通知辅助服务重新读取节点，避免沿用旧方向的控件树
+                view.postOnAnimation(announce)
             } }
             view.post(resize)
-            onDispose { view.removeCallbacks(resize) }
+            onDispose { view.removeCallbacks(resize); view.removeCallbacks(announce) }
         }
         Box(Modifier.fillMaxSize().testTag("fullscreen-scene")) { content() }
     }

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"flag"
@@ -26,6 +27,7 @@ import (
 func main() {
 	dir := flag.String("dir", "../artifacts/fixtures", "synthetic QA image directory")
 	withSSH := flag.Bool("ssh", false, "enable loopback-only SSH identity acceptance fixture")
+	previewFile := flag.String("preview", "", "optional licensed JPEG for live-view visual checks")
 	flag.Parse()
 	if err := os.MkdirAll(*dir, 0700); err != nil {
 		panic(err)
@@ -58,6 +60,15 @@ func main() {
 	preview, err := os.ReadFile(filepath.Join(*dir, "QA_DSC00001.JPG"))
 	if err != nil {
 		panic(err)
+	}
+	if *previewFile != "" {
+		preview, err = os.ReadFile(*previewFile)
+		if err != nil {
+			panic(err)
+		}
+		if _, err = jpeg.DecodeConfig(bytes.NewReader(preview)); err != nil {
+			panic(err)
+		}
 	}
 	ptpiptest.CapturedImage = preview
 	stream := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

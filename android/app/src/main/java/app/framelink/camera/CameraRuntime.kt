@@ -1226,7 +1226,7 @@ class CameraRuntime(
                         if (generation == connectionGeneration.get()) {
                             properties.value = updated
                             if (previousArea != updated.firstOrNull { it.code == 0xD22C }?.value)
-                                notice.value = "已使用点对焦，可在专业工具中更改对焦区域"
+                                notice.value = "已使用点对焦，可在更多控制的机身参数中调整"
                         }
                         android.util.Log.i("FrameLink", "Touch focus position and AF pulse completed")
                     } catch (error: Exception) {

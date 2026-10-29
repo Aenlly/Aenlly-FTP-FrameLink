@@ -34,7 +34,8 @@ class PhysicalCoreUiAcceptanceTest {
     private var stage = "准备连接"
     private val app get() = ApplicationProvider.getApplicationContext<CameraApp>()
     private val runtime get() = app.runtime
-    private val automation: UiAutomation get() = InstrumentationRegistry.getInstrumentation().uiAutomation
+    private var automationFlags = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
+    private val automation: UiAutomation get() = InstrumentationRegistry.getInstrumentation().getUiAutomation(automationFlags)
     private val appTouch get() = InstrumentationRegistry.getArguments().getString("appTouch") == "true"
     private val clearCacheMethod by lazy {
         runCatching { UiAutomation::class.java.getMethod("clearCache") }.getOrNull()
@@ -268,11 +269,13 @@ class PhysicalCoreUiAcceptanceTest {
             clickText("取景拍摄")
             waitFor(30000) { runtime.frame.value?.isNotEmpty() == true }
             dismissFullscreenEducation()
+            clickDescription("专业模式")
             waitFor { hasText("光圈") }
             waitForFullWindow()
             assertFalse("主取景页不常驻协议型号", hasText("ILCE-7CM2"))
             screenshot("physical-live-portrait-camera")
-            clickText("专业工具")
+            clickDescription("更多控制")
+            clickText("机身参数")
             val focus = runtime.properties.value.firstOrNull { it.code == 0x500A }
             if (focus != null && CameraPropertyText.editable(focus)) {
                 // 专业参数在独立面板中纵向滚动
@@ -313,11 +316,11 @@ class PhysicalCoreUiAcceptanceTest {
                     kotlin.math.abs(screen.right-landscapeBounds.right) <= 2 && kotlin.math.abs(screen.bottom-landscapeBounds.bottom) <= 2)
             screenshot("physical-live-landscape")
             clickDescription("显示取景控制")
-            waitFor { findDescription("拍摄") != null && hasText("专业工具") }
+            waitFor { findDescription("拍摄") != null && findDescription("更多控制") != null }
             val menuBounds = Rect(); appRoot()!!.getBoundsInScreen(menuBounds)
             assertEquals("显示菜单不能挤小取景窗口", landscapeBounds, menuBounds)
             screenshot("physical-live-landscape-glass")
-            clickText("专业工具")
+            clickDescription("更多控制")
             screenshot("physical-live-landscape-tools")
             clickDescription("收起工具")
             assertTrue(rotate(UiAutomation.ROTATION_FREEZE_0))
@@ -474,6 +477,11 @@ class PhysicalCoreUiAcceptanceTest {
     private fun tap(node: AccessibilityNodeInfo) {
         if (appTouch) {
             check(node.packageName == app.packageName)
+            var focused=false
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                focused=WindowInspector.getGlobalWindowViews().any { it.hasWindowFocus()&&it.isShown&&it.isAttachedToWindow&&it.context.applicationContext.packageName==app.packageName }
+            }
+            check(focused) { "光屿已不在前台，停止应用内操作" }
             check(node.refresh()) { "光屿控件已变化，请重新定位" }
             assertTrue("应用内控件点击未生效", node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             return
@@ -538,6 +546,13 @@ class PhysicalCoreUiAcceptanceTest {
                         else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     }
                 }
+        }
+        if (rotation != UiAutomation.ROTATION_UNFREEZE) {
+            // 红米Android13旋转后会保留失效节点，重建诊断连接，业务窗口保持不变
+            automationFlags = if (automationFlags == 0) UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES else 0
+            val service = automation.serviceInfo
+            service.flags = service.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            automation.serviceInfo = service
         }
         return true
     }

@@ -11,9 +11,10 @@ import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-version='0.1.11'
+version='0.1.12'
 ios_version='0.1.6'
 checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-instrument-ui','android-instrument-gallery','android-instrument-usability','android-instrument-live','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark','ios','ios-core','ios-ui','ios-device']
+checks.append('android-instrument-live-flow')
 for name in checks:
     result=root/'build-logs'/f'{name}.exit'
     if not result.exists() or result.read_text().strip()!='0': raise SystemExit(f'检查尚未通过：{name}')
@@ -71,6 +72,10 @@ result['sourceArchiveSha256']=hashlib.sha256(source.read_bytes()).hexdigest()
 result['sourceCommit']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
 result['sourceWorktreeDirty']=bool(subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True).strip())
 result['elf16KBAlignment']=True
+ui_evidence=artifacts/f'camera-ui-{version}-evidence.json'
+if ui_evidence.exists():
+    ui=json.loads(ui_evidence.read_text())
+    if ui.get('apkSha256')==result['apkSha256']: result['cameraUiEvidence']=ui
 alias=artifacts/f'FrameLink-{version}-glass-{datetime.datetime.now().strftime("%Y%m%d-%H%M")}-debug.apk'
 shutil.copyfile(apk,alias)
 result['timestampedApk']=alias.name

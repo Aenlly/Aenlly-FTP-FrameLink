@@ -20,6 +20,7 @@ elif mode=='web':
     cwd=root/'web'
 elif mode=='simulator':
     command=[str(root/'.tools/go/bin/go'),'run','./cmd/simulator','-dir',str(root/'artifacts/fixtures'),'-ssh']
+    if len(sys.argv)>2: command+=['-preview',str(pathlib.Path(sys.argv[2]).resolve())]
     cwd=root/'camera-bridge'
 else:
     raise SystemExit('usage: dev.py cloud|web')

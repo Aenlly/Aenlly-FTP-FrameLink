@@ -64,6 +64,10 @@ interface TaskDao {
     )
     suspend fun progress(id: String, done: Long, total: Long, updated: Long, running: String)
 
+    /** 补齐任务文件元数据，不改变终态或恢复已取消的任务 */
+    @Query("UPDATE tasks SET photoId=:photoId,title=:title,payload=:payload,updatedAt=:updated WHERE id=:id AND state=:running")
+    suspend fun attachFiles(id:String,photoId:String,title:String,payload:String,updated:Long,running:String)
+
     @Query("UPDATE tasks SET state=:next,error=:reason WHERE state=:old")
     suspend fun recover(old: String, next: String, reason: String)
 }

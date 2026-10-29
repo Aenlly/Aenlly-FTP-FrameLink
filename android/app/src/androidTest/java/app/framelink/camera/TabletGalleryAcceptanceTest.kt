@@ -61,6 +61,9 @@ class TabletGalleryAcceptanceTest {
         runtime.settings.put("gallery.layout","medium")
         compose.onNodeWithTag("tab-gallery",useUnmergedTree=true).performClick()
         compose.onNodeWithText("已导入").performClick()
+        compose.waitUntil(10000){compose.onAllNodesWithTag("gallery-grid",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
+        compose.onNodeWithTag("gallery-grid",useUnmergedTree=true).performScrollToIndex(0)
+        compose.waitUntil(10000){compose.onAllNodesWithTag("photo-${photos[0].id}",useUnmergedTree=true).fetchSemanticsNodes().isNotEmpty()}
     }
     private fun cleanup(){runBlocking{photos.forEach{runtime.database.photos().save(it.copy(localHidden=true,filesJson="[]"))}}}
 
@@ -90,6 +93,17 @@ class TabletGalleryAcceptanceTest {
             if(expected.preview)compose.onNodeWithTag("gallery-preview-pane",useUnmergedTree=true).assertIsDisplayed()else compose.onNodeWithTag("photo-viewer-image",useUnmergedTree=true).assertIsDisplayed()
             screenshot("preview")
             compose.onNodeWithContentDescription("关闭照片").performClick()
+            compose.onNodeWithTag("tab-camera",useUnmergedTree=true).performClick()
+            compose.onNodeWithTag("camera-home",useUnmergedTree=true).performScrollToNode(hasText("本机导入"))
+            compose.onNodeWithText("本机导入",substring=false).assertIsDisplayed()
+            compose.onNodeWithTag("camera-home",useUnmergedTree=true).performScrollToIndex(0)
+            screenshot("camera-workspace")
+            compose.onNodeWithTag("tab-projects",useUnmergedTree=true).performClick()
+            compose.onNodeWithContentDescription("新建项目或场次").assertIsDisplayed()
+            screenshot("project-workspace")
+            compose.onNodeWithTag("tab-transfers",useUnmergedTree=true).performClick()
+            compose.onNodeWithTag("transfer-workspace",useUnmergedTree=true).assertIsDisplayed()
+            screenshot("transfer-workspace")
         }finally{cleanup()}
     }
 

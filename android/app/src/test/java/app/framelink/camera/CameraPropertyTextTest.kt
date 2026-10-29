@@ -41,4 +41,14 @@ class CameraPropertyTextTest {
         assertEquals(0xD21E,controls.single().code)
         assertEquals("ISO 400",CameraPropertyText.compact(controls.single()))
     }
+    @Test fun quickReadoutsUseCameraValuesAndKeepTheSixCompactCodes(){
+        val base=CameraProperty(0x5007,"F-number",280,"2.8",false)
+        val properties=listOf(base,base.copy(code=0xD20D,value=(1L shl 16) or 125L),base.copy(code=0x500F,value=100),base.copy(code=0xD21E,value=400),base.copy(code=0x5010,value=0),base.copy(code=0x5005,value=2),base.copy(code=0x500A,value=0x8004))
+        val quick=CameraPropertyText.quick(properties)
+        assertEquals(listOf("f","S","ISO","EV","WB","AF"),quick.map(CameraPropertyText::quickCode))
+        assertEquals("400",CameraPropertyText.quickValue(quick[2]))
+        assertEquals("AWB",CameraPropertyText.quickValue(quick[4]))
+        assertEquals("AF-C",CameraPropertyText.quickValue(quick[5]))
+        assertTrue(CameraPropertyText.quick(listOf(base.copy(code=0x500A,value=9999))).isEmpty())
+    }
 }

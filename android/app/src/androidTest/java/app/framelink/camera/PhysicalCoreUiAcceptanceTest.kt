@@ -272,7 +272,7 @@ class PhysicalCoreUiAcceptanceTest {
             waitFor(30000) { runtime.frame.value?.isNotEmpty() == true }
             dismissFullscreenEducation()
             clickDescription("专业模式")
-            waitFor { hasText("光圈") }
+            waitFor { findDescription("调整光圈")!=null }
             waitForFullWindow()
             assertFalse("主取景页不常驻协议型号", hasText("ILCE-7CM2"))
             screenshot("physical-live-portrait-camera")
@@ -291,7 +291,7 @@ class PhysicalCoreUiAcceptanceTest {
                 if (hasText("对焦模式")) {
                     clickText("对焦模式")
                     waitFor { hasText("连续自动对焦（AF-C）") }
-                    assertFalse(hasText("32772")); clickText("关闭")
+                    assertFalse(hasText("32772")); clickDescription("关闭参数");clickDescription("更多控制")
                 }
             }
             screenshot("physical-live-chinese")
@@ -304,13 +304,13 @@ class PhysicalCoreUiAcceptanceTest {
             assertTrue("快门应位于系统手势区上方，快门=$bounds，安全底部=$safeBottom，窗口=${metrics.bounds}", bounds.bottom < safeBottom - 12)
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }; val frame = runtime.frame.value!!
             BitmapFactory.decodeByteArray(frame, 0, frame.size, options)
-            clickDescription("沉浸取景"); waitFor { findDescription("显示取景控制") != null }
+            clickDescription("更多控制");clickDescription("沉浸取景"); waitFor { findDescription("显示取景控制") != null }
             clickDescription("显示取景控制")
             assertTrue(rotate(UiAutomation.ROTATION_FREEZE_90))
-            waitFor { app.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && findDescription("沉浸取景") != null }
+            waitFor { app.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE && findDescription("更多控制") != null }
             val landscapeBounds = waitForFullWindow()
             val screen = app.getSystemService(android.view.WindowManager::class.java).maximumWindowMetrics.bounds
-            clickDescription("沉浸取景")
+            clickDescription("更多控制");clickDescription("沉浸取景")
             waitFor { findDescription("显示取景控制")?.stateDescription == "取景画面已显示" }
             // 无障碍矩形可能向下取整，允许两个物理像素的边界舍入差
             assertTrue("横屏全屏窗口必须覆盖实际屏幕，屏幕=$screen，窗口=$landscapeBounds",
@@ -326,7 +326,7 @@ class PhysicalCoreUiAcceptanceTest {
             screenshot("physical-live-landscape-tools")
             clickDescription("收起工具")
             assertTrue(rotate(UiAutomation.ROTATION_FREEZE_0))
-            waitFor { app.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT && findDescription("沉浸取景") != null }
+            waitFor { app.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT && findDescription("更多控制") != null }
             aperture = runtime.properties.value.firstOrNull { it.code == 0x5007 && it.writable }
             aperture?.let { property ->
                 property.choices.firstOrNull { it.value != property.value }?.let { next ->

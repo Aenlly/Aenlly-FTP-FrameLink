@@ -21,6 +21,9 @@ class LiveViewUsabilityAcceptanceTest {
     private fun openLive() {
         runtime.connect(ConnectionConfig(host = "127.0.0.1"))
         compose.waitUntil(30000) { runtime.camera.value.info != null }
+        compose.onNodeWithTag("tab-camera").performClick()
+        compose.onNodeWithTag("camera-home").performScrollToIndex(0)
+        compose.waitUntil(10000){compose.onAllNodesWithText("取景拍摄",substring=false).fetchSemanticsNodes().isNotEmpty()}
         compose.onNodeWithText("取景拍摄").performClick()
         compose.waitUntil(20000) { runtime.frame.value?.isNotEmpty() == true }
         dismissFullscreenEducation()
@@ -44,7 +47,7 @@ class LiveViewUsabilityAcceptanceTest {
             assertEquals(exposureMode, runtime.properties.value.firstOrNull { it.code == 0x500E }?.value)
             assertEquals("拍照与专业切换不能挤动取景", portrait, compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow)
             acceptanceScreenshot(compose.activity, "live-portrait-professional")
-            compose.onNodeWithText("光圈").performClick()
+            compose.onNodeWithContentDescription("调整光圈").performClick()
             compose.onNode(hasText("光圈") and hasAnyAncestor(hasTestTag("live-property-picker"))).performTouchInput { click() }
             compose.onNodeWithTag("live-property-picker").assertIsDisplayed()
             val portraitPicker=compose.onNodeWithTag("live-property-picker").fetchSemanticsNode().boundsInWindow
@@ -52,7 +55,9 @@ class LiveViewUsabilityAcceptanceTest {
             val rootInsets=compose.activity.getSystemService(android.view.WindowManager::class.java).currentWindowMetrics.windowInsets
             val gestures=rootInsets.getInsets(android.view.WindowInsets.Type.mandatorySystemGestures() or android.view.WindowInsets.Type.displayCutout()).bottom
             val density=compose.activity.resources.displayMetrics.density
-            assertTrue("底部仅保留手势区与紧凑间距",portraitWindow.bottom-portraitPicker.bottom<=gestures+16*density)
+            val dock=compose.onNodeWithTag("live-portrait-dock").fetchSemanticsNode().boundsInWindow
+            assertTrue("参数在拍摄操作区上方，不遮住快门",portraitPicker.bottom<=dock.top+8*density)
+            assertTrue("底部仅保留手势区与紧凑间距",portraitWindow.bottom-dock.bottom<=gestures+24*density)
             val aperture = runtime.properties.value.first { it.code == 0x5007 }
             compose.onNodeWithTag("live-property-choices").performTouchInput { swipeLeft(durationMillis = 500) }
             compose.waitUntil(10000) { runtime.properties.value.first { it.code == aperture.code }.value != aperture.value }
@@ -71,7 +76,7 @@ class LiveViewUsabilityAcceptanceTest {
             assertTrue(window.width >= metrics.width() * .95f)
             val landscape = compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow
             val picker = compose.onNodeWithTag("live-property-picker").fetchSemanticsNode().boundsInWindow
-            assertTrue("横屏参数尺留在操作区", picker.width < window.width * .18f && picker.left >= landscape.right - 4)
+            assertTrue("横屏参数尺保持紧凑，不挤动取景", picker.width < window.width * .18f && picker.left >= landscape.right - 24*density)
             compose.waitForIdle()
             acceptanceScreenshot(compose.activity, "live-landscape-ruler")
             compose.onNodeWithContentDescription("关闭参数").performClick()
@@ -96,6 +101,7 @@ class LiveViewUsabilityAcceptanceTest {
             compose.onNodeWithContentDescription("收起工具").performClick()
             val histogram = compose.onNodeWithTag("live-histogram").fetchSemanticsNode().boundsInWindow
             assertTrue(histogram.width <= window.width * .18f && histogram.height <= window.height * .25f)
+            compose.onNodeWithContentDescription("更多控制").performClick()
             compose.onNodeWithContentDescription("沉浸取景").performClick()
             assertEquals(landscape, compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow)
             compose.onNodeWithContentDescription("显示取景控制").performClick()
@@ -117,7 +123,7 @@ class LiveViewUsabilityAcceptanceTest {
             compose.onNodeWithContentDescription("专业模式").performClick()
             val aperture=runtime.properties.value.first { it.code==0x5007 }
             original=aperture
-            compose.onNodeWithText("光圈").performClick()
+            compose.onNodeWithContentDescription("调整光圈").performClick()
             compose.onNodeWithTag("live-property-choices").performTouchInput { swipeLeft(durationMillis=500) }
             compose.waitUntil(10000) { runtime.properties.value.first { it.code==0x5007 }.value!=aperture.value }
             compose.onNodeWithContentDescription("关闭参数").performClick()
@@ -140,7 +146,7 @@ class LiveViewUsabilityAcceptanceTest {
             compose.waitUntil(15000) { compose.activity.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE }
             compose.onNodeWithContentDescription("拍摄").assertIsDisplayed()
             compose.onNodeWithContentDescription("专业模式").performClick()
-            compose.onNodeWithText("光圈").performClick()
+            compose.onNodeWithContentDescription("调整光圈").performClick()
             compose.onNodeWithTag("live-property-picker").assertIsDisplayed()
             compose.onNodeWithContentDescription("关闭参数").performClick()
             compose.onNodeWithContentDescription("更多控制").performClick()
@@ -163,7 +169,7 @@ class LiveViewUsabilityAcceptanceTest {
             acceptanceScreenshot(compose.activity, "live-portrait-camera")
             compose.onNodeWithContentDescription("更多控制").performClick()
             compose.onNodeWithTag("live-tools-panel").assertIsDisplayed()
-            compose.onNodeWithText("拍摄控制").performTouchInput { click() }
+            compose.onNodeWithText("取景设置").performTouchInput { click() }
             assertFalse("菜单空白不应穿透对焦",runtime.focusBusy.value)
             compose.waitForIdle()
             acceptanceScreenshot(compose.activity, "live-portrait-glass-menu")
@@ -174,11 +180,14 @@ class LiveViewUsabilityAcceptanceTest {
             compose.onNodeWithText("32772").assertDoesNotExist()
             compose.onNodeWithText("单次自动对焦（AF-S）").performClick()
             compose.waitUntil(10000) { runtime.properties.value.first { it.code == 0x500A }.value == 2L }
+            compose.onNodeWithContentDescription("关闭参数").performClick()
+            compose.onNodeWithContentDescription("更多控制").performClick()
             compose.onNodeWithTag("live-properties").performScrollToNode(hasText("对焦区域"))
             compose.onNodeWithText("对焦区域").performClick()
             compose.onNodeWithText("点：大").assertIsDisplayed()
             compose.onNodeWithText("跟踪：点（中）").assertIsDisplayed()
-            compose.onNodeWithText("关闭", substring = false).performClick()
+            compose.onNodeWithContentDescription("关闭参数").performClick()
+            compose.onNodeWithContentDescription("更多控制").performClick()
             compose.onNodeWithContentDescription("沉浸取景").performClick()
             compose.onNodeWithContentDescription("显示取景控制").assertIsDisplayed()
             compose.onNodeWithTag("live-preview").performTouchInput { click() }

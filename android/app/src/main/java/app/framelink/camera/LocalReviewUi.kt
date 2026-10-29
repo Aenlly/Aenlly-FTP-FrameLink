@@ -41,109 +41,94 @@ import kotlinx.coroutines.withContext
 
 @Composable
 internal fun ProjectHub(
-    runtime: CameraRuntime,
-    projectId: String?,
-    onProject: (String) -> Unit,
-    onBack: () -> Unit,
-    onCloud: () -> Unit,
-    onReview: (String) -> Unit,
-    photos: List<Photo>,
-    onBatch: (String) -> Unit,
-) {
-    var cloud by rememberSaveable { mutableStateOf(false) }
-    var menu by remember { mutableStateOf<LocalReview?>(null) }
-    var renaming by remember { mutableStateOf<LocalReview?>(null) }
-    var deleting by remember { mutableStateOf<LocalReview?>(null) }
-    val scope = rememberCoroutineScope()
+    runtime:CameraRuntime,projectId:String?,onProject:(String)->Unit,onBack:()->Unit,onCloud:()->Unit,
+    onReview:(String)->Unit,photos:List<Photo>,onBatch:(String)->Unit,
+    selectionCount:Int,onStartSelection:(SelectionPurpose?)->Unit,onSaveSelection:()->Unit,onCreateReview:()->Unit,onSettings:()->Unit,
+    onPhoto:(Photo,List<String>,List<String>)->Unit,
+){
+    var cloud by rememberSaveable{mutableStateOf(false)}
+    var filter by rememberSaveable{mutableStateOf("all")}
+    var more by remember{mutableStateOf(false)}
+    var newRecord by remember{mutableStateOf(false)}
+    var reviewDetail by rememberSaveable{mutableStateOf<String?>(null)}
+    var menu by remember{mutableStateOf<LocalReview?>(null)}
+    var renaming by remember{mutableStateOf<LocalReview?>(null)}
+    var deleting by remember{mutableStateOf<LocalReview?>(null)}
+    val scope=rememberCoroutineScope()
     val reviews by runtime.database.reviews().observe().collectAsStateWithLifecycle(emptyList())
     val batches by runtime.database.batches().observe().collectAsStateWithLifecycle(emptyList())
-    val photoMap = remember(photos) { photos.associateBy { it.id } }
-    if (cloud || projectId != null) {
-        Column(Modifier.fillMaxSize()) {
-            if (projectId == null)
-                TextButton(onClick = { cloud = false }) {
-                    Icon(Icons.Outlined.ArrowBack, null, Modifier.size(16.dp))
-                    Text("本地选片", fontSize = 11.sp)
-                }
-            Box(Modifier.weight(1f)) {
-                ProjectsScreen(runtime, projectId, onProject, onCloud, onBack)
+    val photoMap=remember(photos){photos.associateBy{it.id}}
+    if(reviewDetail!=null){
+        androidx.activity.compose.BackHandler{reviewDetail=null}
+        val record=reviews.firstOrNull{it.id==reviewDetail}
+        if(record!=null)ClientProjectDetails(runtime,record,photos,{reviewDetail=null},{onReview(record.id)},onPhoto)
+        else WorkspaceHeader("客户场次","正在读取记录"){IconButton(onClick={reviewDetail=null}){Icon(Icons.Outlined.ArrowBack,"返回全部项目")}}
+        return
+    }
+    if(cloud||projectId!=null){
+        Column(Modifier.fillMaxSize()){
+            WorkspaceHeader("云端项目","远程选片与成片交付"){
+                IconButton(onClick={if(projectId==null)cloud=false else onBack()}){Icon(Icons.Outlined.ArrowBack,"返回本地项目")}
             }
+            Box(Modifier.weight(1f)){ProjectsScreen(runtime,projectId,onProject,onCloud,onBack)}
         }
         return
     }
-    LazyColumn(
-        contentPadding = PaddingValues(UiTokens.page),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item {
-            Text(
-                "客户选片与交付",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
-        item {
-            Panel {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.CloudQueue, null, tint = Brand)
-                    Column(Modifier.weight(1f).padding(horizontal = 13.dp)) {
-                        Text("云端客户选片", fontSize = 14.sp)
-                        Info("客户免安装，远程挑选与接收成片")
-                    }
-                    TextButton(
-                        onClick = { if (runtime.cloud.signedIn) cloud = true else onCloud() }
-                    ) {
-                        Text(if (runtime.cloud.signedIn) "云端项目" else "启用云端选片", fontSize = 10.sp)
-                    }
+    Column(Modifier.fillMaxSize()){
+        WorkspaceHeader("项目","我的选片与客户场次，保存在本机"){
+            IconButton(onClick={newRecord=true}){Icon(Icons.Outlined.Add,"新建项目或场次",tint=Brand)}
+            Box{
+                IconButton(onClick={more=true}){Icon(Icons.Outlined.MoreHoriz,"项目更多",tint=Ink)}
+                DropdownMenu(more,{more=false}){
+                    DropdownMenuItem(text={Text(if(runtime.cloud.signedIn)"云端项目"else"启用云端选片")},onClick={more=false;if(runtime.cloud.signedIn)cloud=true else onCloud()})
+                    DropdownMenuItem(text={Text("设置与空间")},onClick={more=false;onSettings()})
                 }
             }
         }
-        item { SectionTitle("我的选片") }
-        if (batches.isEmpty()) item { Info("在图库勾选照片后点击“保存”，为这一批选片命名。无需登录，可回看并分享图文选片单。") }
-        items(batches, key = { "batch:${it.id}" }) { batch ->
-            val ids = remember(batch.photoIdsJson) { batch.photoIds() }
-            Panel(Modifier.clickable { onBatch(batch.id) }) {
-                Text(batch.title, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                Info("${ids.size} 张已选 · " + java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.ROOT).format(java.util.Date(batch.createdAt)))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    remember(batch.photosJson) { batch.snapshots().take(3) }.mapNotNull { saved -> photoMap[saved.id]?.takeIf { it.name == saved.name && it.capturedAt == saved.capturedAt } }.forEach { photo ->
-                        PhotoThumbnail(runtime, photo, Modifier.weight(1f).aspectRatio(1.35f).clip(UiTokens.photo))
-                    }
-                }
+        Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            listOf("all" to "全部","batches" to "我的选片","clients" to "客户场次").forEach{(key,title)->
+                FilterChip(filter==key,{filter=key},{Text(title,fontSize=12.sp)})
             }
         }
-        item { SectionTitle("本地现场选片") }
-        if (reviews.isEmpty()) item { Info("在图库选择照片，点击人物图标进入现场客户模式。无需账号，记录与摄影师标记分开保存。") }
-        items(reviews, key = { it.id }) { review ->
-            Panel(Modifier.clickable { onReview(review.id) }) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.PeopleOutline, null, tint = Brand)
-                    Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                        Text(review.title, fontSize = 14.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                        Info(
-                            "${review.photoIds().size} 张照片 · ${review.choices().values.count{it.selected}} 张客户已选"
-                        )
-                    }
-                    Text(if (review.locked) "已完成" else "选片中", fontSize = 10.sp, color = Muted)
-                    Box {
-                        IconButton(onClick = { menu = review }) { Icon(Icons.Outlined.MoreHoriz, "管理现场选片 ${review.title}") }
-                        DropdownMenu(menu?.id == review.id, { menu = null }) {
-                            DropdownMenuItem(text = { Text("修改姓名或场次名称") }, onClick = { menu = null; renaming = review })
-                            DropdownMenuItem(text = { Text("删除选片记录") }, onClick = { menu = null; deleting = review })
+        LazyColumn(contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(12.dp),modifier=Modifier.weight(1f)){
+            if(filter!="clients"){
+                item{WorkspaceSection("我的选片",batches.size.toString()+" 组")}
+                if(batches.isEmpty())item{Info("在图库选择照片并点“存选片”，就能在这里继续处理。")}
+                items(batches,key={"batch:"+it.id}){batch->
+                    val snapshots=remember(batch.photosJson){batch.snapshots()}
+                    val cover=snapshots.firstOrNull()?.let{saved->photoMap[saved.id]?.takeIf{it.name==saved.name&&it.capturedAt==saved.capturedAt}}
+                    WorkspaceRecord(runtime,batch.title,batch.photoIds().size.toString()+" 张已保存 · "+java.text.SimpleDateFormat("MM-dd HH:mm",java.util.Locale.ROOT).format(java.util.Date(batch.createdAt)),cover,onClick={onBatch(batch.id)})
+                }
+            }
+            if(filter!="batches"){
+                item{WorkspaceSection("客户场次",reviews.size.toString()+" 场")}
+                if(reviews.isEmpty())item{Info("为客户建立独立场次，只展示这次需要挑选的照片。")}
+                items(reviews,key={"client:"+it.id}){review->
+                    val cover=review.photoIds().firstOrNull()?.let(photoMap::get)
+                    WorkspaceRecord(runtime,review.title,review.photoIds().size.toString()+" 张照片 · "+review.choices().values.count{it.selected}+" 张客户已选",cover,if(review.locked)"已完成"else"选片中",{reviewDetail=review.id}){
+                        Box{
+                            IconButton(onClick={menu=review}){Icon(Icons.Outlined.MoreHoriz,"管理现场选片 ${review.title}")}
+                            DropdownMenu(menu?.id==review.id,{menu=null}){
+                                DropdownMenuItem(text={Text("修改姓名或场次名称")},onClick={menu=null;renaming=review})
+                                DropdownMenuItem(text={Text("删除选片记录")},onClick={menu=null;deleting=review})
+                            }
                         }
                     }
                 }
             }
+            item{Info("自己的选片和客户的选择分别记录。删除记录不删除照片原文件。")}
         }
     }
-    renaming?.let { review -> ReviewNameDialog(review.title, false, { renaming = null }) { name -> runtime.reviews.rename(review.id, name); renaming = null } }
-    deleting?.let { review -> AlertDialog(
-        onDismissRequest = { deleting = null }, title = { Text("删除这次客户选片？") },
-        text = { Text("删除“${review.title}”的选择和留言记录，照片原文件、其他场次和云端项目保留。") },
-        confirmButton = { TextButton(onClick = { scope.launch { runtime.reviews.delete(review.id); deleting = null } }) { Text("删除记录") } },
-        dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } },
-    ) }
+    if(newRecord)ModalSheet("开始一组本地选片",{newRecord=false}){
+        TextButton(onClick={newRecord=false;if(selectionCount>0)onSaveSelection()else onStartSelection(SelectionPurpose.BATCH)},modifier=Modifier.fillMaxWidth()){Text("保存本次选择 · $selectionCount 张")}
+        TextButton(onClick={newRecord=false;if(selectionCount>0)onCreateReview()else onStartSelection(SelectionPurpose.CLIENT)},modifier=Modifier.fillMaxWidth()){Text("新建客户场次")}
+        TextButton(onClick={newRecord=false;onStartSelection(null)},modifier=Modifier.fillMaxWidth()){Text("从图库开始选片")}
+        Info("我的选片与客户场次分开保存，都无需云账号。")
+    }
+    renaming?.let{review->ReviewNameDialog(review.title,false,{renaming=null}){name->runtime.reviews.rename(review.id,name);renaming=null}}
+    deleting?.let{review->AlertDialog(onDismissRequest={deleting=null},title={Text("删除这次客户选片？")},text={Text("删除“${review.title}”的选择和留言记录，照片原文件、其他场次和云端项目保留。")},
+        confirmButton={TextButton(onClick={scope.launch{runtime.reviews.delete(review.id);deleting=null}}){Text("删除记录")}},
+        dismissButton={TextButton(onClick={deleting=null}){Text("取消")}})}
 }
 
 @Composable
@@ -207,11 +192,11 @@ internal fun LocalReviewScreen(
                 FilterChip(selectedOnly, { selectedOnly = true }, { Text("客户已选 ${choices.values.count { it.selected }}") })
             }
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(145.dp),
+                columns = GridCells.Adaptive(160.dp),
                 modifier = Modifier.weight(1f).testTag("review-grid"),
-                contentPadding = PaddingValues(20.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(visible, key = { it.id }) { photo ->
                     val choice = choices[photo.id] ?: LocalChoice()
@@ -222,29 +207,8 @@ internal fun LocalReviewScreen(
                             }
                         ) {
                             PhotoThumbnail(runtime, photo, Modifier.fillMaxWidth().aspectRatio(1f))
-                            Checkbox(
-                                choice.selected,
-                                { choose(photo, selected = it) },
-                                enabled = review?.locked == false,
-                                colors = CheckboxDefaults.colors(checkedColor = Brand, uncheckedColor = Color.White, checkmarkColor = Color.White),
-                                modifier =
-                                    Modifier.align(Alignment.TopEnd).semantics {
-                                        contentDescription = "客户选择 ${photo.name}"
-                                    }.drawBehind {
-                                        val edge = 22.dp.toPx()
-                                        drawRoundRect(Color.Black.copy(alpha = .35f),
-                                            topLeft = androidx.compose.ui.geometry.Offset(center.x - edge / 2, center.y - edge / 2),
-                                            size = androidx.compose.ui.geometry.Size(edge, edge),
-                                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx()))
-                                    },
-                            )
+                            PhotoChoiceControl(choice.selected,review?.locked==false,"客户选择 ${photo.name}",{choose(photo,selected=it)},Modifier.align(Alignment.BottomEnd))
                         }
-                        Text(
-                            photo.name,
-                            fontSize = 10.sp,
-                            color = Muted,
-                            modifier = Modifier.padding(top = 7.dp),
-                        )
                         if (choice.comment.isNotBlank()) Info(choice.comment)
                     }
                 }

@@ -80,8 +80,18 @@ internal object CameraPropertyText {
     }
 
     fun quick(properties: List<CameraProperty>): List<CameraProperty> {
-        val ranked = properties.filter { it.code in exposureOrder }.sortedBy { exposureOrder.indexOf(it.code) }.distinctBy { name(it) }
-        return (ranked + properties.filter { it.code in setOf(0x500A, 0xD22C, 0x5005) }).distinctBy { it.code }.take(4)
+        val ranked = properties.filter { it.code in exposureOrder&&label(it)!=null }.sortedBy { exposureOrder.indexOf(it.code) }.distinctBy { name(it) }
+        return (ranked+listOf(0x5005,0x500A).mapNotNull{code->properties.firstOrNull{it.code==code&&label(it)!=null}}).take(6)
+    }
+
+    fun quickCode(property:CameraProperty):String=when(property.code){
+        0x5007->"f";0xD20D,0x500D->"S";0xD21E,0x500F->"ISO";0x5010->"EV";0x5005->"WB";0x500A->"AF";else->""
+    }
+
+    fun quickValue(property:CameraProperty):String=when(property.code){
+        0x500A->when(property.value){1L->"MF";2L->"AF-S";3L->"微距";0x8004L->"AF-C";0x8005L->"AF-A";0x8006L->"DMF";else->"—"}
+        0x5005->when(property.value){2L,3L->"AWB";0x8020L->"自定1";0x8021L->"自定2";0x8022L->"自定3";else->compact(property).removeSuffix("白平衡")}
+        else->compact(property).removePrefix("ISO ").removeSuffix(" 秒").removeSuffix(" EV")
     }
 
     fun editable(property: CameraProperty): Boolean = property.writable && label(property) != null && choices(property).isNotEmpty()

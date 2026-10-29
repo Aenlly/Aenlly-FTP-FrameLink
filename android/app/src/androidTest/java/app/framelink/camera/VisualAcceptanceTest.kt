@@ -50,6 +50,8 @@ class VisualAcceptanceTest {
             }
         val previous = runBlocking { runtime.database.photos().all().filter { it.id !in ids && it.inLibrary } }
         val previousLayout = runtime.settings.get("gallery.layout")
+        var sampleBatch:String?=null
+        var sampleReview:String?=null
         runtime.settings.put("gallery.layout", "medium")
         try {
         runBlocking {
@@ -66,15 +68,17 @@ class VisualAcceptanceTest {
                         )
                     )
             }
+            sampleBatch=runtime.batches.save("城市漫步 · 初选",ids.take(3)).id
+            val client=runtime.reviews.create("城市漫步 · 客户A",ids)
+            sampleReview=client.id
+            runtime.reviews.choose(client.id,ids.first(),selected=true)
+            runtime.reviews.choose(client.id,ids[1],selected=true)
         }
         compose.onNodeWithTag("tab-camera").performClick()
-        compose.onNodeWithTag("camera-home").performScrollToNode(hasText("已选 0"))
-        compose.onNodeWithText("已选 0").assertIsDisplayed()
-        compose.onNodeWithText("收藏 6").assertIsDisplayed()
+        compose.onNodeWithTag("camera-primary").assertIsDisplayed()
+        compose.onNodeWithTag("camera-browse").assertIsDisplayed()
+        for(label in listOf("FTP 接收","FTP 客户端","快速快门","本机导入"))compose.onNodeWithTag("camera-home").performScrollToNode(hasText(label))
         compose.onNodeWithTag("camera-home").performScrollToIndex(0)
-        for (label in listOf("选片下载", "取景拍摄", "FTP 接收", "FTP 客户端", "快速快门", "本机导入")) compose
-            .onNodeWithText(label)
-            .assertIsDisplayed()
         screenshot("home")
         compose.onNodeWithTag("tab-gallery").performClick()
         compose.onNodeWithText("已导入").performClick()
@@ -129,18 +133,20 @@ class VisualAcceptanceTest {
         assertTrue("最后一张照片被底部导航遮挡", photoBottom < navigationTop)
         screenshot("gallery-bottom")
         compose.onNodeWithTag("tab-projects").performClick()
-        compose.onNodeWithText("本地现场选片").assertIsDisplayed()
+        compose.onAllNodesWithText("客户场次",substring=false)[0].assertIsDisplayed()
         screenshot("projects")
         compose.onNodeWithTag("tab-transfers").performClick()
-        compose.onNodeWithText("传输任务").assertIsDisplayed()
+        compose.onNodeWithTag("transfer-workspace").assertIsDisplayed()
+        compose.onNodeWithText("已完成",substring=false).performClick()
         screenshot("transfers")
-        compose.onNodeWithContentDescription("设置与空间").performClick()
+        compose.onNodeWithContentDescription("传输更多操作").performClick()
+        compose.onNodeWithText("设置与空间",substring=false).performClick()
         compose.onNodeWithText("清理预览缓存").performScrollTo().assertIsDisplayed()
         screenshot("settings")
         compose.onNodeWithContentDescription("关闭").performClick()
         } finally {
             runtime.settings.put("gallery.layout", previousLayout)
-            runBlocking { runtime.database.photos().saveAll(previous) }
+            runBlocking { sampleBatch?.let{runtime.batches.delete(it)};sampleReview?.let{runtime.reviews.delete(it)};runtime.database.photos().saveAll(previous) }
         }
     }
 
@@ -164,6 +170,9 @@ class VisualAcceptanceTest {
                 .onNodeWithTag("photo-viewer-image")
                 .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "照片已显示"))
         compose.waitForIdle()
+        compose.mainClock.advanceTimeBy(1000)
+        compose.waitForIdle()
+        awaitAcceptanceDraw()
         InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(500, 5000)
         var captured:Bitmap?=null
         var signature=""

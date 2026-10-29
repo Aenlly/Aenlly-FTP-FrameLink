@@ -9,7 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 
-/** 宽窗口图库的固定入口，其他页面继续使用已有业务页面 */
+/** 宽窗口统一导航，各入口复用已有业务页面 */
 @Composable
 internal fun GalleryNavigationRail(entries:List<NavigationEntry>,selected:Int,onSelect:(Int)->Unit,onSettings:()->Unit){
     NavigationRail(Modifier.width(84.dp).fillMaxHeight().navigationBarsPadding().testTag("gallery-navigation-rail"),containerColor=CanvasColor){

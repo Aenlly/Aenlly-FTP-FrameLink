@@ -36,10 +36,13 @@ class LocalAcceptanceTest {
         compose.onNodeWithText("导入本机照片").assertIsDisplayed()
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNodeWithText("项目", useUnmergedTree = true).performClick()
+        compose.onNodeWithContentDescription("项目更多").performClick()
         compose.onNodeWithText("启用云端选片").assertIsDisplayed()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNodeWithText("传输", useUnmergedTree = true).performClick()
-        compose.onNodeWithText("传输任务").assertIsDisplayed()
-        compose.onNodeWithContentDescription("设置与空间").performClick()
+        compose.onNodeWithTag("transfer-workspace").assertIsDisplayed()
+        compose.onNodeWithContentDescription("传输更多操作").performClick()
+        compose.onNodeWithText("设置与空间",substring=false).performClick()
         compose.onNodeWithText("清理预览缓存").assertIsDisplayed()
     }
 
@@ -60,9 +63,12 @@ class LocalAcceptanceTest {
             db.tasks().save(task)
             db.tasks()
                 .progress(task.id, 5, 100, System.currentTimeMillis(), TransferState.RUNNING.name)
+            db.tasks().attachFiles(task.id,"late-photo","late-title","{}",System.currentTimeMillis(),TransferState.RUNNING.name)
             val saved = db.tasks().find(task.id)!!
             assertEquals(TransferState.COMPLETE.name, saved.state)
             assertEquals(100L, saved.done)
+            assertEquals("QA",saved.title)
+            assertEquals("",saved.photoId)
         } finally {
             db.close()
         }

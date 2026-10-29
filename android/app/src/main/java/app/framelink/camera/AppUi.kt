@@ -128,6 +128,8 @@ private enum class Sheet {
     STORAGE,
 }
 
+private enum class TaskFileAction{OPEN,SHARE,SAVE}
+
 @Composable
 fun FrameLink(runtime: CameraRuntime) {
     val glass = remember { HazeState() }
@@ -146,7 +148,7 @@ fun FrameLink(runtime: CameraRuntime) {
     var windowPixels by remember{mutableIntStateOf(0)}
     val windowWidth=if(windowPixels>0)with(windowDensity){windowPixels.toDp().value.toInt()}else configuredWidth
     val galleryWindow=galleryWindowLayout(windowWidth)
-    val railGallery=tab==Tab.GALLERY&&galleryWindow.rail
+    val wideNavigation=galleryWindow.rail
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     var connectionFailure by remember { mutableStateOf("") }
     var reconnectAttempt by remember { mutableIntStateOf(0) }
@@ -158,6 +160,7 @@ fun FrameLink(runtime: CameraRuntime) {
     var selectionKeys by rememberSaveable { mutableStateOf<Map<String,String>>(emptyMap()) }
     val hasRemoteDraft=remember(photos,selection){val ids=selection.toSet();photos.any{it.id in ids&&it.source==PhotoSource.CAMERA.name}}
     var gallerySelecting by rememberSaveable { mutableStateOf(false) }
+    var selectionPurpose by rememberSaveable{mutableStateOf<SelectionPurpose?>(null)}
     var galleryOverlayOpen by remember{mutableStateOf(false)}
     var selectionNeedsCheck by rememberSaveable { mutableStateOf(false) }
     var checkingSelection by remember { mutableStateOf(false) }
@@ -166,6 +169,7 @@ fun FrameLink(runtime: CameraRuntime) {
     var lastCameraId by rememberSaveable { mutableStateOf<String?>(null) }
     var cameraEpoch by rememberSaveable { mutableIntStateOf(0) }
     var viewer by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewerClientChoices by rememberSaveable{mutableStateOf<List<String>?>(null)}
     val splitGallery=tab==Tab.GALLERY&&galleryWindow.preview&&viewer!=null
     var viewerIds by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var viewerAutoLoad by rememberSaveable{mutableStateOf(false)}
@@ -264,7 +268,16 @@ fun FrameLink(runtime: CameraRuntime) {
             finally{checkingSelection=false}
         }
     }
-    BackHandler(tab==Tab.GALLERY&&gallerySelecting&&viewer==null){gallerySelecting=false}
+    fun completeSelectionPurpose(){
+        val purpose=selectionPurpose?:return
+        if(selection.isEmpty()){runtime.notice.value="请先选择照片";return}
+        if(!validSelection())return
+        selectionPurpose=null
+        if(purpose==SelectionPurpose.BATCH)savingSelection=true else newReviewPhotos=selection
+    }
+    BackHandler(tab==Tab.GALLERY&&gallerySelecting&&viewer==null){
+        if(selectionPurpose!=null){selectionPurpose=null;tab=Tab.PROJECTS}else gallerySelecting=false
+    }
     val notifications =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val permissions =
@@ -325,9 +338,10 @@ fun FrameLink(runtime: CameraRuntime) {
                     runtime,
                     photo,
                     embedded=embedded,
-                    onClose = { viewer = null },
+                    onClose = { viewer = null;viewerClientChoices=null },
                     onRemove = { removing = listOf(photo.id) },
-                    selected = photo.id in selection,
+                    selected = viewerClientChoices?.contains(photo.id)?: (photo.id in selection),
+                    selectionReadOnly=viewerClientChoices!=null,
                     cameraConnected = camera.info != null,
                     resourceConfirmed=photo.source!=PhotoSource.CAMERA.name||photo.id in cameraIds,
                     canDownload=camera.info?.canDownload==true,
@@ -336,7 +350,7 @@ fun FrameLink(runtime: CameraRuntime) {
                     canLoadMore=viewerAutoLoad&&viewerContext==galleryContext()&&source=="camera"&&filter!="picked"&&cameraHasMore,
                     loadingMore=camera.loadingPhotos,
                     onNeedMore={if(runtime.galleryError.value.isBlank())runtime.loadPhotos()},
-                    onSelect = { togglePhoto(photo.id) },
+                    onSelect = { if(viewerClientChoices==null)togglePhoto(photo.id) },
                     onMark = { mark ->
                         val previous = photo.mark
                         runtime.mark(photo, mark)
@@ -382,14 +396,14 @@ fun FrameLink(runtime: CameraRuntime) {
                 )
             },
             bottomBar = {
-                if(!railGallery&&(tab!=Tab.GALLERY||!gallerySelecting))Box(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                if(!wideNavigation&&(tab!=Tab.GALLERY||!gallerySelecting))Box(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
                     GlassNavigation(glass, Tab.entries.map { NavigationEntry(it.title, it.icon, "tab-${it.name.lowercase(Locale.ROOT)}") }, tab.ordinal) { tab = Tab.entries[it] }
                 }
             },
         ) { padding ->
             val workspacePadding=PaddingValues(
                 top=padding.calculateTopPadding(),
-                bottom=if(tab==Tab.GALLERY&&gallerySelecting&&!railGallery)0.dp else padding.calculateBottomPadding(),
+                bottom=if(tab==Tab.GALLERY&&gallerySelecting&&!wideNavigation)0.dp else padding.calculateBottomPadding(),
             )
             Row(
                 Modifier.fillMaxSize()
@@ -398,49 +412,8 @@ fun FrameLink(runtime: CameraRuntime) {
                     .padding(workspacePadding)
                     .consumeWindowInsets(workspacePadding)
             ) {
-                if(railGallery)GalleryNavigationRail(Tab.entries.map{NavigationEntry(it.title,it.icon,"tab-${it.name.lowercase(Locale.ROOT)}")},tab.ordinal,{viewer=null;tab=Tab.entries[it]},{sheet=Sheet.STORAGE})
+                if(wideNavigation)GalleryNavigationRail(Tab.entries.map{NavigationEntry(it.title,it.icon,"tab-${it.name.lowercase(Locale.ROOT)}")},tab.ordinal,{viewer=null;tab=Tab.entries[it]},{sheet=Sheet.STORAGE})
                 Column(Modifier.weight(1f).fillMaxHeight()){
-                if(tab!=Tab.GALLERY)Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (tab == Tab.CAMERA)
-                        Box(
-                            Modifier.size(30.dp)
-                                .clip(RoundedCornerShape(11.dp))
-                                .background(Color(0xff29435c)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(R.drawable.brand_icon),null,Modifier.fillMaxSize())
-                        }
-                    Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                        Text(
-                            if (tab == Tab.CAMERA) "光屿"
-                            else if (tab == Tab.TRANSFERS) "传输任务" else tab.title,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            letterSpacing = 0.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    IconButton(onClick = { sheet = Sheet.CLOUD }) {
-                        Icon(
-                            Icons.Outlined.CloudQueue,
-                            "云端设置",
-                            tint = Muted,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                    IconButton(onClick = { sheet = Sheet.STORAGE }) {
-                        Icon(
-                            Icons.Outlined.Settings,
-                            "设置与空间",
-                            tint = Muted,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
                 tabStates.SaveableStateProvider(tab.name){when (tab) {
                     Tab.CAMERA ->
                         CameraHome(
@@ -451,6 +424,9 @@ fun FrameLink(runtime: CameraRuntime) {
                                 ensureNetwork { notifyPermission(); reconnect() }
                             },
                             onConnectionSettings = { connectionSettings() },
+                            onLibrary={source="local";filter="all";tab=Tab.GALLERY},
+                            onSettings={sheet=Sheet.STORAGE},
+                            onCloud={sheet=Sheet.CLOUD},
                             onBrowse = {
                                 source = "camera"
                                 tab = Tab.GALLERY
@@ -480,7 +456,7 @@ fun FrameLink(runtime: CameraRuntime) {
                                     else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
                                 permissions.launch(required)
                             },
-                            onPhoto = { viewerAutoLoad=false;viewerIds=photos.filter{p->p.inLibrary}.map{p->p.id};viewer = it.id },
+                            onPhoto = { viewerClientChoices=null;viewerAutoLoad=false;viewerIds=photos.filter{p->p.inLibrary}.map{p->p.id};viewer = it.id },
                         )
                     Tab.GALLERY ->Row(Modifier.fillMaxSize()){
                         Box(Modifier.weight(1f).fillMaxHeight()){
@@ -497,8 +473,11 @@ fun FrameLink(runtime: CameraRuntime) {
                             previewId=if(splitGallery)viewer else null,
                             onOverlayChanged={galleryOverlayOpen=it},
                             selecting=gallerySelecting,
+                            purpose=selectionPurpose,
+                            onCompletePurpose=::completeSelectionPurpose,
+                            onCancelPurpose={selectionPurpose=null;gallerySelecting=false;tab=Tab.PROJECTS},
                             needsCheck=selectionNeedsCheck,
-                            onSelecting={gallerySelecting=it},
+                            onSelecting={if(!it&&selectionPurpose!=null)completeSelectionPurpose()else gallerySelecting=it},
                             onRecheck=::continueSelection,
                             onSource = {
                                 viewer=null
@@ -510,7 +489,7 @@ fun FrameLink(runtime: CameraRuntime) {
                             onFilter = { filter = it },
                             onSelect = ::togglePhoto,
                             onSelectionChange = ::changeSelection,
-                            onOpen = { viewer = it.id },
+                            onOpen = { viewerClientChoices=null;viewer = it.id },
                             onViewerScope={ids,automatic->
                                 val contextKey=galleryContext()
                                 if(viewer==null||!automatic){viewerIds=ids;viewerAutoLoad=automatic;viewerContext=contextKey}
@@ -575,13 +554,21 @@ fun FrameLink(runtime: CameraRuntime) {
                             onReview = { localReview = it },
                             photos = photos,
                             onBatch = { savedBatchId = it },
+                            selectionCount=selection.size,
+                            onStartSelection={purpose->viewer=null;source="local";filter="all";selectionPurpose=purpose;gallerySelecting=true;tab=Tab.GALLERY},
+                            onSaveSelection={if(selection.isNotEmpty()&&validSelection())savingSelection=true},
+                            onCreateReview={if(selection.isNotEmpty()&&validSelection())newReviewPhotos=selection},
+                            onSettings={sheet=Sheet.STORAGE},
+                            onPhoto={photo,ids,picked->viewerClientChoices=picked;viewerAutoLoad=false;viewerIds=ids;viewer=photo.id},
                         )
                     Tab.TRANSFERS ->
                         TransferScreen(
                             tasks,
+                            photos,
                             runtime,
                             onFtp = { ensureNetwork { sheet = Sheet.FTP } },
                             onFtpClient = { ensureNetwork { sheet = Sheet.FTP_CLIENT } },
+                            onSettings={sheet=Sheet.STORAGE},
                         )
                 }}
                 }
@@ -658,7 +645,7 @@ fun FrameLink(runtime: CameraRuntime) {
         )
         savedBatchId?.let { id ->
             SavedSelectionScreen(runtime, id, photos,
-                onClose = { savedBatchId = null }, onPhoto = { target -> scope.launch{viewerAutoLoad=false;viewerIds=runtime.database.batches().find(id)?.photoIds().orEmpty();viewer=target.id} },
+                onClose = { savedBatchId = null }, onPhoto = { target -> scope.launch{viewerClientChoices=null;viewerAutoLoad=false;viewerIds=runtime.database.batches().find(id)?.photoIds().orEmpty();viewer=target.id} },
                 onUse = { ids ->
                     scope.launch {
                         val chosen = ids.chunked(500).flatMap { runtime.database.photos().byIds(it) }
@@ -780,286 +767,6 @@ private fun EmptyState(
     }
 }
 
-@Composable
-private fun CameraHome(
-    runtime: CameraRuntime,
-    photos: List<Photo>,
-    status: CameraStatus,
-    onConnect: () -> Unit,
-    onConnectionSettings: () -> Unit,
-    onBrowse: () -> Unit,
-    onFtp: () -> Unit,
-    onFtpClient: () -> Unit,
-    onImport: () -> Unit,
-    onRemote: () -> Unit,
-    onBluetooth: () -> Unit,
-    onPhoto: (Photo) -> Unit,
-) {
-    val ftp by runtime.ftpStatus.collectAsStateWithLifecycle()
-    val client by runtime.ftpClient.state.collectAsStateWithLifecycle()
-    val imported = photos.filter { it.imported && !it.localHidden }
-    LazyColumn(
-        modifier = Modifier.testTag("camera-home"),
-        contentPadding = PaddingValues(start = UiTokens.page, end = UiTokens.page, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(UiTokens.gap),
-    ) {
-        item {
-            Surface(color = Color.White, shape = UiTokens.card) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onConnectionSettings) {
-                        Icon(
-                            Icons.Outlined.SettingsInputAntenna,
-                            "相机连接设置",
-                            tint = Brand,
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
-                    Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text(
-                            status.info?.displayName() ?: "连接你的相机",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 2,
-                        )
-                        Text(
-                            if (status.connecting) "正在建立连接…"
-                            else if (status.info != null) "已连接 · 固件 ${status.info.firmware}"
-                            else "相机未连接",
-                            fontSize = 11.sp,
-                            color = if (status.info != null) Color(0xff447467) else Muted,
-                            modifier = Modifier.padding(top = 3.dp),
-                        )
-                    }
-                    TextButton(
-                        onClick = if (status.info == null) onConnect else onBrowse,
-                        enabled = !status.connecting,
-                    ) {
-                        Text(
-                            if (status.connecting) "正在连接"
-                            else if (status.info == null) "连接相机" else "浏览相机照片",
-                            fontSize = 12.sp,
-                            maxLines = 2,
-                        )
-                    }
-                }
-            }
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                HomeAction(
-                    "选片下载",
-                    "浏览相机，按需导入",
-                    Icons.Outlined.Collections,
-                    Modifier.weight(1f),
-                    true,
-                    onBrowse,
-                )
-                HomeAction(
-                    "取景拍摄",
-                    "实时画面与遥控",
-                    Icons.Outlined.CropFree,
-                    Modifier.weight(1f),
-                    false,
-                    onRemote,
-                )
-            }
-        }
-        item {
-            Surface(color = Color.White, shape = UiTokens.card) {
-                Column {
-                    Row(Modifier.fillMaxWidth()) {
-                        HomeTool("FTP 接收", "边拍边传", Icons.Outlined.Wifi, Modifier.weight(1f), onFtp)
-                        HomeTool(
-                            "FTP 客户端",
-                            "双向文件传输",
-                            Icons.Outlined.SwapHoriz,
-                            Modifier.weight(1f),
-                            onFtpClient,
-                        )
-                    }
-                    HorizontalDivider(
-                        Modifier.padding(horizontal = 16.dp),
-                        color = Line.copy(alpha = .7f),
-                    )
-                    Row(Modifier.fillMaxWidth()) {
-                        HomeTool(
-                            "快速快门",
-                            "蓝牙遥控",
-                            Icons.Outlined.Bluetooth,
-                            Modifier.weight(1f),
-                            onBluetooth,
-                        )
-                        HomeTool(
-                            "本机导入",
-                            "手机与读卡器",
-                            Icons.Outlined.AddPhotoAlternate,
-                            Modifier.weight(1f),
-                            onImport,
-                        )
-                    }
-                }
-            }
-        }
-        item {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("最近照片", fontSize = 17.sp, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.weight(1f))
-                Text("${imported.size} 张已导入", fontSize = 11.sp, color = Muted)
-            }
-        }
-        if (imported.isEmpty())
-            item {
-                Surface(color = Color.White, shape = UiTokens.card) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Outlined.PhotoLibrary,
-                            null,
-                            tint = Muted,
-                            modifier = Modifier.size(24.dp),
-                        )
-                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                            Text("从照片开始", fontSize = 14.sp)
-                            Text(
-                                "导入后在这里继续浏览和选片",
-                                fontSize = 11.sp,
-                                color = Muted,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
-                    }
-                }
-            }
-        else
-            item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(imported.take(12), key = { it.id }) { photo ->
-                        Column(
-                            Modifier.width(174.dp)
-                                .clickable { onPhoto(photo) }
-                                .semantics { contentDescription = "最近照片 ${photo.name}" }
-                        ) {
-                            PhotoThumbnail(
-                                runtime,
-                                photo,
-                                Modifier.fillMaxWidth().aspectRatio(1.35f).clip(UiTokens.photo),
-                            )
-                            Text(
-                                photo.name,
-                                fontSize = 10.sp,
-                                color = Muted,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 5.dp),
-                            )
-                        }
-                    }
-                }
-            }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(
-                    "已选 ${imported.count { it.mark == PhotoMark.PICKED.name }}",
-                    fontSize = 11.sp,
-                    color = Muted,
-                )
-                Text(
-                    "收藏 ${imported.count { it.mark == PhotoMark.FAVORITE.name }}",
-                    fontSize = 11.sp,
-                    color = Muted,
-                )
-            }
-        }
-        item {
-            Text("FTP接收：$ftp", fontSize = 11.sp, color = Muted)
-            if (client.connected)
-                Text("FTP客户端：${client.profile?.label}", fontSize = 11.sp, color = Muted)
-        }
-    }
-}
-
-@Composable
-private fun HomeAction(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    modifier: Modifier,
-    emphasis: Boolean,
-    onClick: () -> Unit,
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by
-        animateFloatAsState(
-            if (pressed) .98f else 1f,
-            spring(dampingRatio = .88f, stiffness = 600f),
-            label = "主要操作按压",
-        )
-    val color = if (emphasis) Color.White else Ink
-    Surface(
-        modifier
-            .graphicsLayer(scaleX = scale, scaleY = scale)
-            .heightIn(min = 86.dp)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
-        shape = UiTokens.card,
-        color = if (emphasis) Color(0xff344f66) else Color.White,
-    ) {
-        Column(Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    icon,
-                    null,
-                    tint = if (emphasis) Color(0xffdce7ee) else Brand,
-                    modifier = Modifier.size(22.dp),
-                )
-                Text(
-                    title,
-                    color = color,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 8.dp),
-                )
-            }
-            Text(
-                subtitle,
-                fontSize = 10.sp,
-                color = if (emphasis) Color(0xffd6e1e8) else Muted,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun HomeTool(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    modifier: Modifier,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier
-            .heightIn(min = 66.dp)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(icon, null, tint = Brand, modifier = Modifier.size(22.dp))
-        Column(Modifier.padding(start = 10.dp)) {
-            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-            Text(subtitle, fontSize = 10.sp, color = Muted, modifier = Modifier.padding(top = 3.dp))
-        }
-    }
-}
 
 @Composable
 private fun Stat(title: String, value: String, modifier: Modifier) {
@@ -1150,6 +857,9 @@ private fun Gallery(
     previewId:String?=null,
     onOverlayChanged:(Boolean)->Unit={},
     selecting: Boolean,
+    purpose:SelectionPurpose?=null,
+    onCompletePurpose:()->Unit={},
+    onCancelPurpose:()->Unit={},
     needsCheck: Boolean,
     onSelecting: (Boolean) -> Unit,
     onRecheck: () -> Unit,
@@ -1297,6 +1007,10 @@ private fun Gallery(
                     }
                 }
             }
+            if(purpose!=null)Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                Text(if(purpose==SelectionPurpose.CLIENT)"为这个客户选择照片"else"选择要保存的照片",color=Brand,fontSize=12.sp,modifier=Modifier.weight(1f))
+                IconButton(onClick=onCancelPurpose){Icon(Icons.Outlined.Close,"取消新建记录",modifier=Modifier.size(18.dp),tint=Muted)}
+            }
             Row(Modifier.fillMaxWidth().height(48.dp),verticalAlignment=Alignment.CenterVertically){
                 TextButton(onClick={choosingDay=true},enabled=source!="camera"||camera.info!=null,contentPadding=PaddingValues(horizontal=0.dp)){
                     Text(chosenDay.ifBlank{"全部日期"},fontSize=13.sp,color=Ink)
@@ -1401,7 +1115,9 @@ private fun Gallery(
                         DropdownMenuItem(text={Text("加入云端项目")},onClick={moreSelection=false;onUpload()})
                     }
                 }
-                if(source=="camera")Button(
+                if(purpose!=null)Button(onClick=onCompletePurpose,enabled=selection.isNotEmpty(),shape=RoundedCornerShape(22.dp),contentPadding=PaddingValues(horizontal=14.dp,vertical=12.dp)){
+                    Text(purpose.actionTitle,fontSize=13.sp)
+                }else if(source=="camera")Button(
                     enabled=all.any{it.id in selectionSet&&it.source==PhotoSource.CAMERA.name}&&camera.info!=null,
                     onClick={if(needsCheck)onRecheck()else download=true},
                     shape=RoundedCornerShape(22.dp),contentPadding=PaddingValues(horizontal=16.dp,vertical=12.dp)){
@@ -1817,18 +1533,22 @@ private fun BluetoothSheet(runtime: CameraRuntime, onClose: () -> Unit) {
 @Composable
 private fun TransferScreen(
     tasks: List<TransferTask>,
+    photos:List<Photo>,
     runtime: CameraRuntime,
     onFtp: () -> Unit,
     onFtpClient: () -> Unit,
+    onSettings:()->Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var exportTask by remember { mutableStateOf<TransferTask?>(null) }
+    var exportTaskJson by rememberSaveable { mutableStateOf<String?>(null) }
+    var choosingFileId by rememberSaveable{mutableStateOf<String?>(null)}
+    var fileAction by rememberSaveable{mutableStateOf(TaskFileAction.OPEN)}
     val export =
         rememberLauncherForActivityResult(
             ActivityResultContracts.CreateDocument("application/octet-stream")
         ) { uri ->
-            val task = exportTask
+            val task = exportTaskJson?.let{Json.decode<TransferTask>(it)}
             if (uri != null && task != null)
                 scope.launch {
                     withContext(Dispatchers.IO) {
@@ -1843,8 +1563,28 @@ private fun TransferScreen(
                             .onFailure { runtime.notice.value = it.message.orEmpty() }
                     }
                 }
-            exportTask = null
+            exportTaskJson = null
         }
+    fun useFile(task:TransferTask,choice:TaskFileChoice,action:TaskFileAction){
+        runCatching{
+            if(action==TaskFileAction.SAVE){
+                val payload=JSONObject(task.payload).put("path",choice.file.path).put("name",choice.name).put("files",org.json.JSONArray().put(JSONObject().put("name",choice.name).put("path",choice.file.path)))
+                exportTaskJson=Json.encode(task.copy(payload=payload.toString()))
+                export.launch(choice.name)
+            }else{
+                val uri=FileProvider.getUriForFile(context,context.packageName+".files",choice.file)
+                val intent=if(action==TaskFileAction.OPEN)Intent(Intent.ACTION_VIEW).setDataAndType(uri,MediaFiles.mime(choice.name))else Intent(Intent.ACTION_SEND).setType(MediaFiles.mime(choice.name)).putExtra(Intent.EXTRA_STREAM,uri)
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                context.startActivity(Intent.createChooser(intent,if(action==TaskFileAction.OPEN)"打开文件"else"分享文件"))
+            }
+        }.onFailure{runtime.notice.value="文件暂不能打开，可检查保存状态后分享或另存"}
+    }
+    fun requestFile(task:TransferTask,action:TaskFileAction){
+        val files=FtpStorage.taskFiles(context,task)
+        if(files.size==1)useFile(task,files.first(),action)
+        else if(files.isNotEmpty()){choosingFileId=task.id;fileAction=action}
+        else runtime.notice.value="文件暂不可用，请检查保存位置"
+    }
     var filter by rememberSaveable { mutableStateOf("active") }
     val shown =
         tasks.filter {
@@ -1852,65 +1592,48 @@ private fun TransferScreen(
             else if (filter == "done") it.state == TransferState.COMPLETE.name
             else it.state !in setOf(TransferState.COMPLETE.name, TransferState.CANCELLED.name)
         }
-    LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
-            Text(
-                "文件与进度",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(top = 10.dp),
-            )
-            Info("原片保存、预览生成与云端上传分别记录。")
-            Row {
-                TextButton(onClick = onFtp) { Text("FTP 接收") }
-                TextButton(onClick = onFtpClient) { Text("FTP 客户端") }
+    val photoMap=remember(photos){photos.associateBy{it.id}}
+    val active=tasks.filter{it.state !in setOf(TransferState.COMPLETE.name,TransferState.CANCELLED.name)}
+    val done=tasks.count{it.state==TransferState.COMPLETE.name}
+    val cancelled=tasks.count{it.state==TransferState.CANCELLED.name}
+    val failed=active.count{it.state in setOf(TransferState.FAILED.name,TransferState.INTERRUPTED.name)}
+    val running=active.firstOrNull{it.state==TransferState.RUNNING.name}
+    var more by remember{mutableStateOf(false)}
+    var details by remember{mutableStateOf<TransferTask?>(null)}
+    Column(Modifier.fillMaxSize().testTag("transfer-workspace")){
+        WorkspaceHeader("传输",active.size.toString()+" 个待处理 · "+done+" 个已完成"){
+            Box{
+                IconButton(onClick={more=true}){Icon(Icons.Outlined.MoreHoriz,"传输更多操作",tint=Ink)}
+                DropdownMenu(more,{more=false}){DropdownMenuItem(text={Text("设置与空间")},onClick={more=false;onSettings()})}
             }
         }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("active" to "进行中", "done" to "已完成", "all" to "全部").forEach { (key, name) ->
-                    FilterChip(filter == key, { filter = key }, { Text(name, fontSize = 11.sp) })
-                }
-            }
+        Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            listOf("active" to "进行中","done" to "已完成","all" to "全部").forEach{(key,title)->FilterChip(filter==key,{filter=key},{Text(title,fontSize=12.sp)})}
         }
-        if (shown.isEmpty())
-            item { EmptyState("当前没有${if(filter=="done")"已完成"else"待处理"}任务", "下载和接收的照片会在这里保留记录。") }
-        items(shown, key = { it.id }) { task ->
-            Panel {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        if (task.kind.startsWith("CLOUD")) Icons.Outlined.CloudUpload
-                        else Icons.Outlined.Download,
-                        null,
-                        tint = Brand,
-                        modifier = Modifier.size(21.dp),
-                    )
-                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                        Text(
-                            task.title,
-                            fontSize = 12.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            taskState(task.state),
-                            fontSize = 10.sp,
-                            color = Muted,
-                            modifier = Modifier.padding(top = 5.dp),
-                        )
+        LazyColumn(Modifier.weight(1f).widthIn(max=1000.dp).fillMaxWidth().align(Alignment.CenterHorizontally),contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
+            item{
+                Surface(color=Color.White,shape=RoundedCornerShape(24.dp)){
+                    Column(Modifier.fillMaxWidth().padding(18.dp)){
+                        Text(if(running!=null)when(TransferKind.valueOf(running.kind)){TransferKind.CLOUD_PREVIEW,TransferKind.CLOUD_DELIVERY,TransferKind.FTP_UPLOAD->"正在上传文件";TransferKind.FTP_RECEIVE->"正在接收照片";else->"正在导入照片"}else if(failed>0)"有 $failed 个任务需要处理"else if(active.isNotEmpty())"等待继续传输"else if(tasks.isEmpty())"还没有传输任务"else"这一组，已经处理好了",fontSize=19.sp,fontWeight=FontWeight.SemiBold,color=Ink)
+                        Text(if(running!=null)running.title else if(failed>0)"失败原因保留在每个任务旁，可在恢复连接后重试。"else if(active.isNotEmpty())"等待连接的任务会保留，可在准备好后继续。"else"完成记录保留，方便打开、分享或另存文件。",fontSize=12.sp,color=Muted,modifier=Modifier.padding(top=8.dp))
+                        Text("$done / ${tasks.size-cancelled} 个任务完成"+(if(cancelled>0)" · $cancelled 个已取消"else"")+tasks.filter{it.state!=TransferState.CANCELLED.name}.sumOf{it.total}.takeIf{it>0}?.let{" · "+formatBytes(it)}.orEmpty(),fontSize=11.sp,color=Muted,modifier=Modifier.padding(top=12.dp))
                     }
-                    if (task.state == TransferState.COMPLETE.name)
-                        Icon(
-                            Icons.Outlined.CheckCircle,
-                            null,
-                            tint = Color(0xff7d9a88),
-                            modifier = Modifier.size(20.dp),
-                        )
                 }
-                if (task.total > 0) {
+            }
+            if(shown.isEmpty())item{Info("当前没有"+if(filter=="done")"已完成任务"else"待处理任务")}
+            items(shown,key={it.id}){task->
+                val photo=photoMap[task.photoId]
+                Surface(color=Color.White,shape=RoundedCornerShape(22.dp),modifier=Modifier.testTag("task-${task.id}")){
+                    Row(Modifier.fillMaxWidth().padding(14.dp),verticalAlignment=Alignment.Top){
+                        if(photo!=null)PhotoThumbnail(runtime,photo,Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)))
+                        else Box(Modifier.size(56.dp),contentAlignment=Alignment.Center){Icon(if(task.kind in setOf(TransferKind.CLOUD_PREVIEW.name,TransferKind.CLOUD_DELIVERY.name))Icons.Outlined.CloudUpload else Icons.Outlined.InsertDriveFile,null,tint=Brand)}
+                        Column(Modifier.weight(1f).padding(start=12.dp)){
+                            Row(verticalAlignment=Alignment.CenterVertically){
+                                Text(task.title,fontSize=14.sp,fontWeight=FontWeight.Medium,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.weight(1f))
+                                IconButton(onClick={details=task},modifier=Modifier.size(36.dp)){Icon(Icons.Outlined.MoreHoriz,"文件与任务详情 "+task.title,modifier=Modifier.size(20.dp),tint=Muted)}
+                            }
+                            Text(transferRoute(task.kind)+" · "+taskState(task.state),fontSize=11.sp,color=if(task.state==TransferState.COMPLETE.name)Color(0xff348261)else Muted)
+                if (task.total > 0&&task.state !in setOf(TransferState.COMPLETE.name,TransferState.CANCELLED.name)) {
                     LinearProgressIndicator(
                         progress = { (task.done.toFloat() / task.total).coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
@@ -1924,70 +1647,11 @@ private fun TransferScreen(
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
-                if (task.error.isNotBlank()) Info(task.error)
-                val savedFile = FtpStorage.taskFile(context, task)
-                if (savedFile != null && task.state != TransferState.RUNNING.name) {
-                    Row {
-                        TextButton(
-                            onClick = {
-                                runCatching {
-                                        val uri =
-                                            FileProvider.getUriForFile(
-                                                context,
-                                                context.packageName + ".files",
-                                                savedFile,
-                                            )
-                                        context.startActivity(
-                                            Intent.createChooser(
-                                                Intent(Intent.ACTION_VIEW)
-                                                    .setDataAndType(
-                                                        uri,
-                                                        MediaFiles.mime(savedFile.name),
-                                                    )
-                                                    .addFlags(
-                                                        Intent.FLAG_GRANT_READ_URI_PERMISSION
-                                                    ),
-                                                "打开文件",
-                                            )
-                                        )
-                                    }
-                                    .onFailure { runtime.notice.value = "手机没有可打开此格式的应用，可使用另存或分享" }
-                            }
-                        ) {
-                            Text("打开")
-                        }
-                        TextButton(
-                            onClick = {
-                                val uri =
-                                    FileProvider.getUriForFile(
-                                        context,
-                                        context.packageName + ".files",
-                                        savedFile,
-                                    )
-                                context.startActivity(
-                                    Intent.createChooser(
-                                        Intent(Intent.ACTION_SEND)
-                                            .setType(MediaFiles.mime(savedFile.name))
-                                            .putExtra(Intent.EXTRA_STREAM, uri)
-                                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
-                                        "分享文件",
-                                    )
-                                )
-                            }
-                        ) {
-                            Text("分享")
-                        }
-                        TextButton(
-                            onClick = {
-                                exportTask = task
-                                export.launch(
-                                    JSONObject(task.payload).optString("name", savedFile.name)
-                                )
-                            }
-                        ) {
-                            Text("另存")
-                        }
-                    }
+                if(task.error.isNotBlank())Text(task.error,color=Color(0xffa74343),fontSize=12.sp,modifier=Modifier.padding(top=8.dp))
+                if(FtpStorage.taskFiles(context,task).isNotEmpty()&&task.state!=TransferState.RUNNING.name)Row{
+                    TextButton(onClick={requestFile(task,TaskFileAction.OPEN)}){Text("打开")}
+                    TextButton(onClick={requestFile(task,TaskFileAction.SHARE)}){Text("分享")}
+                    TextButton(onClick={requestFile(task,TaskFileAction.SAVE)}){Text("另存")}
                 }
                 val compressed =
                     runCatching { JSONObject(task.payload).optString("compressedUri") }
@@ -2060,9 +1724,42 @@ private fun TransferScreen(
                     TextButton(onClick = { runtime.cancel(task) }) {
                         Text("取消任务", fontSize = 10.sp, color = Muted)
                     }
+
+                        }
+                    }
+                }
             }
+            item{WorkspaceSection("传输工具")}
+            item{Surface(color=Color.White,shape=RoundedCornerShape(22.dp)){Column{
+                WorkspaceTool("FTP 接收","由相机主动发送文件",Icons.Outlined.Wifi,onClick=onFtp)
+                HorizontalDivider(Modifier.padding(horizontal=16.dp),color=Line)
+                WorkspaceTool("FTP 客户端","查看服务器与双向传输",Icons.Outlined.SwapHoriz,onClick=onFtpClient)
+            }}}
         }
     }
+    choosingFileId?.let{id->tasks.firstOrNull{it.id==id}?.let{task->AlertDialog(onDismissRequest={choosingFileId=null},title={Text("选择要"+when(fileAction){TaskFileAction.OPEN->"打开";TaskFileAction.SHARE->"分享";TaskFileAction.SAVE->"另存"}+"的文件")},text={Column(Modifier.verticalScroll(rememberScrollState())){
+        FtpStorage.taskFiles(context,task).forEach{choice->TextButton(onClick={choosingFileId=null;useFile(task,choice,fileAction)},modifier=Modifier.fillMaxWidth()){
+            Text(choice.name+" · "+formatBytes(choice.file.length()),fontSize=13.sp)
+        }}
+    }},confirmButton={},dismissButton={TextButton(onClick={choosingFileId=null}){Text("取消")}})}}
+    details?.let{snapshot->val task=tasks.firstOrNull{it.id==snapshot.id}?:snapshot;AlertDialog(onDismissRequest={details=null},title={Text("文件与任务详情")},text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)){
+        Text(task.title,fontWeight=FontWeight.Medium)
+        Text(transferRoute(task.kind)+" · "+taskState(task.state))
+        Text(formatBytes(task.done)+" / "+formatBytes(task.total))
+        photoMap[task.photoId]?.files()?.forEach{file->Text(file.name+" · "+formatBytes(file.size)+(if(file.savedUri.isNotBlank())" · 已保存"else" · 未保存"),fontSize=12.sp)}
+        if(task.error.isNotBlank())Text(task.error,color=MaterialTheme.colorScheme.error)
+    }},confirmButton={TextButton(onClick={details=null}){Text("完成")}})}
+}
+
+private fun transferRoute(value:String)=when(TransferKind.valueOf(value)){
+    TransferKind.IMPORT->"手机 → 图库"
+    TransferKind.DOWNLOAD->"相机 → 手机"
+    TransferKind.FTP_RECEIVE->"相机 → 手机 · FTP接收"
+    TransferKind.FTP_DOWNLOAD->"服务器 → 手机"
+    TransferKind.FTP_UPLOAD->"手机 → 服务器"
+    TransferKind.CLOUD_PREVIEW->"手机 → 云端预览"
+    TransferKind.CLOUD_DELIVERY->"手机 → 云端成片"
+    TransferKind.PUBLISH->"图库 → 系统相册"
 }
 
 private fun taskState(value: String) =
@@ -2662,6 +2359,7 @@ private fun PhotoViewer(
     onClose: () -> Unit,
     onRemove: () -> Unit,
     selected: Boolean,
+    selectionReadOnly:Boolean=false,
     cameraConnected: Boolean,
     resourceConfirmed:Boolean,
     canDownload:Boolean,
@@ -2857,7 +2555,8 @@ private fun PhotoViewer(
                             Text(if(original!=null)"已导入原片 · "+photo.formatTitle() else if(photo.imported)"已导入RAW · 当前为预览" else if(!cameraConnected&&photo.source==PhotoSource.CAMERA.name)"离线缓存 · 相机已断开" else if(!resourceConfirmed)"缓存预览 · 需重新核对相机" else "相机预览 · "+photo.formatTitle(),
                                 fontSize=11.sp,color=Color.White.copy(alpha=.72f),maxLines=1,overflow=TextOverflow.Ellipsis)
                         }
-                        PhotoSelectionAction(selected,onSelect,enabled=!pager.isScrollInProgress)
+                        if(selectionReadOnly)Text(if(selected)"客户已选"else"客户未选",fontSize=11.sp,color=if(selected)LiveAccent else Color.White.copy(alpha=.7f),modifier=Modifier.padding(horizontal=8.dp))
+                        else PhotoSelectionAction(selected,onSelect,enabled=!pager.isScrollInProgress)
                     }
                     if(scale>1.01f)TextButton(onClick={scale=1f;pan=Offset.Zero},modifier=Modifier.align(Alignment.TopEnd).padding(top=80.dp,end=16.dp).background(Color.Black.copy(alpha=.5f),CircleShape)){Text("还原",color=Color.White,fontSize=12.sp)}
                     Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal=12.dp,vertical=8.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(8.dp)){

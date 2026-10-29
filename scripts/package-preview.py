@@ -11,7 +11,7 @@ import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-version='0.1.14'
+version='0.1.15'
 ios_version='0.1.6'
 checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-instrument-ui','android-instrument-gallery','android-instrument-usability','android-instrument-live','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark','ios','ios-core','ios-ui','ios-device']
 checks.append('android-instrument-live-flow')
@@ -75,7 +75,8 @@ result['elf16KBAlignment']=True
 ui_evidence=artifacts/f'camera-ui-{version}-evidence.json'
 if ui_evidence.exists():
     ui=json.loads(ui_evidence.read_text())
-    if ui.get('apkSha256')==result['apkSha256']: result['cameraUiEvidence']=ui
+    if not ui.get('passed')or ui.get('apkSha256')!=result['apkSha256']or ui.get('diagnosticSha256')!=result['diagnosticApk']['sha256']:raise SystemExit('取景同包证据未通过或散列不匹配')
+    result['cameraUiEvidence']=ui
 gallery_evidence=artifacts/f'gallery-ui-{version}-evidence.json'
 if gallery_evidence.exists():
     gallery=json.loads(gallery_evidence.read_text())
@@ -115,10 +116,13 @@ def freeze_ui_evidence(kind,source,data):
 result['tabletUiEvidenceDirectory']=freeze_ui_evidence('tablet',tablet_path,tablet)
 shutil.copyfile(tablet_path,artifacts/f'tablet-ui-{version}-evidence.json')
 if result.get('galleryUiEvidence'):result['galleryUiEvidenceDirectory']=freeze_ui_evidence('gallery',gallery_evidence,result['galleryUiEvidence'])
+if result.get('cameraUiEvidence'):result['cameraUiEvidenceDirectory']=freeze_ui_evidence('camera',ui_evidence,result['cameraUiEvidence'])
 alias=artifacts/f'FrameLink-{version}-glass-{datetime.datetime.now().strftime("%Y%m%d-%H%M")}-debug.apk'
 shutil.copyfile(apk,alias)
 result['timestampedApk']=alias.name
-(artifacts/'artifact-manifest.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
+manifest=json.dumps(result,ensure_ascii=False,indent=2)
+(artifacts/f'FrameLink-{version}-manifest.json').write_text(manifest)
+(artifacts/'artifact-manifest.json').write_text(manifest)
 print(str(apk))
 print('SHA256 '+result['apkSha256'])
 print(str(source))

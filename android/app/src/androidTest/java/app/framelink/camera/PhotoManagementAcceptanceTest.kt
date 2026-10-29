@@ -223,6 +223,58 @@ class PhotoManagementAcceptanceTest {
         }
     }
 
+    @Test
+    fun importedAndDeduplicatedTasksKeepRealFilesNamesAndByteCounts()=runBlocking{
+        val source=original("task-files")
+        val bytes=source.readBytes()
+        val id="local:"+MediaFiles.digest(source.inputStream())
+        val before=runtime.database.tasks().all().map{it.id}.toSet()
+        try{
+            val uri=androidx.core.content.FileProvider.getUriForFile(context,context.packageName+".files",source)
+            runtime.importUris(listOf(uri)).join()
+            val first=runtime.database.tasks().all().first{it.id !in before&&it.kind==TransferKind.IMPORT.name}
+            assertEquals(TransferState.COMPLETE.name,first.state)
+            assertEquals(id,first.photoId)
+            assertEquals(source.name,first.title)
+            assertEquals(bytes.size.toLong(),first.done)
+            val saved=FtpStorage.taskFiles(context,first).single()
+            assertEquals(source.name,saved.name)
+            assertArrayEquals(bytes,saved.file.readBytes())
+            runtime.importUris(listOf(uri)).join()
+            val second=runtime.database.tasks().all().first{it.id !in before&&it.id!=first.id&&it.kind==TransferKind.IMPORT.name}
+            assertEquals(TransferState.COMPLETE.name,second.state)
+            assertEquals(bytes.size.toLong(),second.done)
+            assertEquals(first.photoId,second.photoId)
+            assertEquals(saved.file.canonicalPath,FtpStorage.taskFiles(context,second).single().file.canonicalPath)
+            assertArrayEquals(bytes,saved.file.readBytes())
+        }finally{
+            runtime.database.photos().find(id)?.let{photo->photo.files().forEach{file->if(file.localUri.startsWith("content:"))runCatching{context.contentResolver.delete(android.net.Uri.parse(file.localUri),null,null)};File(file.originalPath).delete()};runtime.database.photos().save(photo.copy(localHidden=true,filesJson="[]"))}
+            source.delete()
+        }
+    }
+
+    @Test
+    fun groupedTaskRequiresChoosingTheJpegOrRawBeforeOpening(){
+        val jpeg=original("task-group")
+        val raw=File(jpeg.parentFile,jpeg.nameWithoutExtension+".ARW").apply{writeBytes(byteArrayOf(1,2,3,4))}
+        val record=photo(jpeg).copy(filesJson=Json.encode(listOf(CameraFile(1,jpeg.name,originalPath=jpeg.path,size=jpeg.length()),CameraFile(2,raw.name,originalPath=raw.path,size=raw.length()))))
+        val files=org.json.JSONArray().put(org.json.JSONObject().put("name",jpeg.name).put("path",jpeg.path)).put(org.json.JSONObject().put("name",raw.name).put("path",raw.path))
+        val task=TransferTask("qa-task-files:${UUID.randomUUID()}",TransferKind.DOWNLOAD.name,photoId=record.id,title="QA多格式任务",payload=org.json.JSONObject().put("files",files).toString(),state=TransferState.COMPLETE.name,createdAt=Long.MAX_VALUE-10)
+        try{
+            runBlocking{runtime.database.photos().save(record);runtime.database.tasks().save(task)}
+            compose.onNodeWithTag("tab-transfers").performClick()
+            compose.onNodeWithText("已完成",substring=false).performClick()
+            compose.onNodeWithText(task.title).performScrollTo().assertIsDisplayed()
+            compose.onNode(hasText("打开")and hasAnyAncestor(hasTestTag("task-${task.id}"))).performClick()
+            compose.onNodeWithText("选择要打开的文件").assertIsDisplayed()
+            compose.onNodeWithText(jpeg.name,substring=true).assertIsDisplayed()
+            compose.onNodeWithText(raw.name,substring=true).assertIsDisplayed()
+            compose.onNodeWithText("取消",substring=false).performClick()
+            assertTrue(jpeg.isFile);assertTrue(raw.isFile)
+            assertEquals(listOf(jpeg.name,raw.name),FtpStorage.taskFiles(context,task).map{it.name})
+        }finally{runBlocking{runtime.database.tasks().save(task.copy(state=TransferState.CANCELLED.name,payload="{}",photoId=""));runtime.database.photos().save(record.copy(localHidden=true,filesJson="[]"))};jpeg.delete();raw.delete()}
+    }
+
     private fun original(label: String): File {
         val directory = File(context.filesDir, "media/qa-photo-removal").apply { mkdirs() }
         val file = File(directory, "QA_${label}_${UUID.randomUUID()}.jpg")

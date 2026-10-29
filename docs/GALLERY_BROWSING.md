@@ -19,7 +19,7 @@
 
 截图来自安装版及授权样片。Android0.1.14增加平板侧栏、预览双栏与窗口尺寸回归，详见[图库窗口适配](TABLET_GALLERY.md)。系统双应用分屏及平板真机仍待验。
 
-软件回归包括30项JVM测试、33项手机安装版测试、9项平板窗口测试，以及常规手机、小屏大字体、手势导航下的截图检查。测试使用协议模拟器及独立FrameLinkQA／FrameLinkTabletQA设备，新版手机真机与真实相机复测尚待覆盖安装。
+0.1.14软件回归包括30项JVM测试、33项手机安装版测试、9项平板窗口测试。0.1.15扩展结果见[工作区与取景](WORKSPACE_UI.md)。两版均使用协议模拟器及独立FrameLinkQA／FrameLinkTabletQA设备，新版手机真机与真实相机复测尚待覆盖安装。
 
 运行`python3 scripts/visual-qa.py all`准备样片并验证三种显示配置，再运行`python3 scripts/collect-gallery-ui.py`采集手势导航下的连续操作录屏和截图。采集记录包含实际安装主包、诊断组件的SHA256、采集时间、窗口尺寸、密度、字体与导航模式；打包脚本只接受与候选包匹配且通过的记录。采集文件保存在`artifacts/gallery-ui-<版本>-evidence.json`。
 

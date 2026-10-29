@@ -788,6 +788,7 @@ class CameraRuntime(
             database.photos().save(photo)
             completed += file.size
         }
+        attachTaskFiles(task,photo,photo.downloadFiles(format))
         runCatching { ensurePreview(photo) }
         progress(task, task.total, task.total)
     }
@@ -795,33 +796,46 @@ class CameraRuntime(
     private suspend fun importTask(task: TransferTask) {
         val uri = Uri.parse(JSONObject(task.payload).getString("uri"))
         var name = "photo_${task.id}.jpg"
+        var sourceBytes=0L
         context.contentResolver
-            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME,OpenableColumns.SIZE), null, null, null)
             ?.use {
-                if (it.moveToFirst())
+                if (it.moveToFirst()){
                     name = it.getString(0).substringAfterLast('/').substringAfterLast('\\')
+                    val sizeColumn=it.getColumnIndex(OpenableColumns.SIZE)
+                    if(sizeColumn>=0&&!it.isNull(sizeColumn))sourceBytes=it.getLong(sizeColumn).coerceAtLeast(0L)
+                }
             }
+        database.tasks().attachFiles(task.id,task.photoId,name,JSONObject(task.payload).put("name",name).toString(),System.currentTimeMillis(),TransferState.RUNNING.name)
+        progress(task,0,sourceBytes)
         val output =
             File(context.filesDir, "media/import/${task.id}_$name").apply { parentFile!!.mkdirs() }
         val part = File(output.absolutePath + ".part")
         context.contentResolver.openInputStream(uri)!!.use { input ->
             part.outputStream().use { out ->
                 val buffer = ByteArray(65536)
+                var received=0L
+                var lastProgress=0L
                 while (true) {
                     check(!cancelled.contains(task.id)) { "导入已取消" }
                     val n = input.read(buffer)
                     if (n < 0) break
                     out.write(buffer, 0, n)
+                    received+=n
+                    if(sourceBytes>0&&System.currentTimeMillis()-lastProgress>350){progress(task,received,maxOf(sourceBytes,received));lastProgress=System.currentTimeMillis()}
                 }
             }
         }
         check(part.renameTo(output)) { "文件保存失败，已保留暂存文件" }
         val hash = MediaFiles.digest(output.inputStream())
+        val importedBytes=output.length()
         val id = "local:$hash"
         val existing = database.photos().find(id)
-        if (existing == null || (existing.localHidden && !existing.imported)) {
+        val existingOriginal=existing?.files()?.firstOrNull{it.originalPath.isNotBlank()&&File(it.originalPath).isFile}
+        if (existing == null || existingOriginal==null) {
+            val reusableUri=existing?.files()?.firstOrNull{it.localUri.isNotBlank()}?.localUri?.takeIf{value->runCatching{context.contentResolver.openInputStream(Uri.parse(value))?.use{true}?:false}.getOrDefault(false)}
             val local =
-                runCatching { MediaFiles.publish(context, output, name).toString() }
+                reusableUri?:runCatching { MediaFiles.publish(context, output, name).toString() }
                     .getOrDefault(Uri.fromFile(output).toString())
             val photo =
                 Photo(
@@ -852,7 +866,21 @@ class CameraRuntime(
             if (existing.localHidden) database.photos().save(existing.copy(localHidden = false))
             output.delete()
         }
-        progress(task, output.length(), output.length())
+        val result=database.photos().find(id)?:error("照片结果尚未保存")
+        attachTaskFiles(task,result,result.files())
+        progress(task, importedBytes, importedBytes)
+    }
+
+    /** 补齐已落盘文件与任务的关联，避免导入或去重后只留下无法打开的进度记录 */
+    private suspend fun attachTaskFiles(task:TransferTask,photo:Photo,files:List<CameraFile>){
+        checkTaskActive(task.id)
+        val saved=files.filter{it.originalPath.isNotBlank()&&File(it.originalPath).isFile}
+        val data=JSONObject(task.payload)
+        val results=org.json.JSONArray()
+        saved.forEach{file->results.put(JSONObject().put("name",file.name).put("path",file.originalPath).put("size",file.size))}
+        data.put("files",results)
+        saved.firstOrNull()?.let{file->data.put("path",file.originalPath).put("name",file.name)}
+        database.tasks().attachFiles(task.id,photo.id,photo.displayTitle(),data.toString(),System.currentTimeMillis(),TransferState.RUNNING.name)
     }
 
     private suspend fun cloudTask(task: TransferTask) {

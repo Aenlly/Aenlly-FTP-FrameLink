@@ -128,6 +128,57 @@ class SelectionBatchesAcceptanceTest {
         }
     }
 
+    @Test
+    fun projectCanStartAClientSessionThroughGalleryWithoutSharingPhotographerChoices(){
+        val photos=fixtures(2)
+        val title="QA新客户-${UUID.randomUUID().toString().take(8)}"
+        var reviewId:String?=null
+        try{
+            runBlocking{runtime.database.photos().saveAll(photos)}
+            compose.onNodeWithTag("tab-projects").performClick()
+            compose.onNodeWithContentDescription("新建项目或场次").performClick()
+            compose.onNodeWithText("新建客户场次",substring=false).performClick()
+            compose.onNodeWithText("为这个客户选择照片",substring=false).assertIsDisplayed()
+            compose.onNodeWithTag("gallery-grid").performScrollToIndex(0)
+            compose.onNodeWithContentDescription("选择 ${photos[0].name}").performClick()
+            compose.onNodeWithText("新建客户场次",substring=false).performClick()
+            compose.onNode(hasSetTextAction()and hasText("客户姓名 / 手机号 / 场次名称")).performTextReplacement(title)
+            compose.onNodeWithText("开始选片",substring=false).performClick()
+            compose.waitUntil(10000){runBlocking{runtime.database.reviews().all().any{it.title==title}}}
+            val review=runBlocking{runtime.database.reviews().all().first{it.title==title}}
+            reviewId=review.id
+            assertEquals(listOf(photos[0].id),review.photoIds())
+            assertTrue("摄影师勾选不能代替客户选择",review.choices().isEmpty())
+            compose.onNodeWithText("客户模式 · 无需登录").assertIsDisplayed()
+        }finally{
+            runBlocking{reviewId?.let{runtime.reviews.delete(it)};photos.forEach{photo->File(photo.files().first().originalPath).delete();runtime.database.photos().save(photo.copy(localHidden=true,filesJson="[]"))}}
+        }
+    }
+
+    @Test
+    fun clientRecordPreviewShowsCustomerChoicesWithoutChangingPhotographerSelection(){
+        val photos=fixtures(2)
+        var reviewId:String?=null
+        try{
+            val record=runBlocking{runtime.database.photos().saveAll(photos);runtime.reviews.create("QA客户结果-${UUID.randomUUID().toString().take(8)}",photos.map{it.id})}
+            reviewId=record.id
+            runBlocking{runtime.reviews.choose(record.id,photos[0].id,selected=true)}
+            compose.onNodeWithTag("tab-projects").performClick()
+            compose.onNodeWithText(record.title).performScrollTo().performClick()
+            compose.onNodeWithText("进入客户选片").assertIsDisplayed()
+            compose.onNodeWithTag("client-detail-photo-${photos[0].id}").performClick()
+            compose.onNodeWithText("客户已选",substring=false).assertIsDisplayed()
+            compose.onNodeWithContentDescription("选择当前照片").assertDoesNotExist()
+            compose.onNodeWithTag("photo-viewer-pager").performTouchInput{swipeLeft()}
+            compose.waitUntil(10000){compose.onAllNodesWithText("客户未选",substring=false).fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithContentDescription("关闭照片").performClick()
+            compose.onNodeWithText("进入客户选片").performClick()
+            compose.onNodeWithText("客户模式 · 无需登录").assertIsDisplayed()
+            assertTrue(runBlocking{runtime.database.reviews().find(record.id)!!.choices()[photos[0].id]!!.selected})
+            assertTrue(photos.all{it.mark==PhotoMark.NONE.name})
+        }finally{runBlocking{reviewId?.let{runtime.reviews.delete(it)};photos.forEach{photo->File(photo.files().first().originalPath).delete();runtime.database.photos().save(photo.copy(localHidden=true,filesJson="[]"))}}}
+    }
+
     private fun fixtures(count: Int): List<Photo> {
         val id = UUID.randomUUID().toString().take(8)
         val base = System.currentTimeMillis() + 2_000_000

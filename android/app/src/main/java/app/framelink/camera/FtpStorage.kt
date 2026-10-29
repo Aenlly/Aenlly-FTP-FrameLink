@@ -6,6 +6,9 @@ import android.provider.DocumentsContract
 import java.io.File
 import org.json.JSONObject
 
+/** 一个可操作的已保存原文件，展示名称与App内部保存路径分开 */
+data class TaskFileChoice(val name:String,val file:File)
+
 /** SAF保存副本，始终保留App内已落盘原文件，外部目录失效时可重新授权后重试 */
 object FtpStorage {
     fun copyToTree(context: Context, file: File, name: String, tree: Uri): Uri {
@@ -37,16 +40,21 @@ object FtpStorage {
     }
 
     fun taskFile(context: Context, task: TransferTask): File? {
-        val data = runCatching { JSONObject(task.payload) }.getOrNull() ?: return null
-        if (task.kind == TransferKind.FTP_RECEIVE.name && !data.optBoolean("ready")) return null
-        val path = data.optString("path")
-        if (path.isBlank()) return null
-        val file = File(path)
-        return file.takeIf {
-            it.isFile &&
-                it.canonicalPath.startsWith(
-                    File(context.filesDir, "media").canonicalPath + File.separator
-                )
-        }
+        return taskFiles(context,task).firstOrNull()?.file
+    }
+
+    /** 任务只引用App管理目录中的已落盘文件，多格式拍摄保留独立文件名 */
+    fun taskFiles(context:Context,task:TransferTask):List<TaskFileChoice>{
+        val data = runCatching { JSONObject(task.payload) }.getOrNull() ?: return emptyList()
+        if (task.kind == TransferKind.FTP_RECEIVE.name && !data.optBoolean("ready")) return emptyList()
+        val records=mutableListOf<Pair<String,String>>()
+        data.optJSONArray("files")?.let{items->for(index in 0 until items.length())items.optJSONObject(index)?.let{records+=it.optString("name")to it.optString("path")}}
+        if(records.isEmpty())records+=data.optString("name")to data.optString("path")
+        val root=File(context.filesDir,"media").canonicalPath+File.separator
+        return records.mapNotNull{(name,path)->
+            if(path.isBlank())return@mapNotNull null
+            val file=File(path)
+            file.takeIf{it.isFile&&it.canonicalPath.startsWith(root)}?.let{TaskFileChoice(name.ifBlank{file.name},file)}
+        }.distinctBy{it.file.canonicalPath}
     }
 }

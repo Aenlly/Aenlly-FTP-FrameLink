@@ -243,10 +243,10 @@ class FtpClientAcceptanceTest {
             File(server.root, "客户照片").mkdir()
             val photoName = "QA-portrait-${UUID.randomUUID().toString().take(8)}.jpg"
             File(server.root, "客户照片/$photoName").writeBytes(portrait())
-            compose.onNodeWithText("相机", useUnmergedTree = true).performClick()
+            compose.onNodeWithTag("tab-camera").performClick()
             compose.onNodeWithText("FTP 接收").assertIsDisplayed()
             compose.onNodeWithText("FTP 客户端").assertIsDisplayed()
-            compose.onNodeWithText("取景拍摄").assertIsDisplayed()
+            compose.onNodeWithTag("camera-primary").assertIsDisplayed()
             screenshot("android-home-bento")
             compose.onNodeWithText("FTP 接收").performClick()
             compose
@@ -281,7 +281,7 @@ class FtpClientAcceptanceTest {
             compose.onNodeWithText(photoName).performClick()
             screenshot("android-ftp-client")
             compose.onNodeWithText("下载 1 个文件").performClick()
-            compose.onNodeWithText("传输任务").assertIsDisplayed()
+            compose.onNodeWithTag("transfer-workspace").assertIsDisplayed()
             compose.waitUntil(20000) {
                 runBlocking {
                     runtime.database.tasks().byKind(TransferKind.FTP_DOWNLOAD.name).any {

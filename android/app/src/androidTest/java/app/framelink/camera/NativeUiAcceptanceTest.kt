@@ -30,8 +30,9 @@ class NativeUiAcceptanceTest {
         val runtime = (compose.activity.application as CameraApp).runtime
         var dayAdded = false
         try {
-            compose.onNodeWithText("相机", useUnmergedTree = true).performClick()
-            compose.onNodeWithContentDescription("相机连接设置").performClick()
+            compose.onNodeWithTag("tab-camera").performClick()
+            compose.onNodeWithContentDescription("相机更多操作").performClick()
+            compose.onNodeWithText("相机连接设置",substring=false).performClick()
             val authentication = compose.onNodeWithContentDescription("使用相机访问身份验证")
             if (authentication.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.ToggleableState] == androidx.compose.ui.state.ToggleableState.On)
                 authentication.performScrollTo().performClick()
@@ -50,7 +51,7 @@ class NativeUiAcceptanceTest {
                 )
             }
             assertTrue(runtime.camera.value.info!!.model.contains("SIMULATED"))
-            compose.onNodeWithText("浏览相机照片").performClick()
+            compose.onNodeWithTag("camera-browse").performClick()
             compose.waitUntil(30000) { runtime.currentCameraIds.value.isNotEmpty() }
             val target = runBlocking {
                 runtime.database.photos().observe().first().first {
@@ -93,7 +94,7 @@ class NativeUiAcceptanceTest {
             compose.onNodeWithText("摄影师开放修改").assertIsDisplayed()
             screenshot("android-local-review")
             compose.onNodeWithContentDescription("退出现场选片").performClick()
-            compose.onNodeWithText("相机", useUnmergedTree = true).performClick()
+            compose.onNodeWithTag("tab-camera").performClick()
             compose.onNodeWithText("取景拍摄").performClick()
             compose.waitUntil(30000) { runtime.frame.value?.isNotEmpty() == true }
             dismissFullscreenEducation()

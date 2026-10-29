@@ -4,12 +4,15 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -28,14 +31,14 @@ import kotlinx.coroutines.launch
 
 @Composable
 internal fun SaveSelectionDialog(runtime: CameraRuntime, ids: List<String>, onClose: () -> Unit, onSaved: (SelectionBatch) -> Unit) {
-    var title by remember { mutableStateOf("选片 · " + SimpleDateFormat("MM-dd HH:mm", Locale.ROOT).format(Date())) }
+    var title by rememberSaveable { mutableStateOf("选片 · " + SimpleDateFormat("MM-dd HH:mm", Locale.ROOT).format(Date())) }
     var error by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = { if (!saving) onClose() }, shape = UiTokens.card, containerColor = Color.White,
         title = { Text("保存这组选片") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        text = { Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("${ids.size} 张照片，保存后可在项目中回看、恢复选择或分享图文选片单。", fontSize = 13.sp)
             OutlinedTextField(title, { title = it }, label = { Text("选片名称") }, singleLine = true, enabled = !saving)
             if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)

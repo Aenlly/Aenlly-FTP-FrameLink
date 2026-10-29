@@ -83,7 +83,7 @@ evidence = {
     'video': {'file': prefix + '-flow.mp4', 'sha256': digest(artifacts / (prefix + '-flow.mp4'))},
     'screenshots': images, 'log': 'build-logs/android-visual-gesture.log',
     'flow': ['图库浏览', '多选', '本地移除对话框并取消', '双图对比', '大图与缩放', '返回图库并检查末行', '项目', '传输', '设置'],
-    'pending': ['新版手机真机覆盖安装与验收', '真实相机重连与选片复测', '完整平板布局与分屏验收', 'iOS新版图库'],
+    'pending': ['新版手机真机覆盖安装与验收', '真实相机重连与选片复测', '系统双应用分屏与平板真机验收', 'iOS新版图库'],
 }
 (artifacts / (prefix + '-evidence.json')).write_text(json.dumps(evidence, ensure_ascii=False, indent=2))
 raise SystemExit(result)

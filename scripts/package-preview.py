@@ -11,7 +11,7 @@ import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-version='0.1.13'
+version='0.1.14'
 ios_version='0.1.6'
 checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-instrument-ui','android-instrument-gallery','android-instrument-usability','android-instrument-live','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark','ios','ios-core','ios-ui','ios-device']
 checks.append('android-instrument-live-flow')
@@ -82,6 +82,39 @@ if gallery_evidence.exists():
     if not gallery.get('passed') or gallery.get('apkSha256')!=result['apkSha256'] or gallery.get('diagnosticSha256')!=result['diagnosticApk']['sha256']:
         raise SystemExit('图库连续操作证据未通过或不属于当前主包、诊断组件')
     result['galleryUiEvidence']=gallery
+tablet_path=artifacts/'tablet-qa-all-evidence.json'
+if not tablet_path.exists():raise SystemExit('缺少平板窗口验收记录')
+tablet=json.loads(tablet_path.read_text())
+if not tablet.get('passed')or len(tablet.get('profiles',[]))!=9 or tablet.get('apkSha256')!=result['apkSha256']or tablet.get('diagnosticSha256')!=result['diagnosticApk']['sha256']:
+    raise SystemExit('平板窗口验收未通过或不属于当前候选包')
+result['tabletUiEvidence']=tablet
+def freeze_ui_evidence(kind,source,data):
+    directory=artifacts/f'{kind}-ui-{version}'
+    saved=directory/'evidence.json'
+    if saved.exists():
+        old=json.loads(saved.read_text())
+        if old.get('apkSha256')!=data.get('apkSha256')or old.get('diagnosticSha256')!=data.get('diagnosticSha256'):
+            raise SystemExit('该版本界面证据已冻结为其他构建，请使用新版本：'+str(directory))
+    directory.mkdir(exist_ok=True)
+    media=list(data.get('screenshots',[]))
+    if data.get('video'):media.append(data['video'])
+    for item in media:
+        relative=pathlib.Path(item['file'])
+        if relative.is_absolute()or'..'in relative.parts:raise SystemExit('界面证据文件路径无效')
+        path=artifacts/relative
+        if hashlib.sha256(path.read_bytes()).hexdigest()!=item['sha256']:raise SystemExit('界面证据文件散列不一致：'+str(relative))
+        target=directory/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
+    logs=[p['log']for p in data.get('profiles',[])if p.get('log')]
+    if data.get('log'):logs.append(data['log'])
+    for name in logs:
+        relative=pathlib.Path(name)
+        if relative.is_absolute()or'..'in relative.parts:raise SystemExit('界面证据日志路径无效')
+        target=directory/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(root/relative,target)
+    shutil.copyfile(source,saved)
+    return str(directory.relative_to(artifacts))
+result['tabletUiEvidenceDirectory']=freeze_ui_evidence('tablet',tablet_path,tablet)
+shutil.copyfile(tablet_path,artifacts/f'tablet-ui-{version}-evidence.json')
+if result.get('galleryUiEvidence'):result['galleryUiEvidenceDirectory']=freeze_ui_evidence('gallery',gallery_evidence,result['galleryUiEvidence'])
 alias=artifacts/f'FrameLink-{version}-glass-{datetime.datetime.now().strftime("%Y%m%d-%H%M")}-debug.apk'
 shutil.copyfile(apk,alias)
 result['timestampedApk']=alias.name

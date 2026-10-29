@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
@@ -27,12 +28,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-internal fun GalleryMediaItem(runtime: CameraRuntime, group: List<Photo>, selected: Set<String>, list: Boolean, compact: Boolean, selecting:Boolean=true, onOpen: () -> Unit, onSelection: (List<String>) -> Unit) {
+internal fun GalleryMediaItem(runtime: CameraRuntime, group: List<Photo>, selected: Set<String>, list: Boolean, compact: Boolean, selecting:Boolean=true, previewing:Boolean=false, onOpen: () -> Unit, onSelection: (List<String>) -> Unit) {
     val photo=group.first()
     val complete=group.all{it.id in selected}
     val partial=!complete && group.any{it.id in selected}
     val shape=RoundedCornerShape(if(list) 12.dp else 4.dp)
-    val base=Modifier.testTag("photo-${photo.id}").clickable(onClick=onOpen).semantics{contentDescription="查看 ${photo.name}"}
+    val base=Modifier.testTag("photo-${photo.id}").clickable(onClick=onOpen).semantics{contentDescription="查看 ${photo.name}";if(previewing)stateDescription="正在预览"}
     @Composable fun Select(modifier:Modifier=Modifier) {
         Box(modifier.size(if(compact&&!list) 32.dp else 40.dp).triStateToggleable(state=if(complete) ToggleableState.On else if(partial) ToggleableState.Indeterminate else ToggleableState.Off,role=androidx.compose.ui.semantics.Role.Checkbox,
             onClick={val ids=group.map{it.id}.toSet();onSelection((if(complete) selected-ids else selected+ids).toList())})
@@ -64,7 +65,7 @@ internal fun GalleryMediaItem(runtime: CameraRuntime, group: List<Photo>, select
             if(selecting)Select()
         }
     } else {
-        Box(base.background(if(selecting&&complete)SelectionAccent.copy(alpha=.15f)else Color.Transparent,shape)) {
+        Box(base.background(if(selecting&&complete)SelectionAccent.copy(alpha=.15f)else Color.Transparent,shape).then(if(previewing&&!selecting)Modifier.border(2.dp,SelectionAccent,shape)else Modifier)) {
             Preview(Modifier.fillMaxWidth().aspectRatio(1f).padding(if(selecting&&complete)3.dp else 0.dp))
         }
     }

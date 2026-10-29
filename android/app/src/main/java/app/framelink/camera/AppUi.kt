@@ -141,6 +141,12 @@ fun FrameLink(runtime: CameraRuntime) {
     val cameraHasMore by runtime.galleryHasMore.collectAsStateWithLifecycle()
     val message by runtime.notice.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.CAMERA) }
+    val windowDensity=androidx.compose.ui.platform.LocalDensity.current
+    val configuredWidth=androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    var windowPixels by remember{mutableIntStateOf(0)}
+    val windowWidth=if(windowPixels>0)with(windowDensity){windowPixels.toDp().value.toInt()}else configuredWidth
+    val galleryWindow=galleryWindowLayout(windowWidth)
+    val railGallery=tab==Tab.GALLERY&&galleryWindow.rail
     var sheet by remember { mutableStateOf<Sheet?>(null) }
     var connectionFailure by remember { mutableStateOf("") }
     var reconnectAttempt by remember { mutableIntStateOf(0) }
@@ -152,6 +158,7 @@ fun FrameLink(runtime: CameraRuntime) {
     var selectionKeys by rememberSaveable { mutableStateOf<Map<String,String>>(emptyMap()) }
     val hasRemoteDraft=remember(photos,selection){val ids=selection.toSet();photos.any{it.id in ids&&it.source==PhotoSource.CAMERA.name}}
     var gallerySelecting by rememberSaveable { mutableStateOf(false) }
+    var galleryOverlayOpen by remember{mutableStateOf(false)}
     var selectionNeedsCheck by rememberSaveable { mutableStateOf(false) }
     var checkingSelection by remember { mutableStateOf(false) }
     var sharingSelection by remember { mutableStateOf(false) }
@@ -159,16 +166,17 @@ fun FrameLink(runtime: CameraRuntime) {
     var lastCameraId by rememberSaveable { mutableStateOf<String?>(null) }
     var cameraEpoch by rememberSaveable { mutableIntStateOf(0) }
     var viewer by rememberSaveable { mutableStateOf<String?>(null) }
+    val splitGallery=tab==Tab.GALLERY&&galleryWindow.preview&&viewer!=null
     var viewerIds by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var viewerAutoLoad by rememberSaveable{mutableStateOf(false)}
     var viewerContext by rememberSaveable{mutableStateOf("")}
     var removing by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
-    var savingSelection by remember { mutableStateOf(false) }
+    var savingSelection by rememberSaveable { mutableStateOf(false) }
     var savedBatchId by rememberSaveable { mutableStateOf<String?>(null) }
     var localReview by rememberSaveable { mutableStateOf<String?>(null) }
-    var newReviewPhotos by remember { mutableStateOf<List<String>>(emptyList()) }
-    var compare by remember { mutableStateOf(false) }
-    var comparingIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var newReviewPhotos by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var compare by rememberSaveable { mutableStateOf(false) }
+    var comparingIds by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var live by rememberSaveable { mutableStateOf(false) }
     var projectId by rememberSaveable { mutableStateOf<String?>(null) }
     val gridState = rememberLazyGridState()
@@ -280,6 +288,7 @@ fun FrameLink(runtime: CameraRuntime) {
                 }
             }
             runtime.importUris(uris)
+            viewer=null
             tab = Tab.TRANSFERS
         }
     LaunchedEffect(message) {
@@ -308,6 +317,40 @@ fun FrameLink(runtime: CameraRuntime) {
     LaunchedEffect(photos,selection,camera.info?.id){
         if(camera.info==null&&hasRemoteDraft)selectionNeedsCheck=true
     }
+    val currentPhotoViewer: @Composable (Boolean)->Unit = { embedded ->
+            photos
+            .find { it.id == viewer }
+            ?.let { photo ->
+                PhotoViewer(
+                    runtime,
+                    photo,
+                    embedded=embedded,
+                    onClose = { viewer = null },
+                    onRemove = { removing = listOf(photo.id) },
+                    selected = photo.id in selection,
+                    cameraConnected = camera.info != null,
+                    resourceConfirmed=photo.source!=PhotoSource.CAMERA.name||photo.id in cameraIds,
+                    canDownload=camera.info?.canDownload==true,
+                    neighbors=viewerIds.mapNotNull(photoIndex::get).takeIf{list->list.any{it.id==photo.id}}?:listOf(photo),
+                    onNavigate={viewer=it},
+                    canLoadMore=viewerAutoLoad&&viewerContext==galleryContext()&&source=="camera"&&filter!="picked"&&cameraHasMore,
+                    loadingMore=camera.loadingPhotos,
+                    onNeedMore={if(runtime.galleryError.value.isBlank())runtime.loadPhotos()},
+                    onSelect = { togglePhoto(photo.id) },
+                    onMark = { mark ->
+                        val previous = photo.mark
+                        runtime.mark(photo, mark)
+                        scope.launch {
+                            if (
+                                snackbar.showSnackbar("收藏已更新", "撤销", duration = SnackbarDuration.Short) ==
+                                    SnackbarResult.ActionPerformed
+                            )
+                                runtime.mark(photo, PhotoMark.valueOf(previous))
+                        }
+                    },
+                )
+            }
+    }
     MaterialTheme(
         typography = UiTokens.typography,
         shapes = UiTokens.shapes,
@@ -326,6 +369,7 @@ fun FrameLink(runtime: CameraRuntime) {
             ),
     ) {
         Scaffold(
+            modifier=Modifier.onSizeChanged{windowPixels=it.width},
             containerColor = CanvasColor,
             snackbarHost = {
                 SnackbarHost(
@@ -338,21 +382,24 @@ fun FrameLink(runtime: CameraRuntime) {
                 )
             },
             bottomBar = {
-                if(tab!=Tab.GALLERY||!gallerySelecting)Box(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                if(!railGallery&&(tab!=Tab.GALLERY||!gallerySelecting))Box(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
                     GlassNavigation(glass, Tab.entries.map { NavigationEntry(it.title, it.icon, "tab-${it.name.lowercase(Locale.ROOT)}") }, tab.ordinal) { tab = Tab.entries[it] }
                 }
             },
         ) { padding ->
-            Column(
+            val workspacePadding=PaddingValues(
+                top=padding.calculateTopPadding(),
+                bottom=if(tab==Tab.GALLERY&&gallerySelecting&&!railGallery)0.dp else padding.calculateBottomPadding(),
+            )
+            Row(
                 Modifier.fillMaxSize()
                     .hazeSource(glass)
                     .background(CanvasColor)
-                    .padding(
-                        top = padding.calculateTopPadding(),
-                        bottom =
-                            if(tab==Tab.GALLERY&&gallerySelecting)0.dp else padding.calculateBottomPadding(),
-                    )
+                    .padding(workspacePadding)
+                    .consumeWindowInsets(workspacePadding)
             ) {
+                if(railGallery)GalleryNavigationRail(Tab.entries.map{NavigationEntry(it.title,it.icon,"tab-${it.name.lowercase(Locale.ROOT)}")},tab.ordinal,{viewer=null;tab=Tab.entries[it]},{sheet=Sheet.STORAGE})
+                Column(Modifier.weight(1f).fillMaxHeight()){
                 if(tab!=Tab.GALLERY)Row(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -435,7 +482,8 @@ fun FrameLink(runtime: CameraRuntime) {
                             },
                             onPhoto = { viewerAutoLoad=false;viewerIds=photos.filter{p->p.inLibrary}.map{p->p.id};viewer = it.id },
                         )
-                    Tab.GALLERY ->
+                    Tab.GALLERY ->Row(Modifier.fillMaxSize()){
+                        Box(Modifier.weight(1f).fillMaxHeight()){
                         Gallery(
                             runtime,
                             photos,
@@ -446,11 +494,14 @@ fun FrameLink(runtime: CameraRuntime) {
                             onLocalDay={galleryLocalDay=it},
                             state=gridState,
                             selection=selection,
+                            previewId=if(splitGallery)viewer else null,
+                            onOverlayChanged={galleryOverlayOpen=it},
                             selecting=gallerySelecting,
                             needsCheck=selectionNeedsCheck,
                             onSelecting={gallerySelecting=it},
                             onRecheck=::continueSelection,
                             onSource = {
+                                viewer=null
                                 gallerySelecting=false
                                 source = it
                                 if(it=="camera"&&selection.any{id->photoIndex[id]?.source==PhotoSource.CAMERA.name&&id !in cameraIds})selectionNeedsCheck=true
@@ -477,6 +528,7 @@ fun FrameLink(runtime: CameraRuntime) {
                                 else if(validSelection()){
                                     runtime.enqueueDownload(selection.filter { id -> photoIndex[id]?.source==PhotoSource.CAMERA.name }, format)
                                     gallerySelecting=false
+                                    viewer=null
                                     tab=Tab.TRANSFERS
                                 }
                             },
@@ -504,6 +556,15 @@ fun FrameLink(runtime: CameraRuntime) {
                                 if (chosen.isNotEmpty()&&(selection.isEmpty()||validSelection())) newReviewPhotos = chosen.map { it.id }
                             },
                         )
+                        }
+                        if(splitGallery)Box(Modifier.weight(1f).fillMaxHeight().padding(12.dp).clip(RoundedCornerShape(24.dp)).background(Color(0xff111318)).testTag("gallery-preview-pane")){
+                            if(viewer!=null)currentPhotoViewer(true)
+                            else Column(Modifier.align(Alignment.Center).padding(24.dp),horizontalAlignment=Alignment.CenterHorizontally){
+                                Icon(Icons.Outlined.Collections,null,tint=Color.White.copy(alpha=.6f),modifier=Modifier.size(42.dp))
+                                Text("点选照片查看大图",color=Color.White.copy(alpha=.8f),modifier=Modifier.padding(top=16.dp))
+                            }
+                        }
+                    }
                     Tab.PROJECTS ->
                         ProjectHub(
                             runtime,
@@ -523,6 +584,7 @@ fun FrameLink(runtime: CameraRuntime) {
                             onFtpClient = { ensureNetwork { sheet = Sheet.FTP_CLIENT } },
                         )
                 }}
+                }
             }
         }
         when (sheet) {
@@ -550,6 +612,7 @@ fun FrameLink(runtime: CameraRuntime) {
                     onClose = { sheet = null },
                     onSelect = {
                         runtime.uploadPreviews(selection, it)
+                        viewer=null
                         selection = arrayListOf()
                         sheet = null
                         tab = Tab.TRANSFERS
@@ -591,7 +654,7 @@ fun FrameLink(runtime: CameraRuntime) {
         )
         if (savingSelection) SaveSelectionDialog(runtime, selection,
             onClose = { savingSelection = false },
-            onSaved = { savingSelection = false; gallerySelecting=false; savedBatchId = it.id; tab = Tab.PROJECTS },
+            onSaved = { savingSelection = false; gallerySelecting=false;viewer=null; savedBatchId = it.id; tab = Tab.PROJECTS },
         )
         savedBatchId?.let { id ->
             SavedSelectionScreen(runtime, id, photos,
@@ -608,37 +671,8 @@ fun FrameLink(runtime: CameraRuntime) {
                 },
             )
         }
-        photos
-            .find { it.id == viewer }
-            ?.let { photo ->
-                PhotoViewer(
-                    runtime,
-                    photo,
-                    onClose = { viewer = null },
-                    onRemove = { removing = listOf(photo.id) },
-                    selected = photo.id in selection,
-                    cameraConnected = camera.info != null,
-                    resourceConfirmed=photo.source!=PhotoSource.CAMERA.name||photo.id in cameraIds,
-                    canDownload=camera.info?.canDownload==true,
-                    neighbors=viewerIds.mapNotNull(photoIndex::get).takeIf{list->list.any{it.id==photo.id}}?:listOf(photo),
-                    onNavigate={viewer=it},
-                    canLoadMore=viewerAutoLoad&&viewerContext==galleryContext()&&source=="camera"&&filter!="picked"&&cameraHasMore,
-                    loadingMore=camera.loadingPhotos,
-                    onNeedMore={if(runtime.galleryError.value.isBlank())runtime.loadPhotos()},
-                    onSelect = { togglePhoto(photo.id) },
-                    onMark = { mark ->
-                        val previous = photo.mark
-                        runtime.mark(photo, mark)
-                        scope.launch {
-                            if (
-                                snackbar.showSnackbar("收藏已更新", "撤销", duration = SnackbarDuration.Short) ==
-                                    SnackbarResult.ActionPerformed
-                            )
-                                runtime.mark(photo, PhotoMark.valueOf(previous))
-                        }
-                    },
-                )
-            }
+        val galleryBlockingOverlay=tab==Tab.GALLERY&&(savingSelection||compare||galleryOverlayOpen||sheet!=null||localReview!=null||newReviewPhotos.isNotEmpty())
+        if(!splitGallery&&!galleryBlockingOverlay)currentPhotoViewer(false)
         if (removing.isNotEmpty())
             PhotoRemovalDialog(
                 runtime, removing,
@@ -1113,6 +1147,8 @@ private fun Gallery(
     onLocalDay:(String)->Unit,
     state: LazyGridState,
     selection: List<String>,
+    previewId:String?=null,
+    onOverlayChanged:(Boolean)->Unit={},
     selecting: Boolean,
     needsCheck: Boolean,
     onSelecting: (Boolean) -> Unit,
@@ -1133,6 +1169,7 @@ private fun Gallery(
     onUpload: () -> Unit,
     onReview: (List<Photo>) -> Unit,
 ) {
+    BoxWithConstraints(Modifier.fillMaxSize()){
     var download by remember { mutableStateOf(false) }
     var moreSelection by remember { mutableStateOf(false) }
     var bursts by rememberSaveable { mutableStateOf(false) }
@@ -1141,8 +1178,9 @@ private fun Gallery(
     var choosingFilter by remember { mutableStateOf(false) }
     var libraryMore by remember { mutableStateOf(false) }
     var clearSelection by remember { mutableStateOf(false) }
-    val windowWidth=androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
-    val columns=if(layout==GalleryLayout.LIST)1 else if(windowWidth<600)layout.columns else (windowWidth/when(layout){GalleryLayout.SMALL->84;GalleryLayout.MEDIUM->132;else->200}).coerceAtLeast(layout.columns)
+    val configuredWidth=androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    val paneWidth=maxWidth.value.toInt()
+    val columns=galleryColumnCount(paneWidth,layout,adaptive=configuredWidth>=600)
     val scope = rememberCoroutineScope()
     var bulkSelection by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val hasMore by runtime.galleryHasMore.collectAsStateWithLifecycle()
@@ -1153,7 +1191,7 @@ private fun Gallery(
     val listedIds by runtime.currentCameraIds.collectAsStateWithLifecycle()
     val availableDays by runtime.captureDates.collectAsStateWithLifecycle()
     val chosenDay = if (source == "camera") cameraDay else localDay
-    val dragContext = "$source:$filter:$bursts:$chosenDay:${layout.key}:${if (source == "camera") camera.info?.id.orEmpty() else ""}"
+    val dragContext = "$source:$filter:$bursts:$chosenDay:${layout.key}:$columns:${if (source == "camera") camera.info?.id.orEmpty() else ""}"
     var dragGroups by remember(dragContext) { mutableStateOf<List<List<Photo>>?>(null) }
     var dragHadScopeNote by remember { mutableStateOf(false) }
     var choosingDay by remember { mutableStateOf(false) }
@@ -1208,8 +1246,12 @@ private fun Gallery(
         if (bursts) photos.groupBy { it.burstKey.ifBlank { it.id } }.values.toList()
         else photos.map { listOf(it) }
     val displayedGroups = dragGroups ?: groups
-    LaunchedEffect(source, chosenDay, filter, camera.info?.id) { state.scrollToItem(0) }
-    LaunchedEffect(source, camera.info?.id, chosenDay, filter, layout, hasMore, camera.loadingPhotos, photos.size, bulkSelection, dragGroups != null, pageError) {
+    SideEffect{onOverlayChanged(download||moreSelection||choosingLayout||choosingFilter||libraryMore||clearSelection||choosingDay||bulkSelection!=null||burst!=null)}
+    DisposableEffect(Unit){onDispose{onOverlayChanged(false)}}
+    val scrollContext="$source:$chosenDay:$filter:${camera.info?.id.orEmpty()}"
+    var appliedScrollContext by rememberSaveable{mutableStateOf(scrollContext)}
+    LaunchedEffect(scrollContext) { if(appliedScrollContext!=scrollContext){state.scrollToItem(0);appliedScrollContext=scrollContext} }
+    LaunchedEffect(source, camera.info?.id, chosenDay, filter, layout, columns, hasMore, camera.loadingPhotos, photos.size, bulkSelection, dragGroups != null, pageError) {
         if (source == "camera" && camera.info != null && filter != "picked" && hasMore &&
             !camera.loadingPhotos && bulkSelection == null && dragGroups == null && pageError.isBlank()) {
             if (photos.isEmpty()) runtime.loadPhotos().join()
@@ -1331,7 +1373,7 @@ private fun Gallery(
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 items(displayedGroups, key = { it.first().id }) { group ->
-                    GalleryMediaItem(runtime, group, selectionSet, layout == GalleryLayout.LIST, layout == GalleryLayout.SMALL, selecting=selecting,
+                    GalleryMediaItem(runtime, group, selectionSet, layout == GalleryLayout.LIST, layout == GalleryLayout.SMALL, selecting=selecting,previewing=group.any{it.id==previewId},
                         onOpen = { follow = false; runtime.settings.put("gallery.follow","false"); if(selecting){val ids=group.map{it.id}.toSet();onSelectionChange((if(group.all{it.id in selectionSet})selectionSet-ids else selectionSet+ids).toList())} else if(group.size>1) burst=group else {scopedBurstViewer=false;onViewerScope(photos.map{it.id},true);onOpen(group.first())} },
                         onSelection = onSelectionChange)
                 }
@@ -1499,6 +1541,7 @@ private fun Gallery(
                 }
             }
         }
+    }
     }
 }
 
@@ -2615,6 +2658,7 @@ private fun SettingsSheet(runtime: CameraRuntime, onClose: () -> Unit, onCloud: 
 private fun PhotoViewer(
     runtime: CameraRuntime,
     photo: Photo,
+    embedded:Boolean=false,
     onClose: () -> Unit,
     onRemove: () -> Unit,
     selected: Boolean,
@@ -2730,13 +2774,13 @@ private fun PhotoViewer(
     }
     val glass = remember { HazeState() }
     DarkScene {
-        FullScreenScene(onClose) {
-            DarkDialogBars()
+        PhotoViewerScene(embedded,onClose) {
+            if(!embedded)DarkDialogBars()
             if (filesInfo) PhotoFilesDialog(photo) { filesInfo = false }
             if(importingCurrent)AlertDialog(onDismissRequest={importingCurrent=false},title={Text("导入当前照片")},text={Column{
                 DownloadFormat.entries.forEach{format->TextButton(enabled=photo.downloadFiles(format).any{it.savedUri.isBlank()},onClick={runtime.enqueueDownload(listOf(photo.id),format);runtime.notice.value="已加入导入队列，可在传输页查看";importingCurrent=false;onClose()}){Text(when(format){DownloadFormat.JPEG->"JPEG / HEIF";DownloadFormat.RAW->"RAW原片";DownloadFormat.ALL->"全部文件"})}}
             }},confirmButton={},dismissButton={TextButton(onClick={importingCurrent=false}){Text("取消")}})
-            Box(Modifier.fillMaxSize().background(Color(0xff111318)).padding(dialogSafePadding())) {
+            Box(Modifier.fillMaxSize().background(Color(0xff111318)).padding(if(embedded)PaddingValues(0.dp)else dialogSafePadding())) {
                 Box(
                     Modifier.fillMaxSize()
                         .clipToBounds()
@@ -2896,28 +2940,11 @@ private fun ComparePhotos(runtime: CameraRuntime, photos: List<Photo>, selection
                         Icon(Icons.Outlined.Close, "关闭对比", tint = Color.White)
                     }
                 }
-                photos.forEach { photo ->
-                    Column(Modifier.weight(1f).fillMaxWidth().padding(vertical = 8.dp)) {
-                        PhotoThumbnail(
-                            runtime,
-                            photo,
-                            Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(14.dp)),
-                            contentScale = ContentScale.Fit,
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                photo.name,
-                                color = Color(0xffa0a8b5),
-                                fontSize = 10.sp,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(onClick = { onSelect(photo) }) {
-                                Text(
-                                    if (photo.id in selection) "已选择" else "选择这张",
-                                    fontSize = 11.sp,
-                                )
-                            }
-                        }
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()){
+                    if(maxWidth>=600.dp&&maxWidth>maxHeight)Row(Modifier.fillMaxSize()){
+                        photos.forEach{photo->ComparisonPhoto(runtime,photo,photo.id in selection,{onSelect(photo)},Modifier.weight(1f).fillMaxHeight())}
+                    }else Column(Modifier.fillMaxSize()){
+                        photos.forEach{photo->ComparisonPhoto(runtime,photo,photo.id in selection,{onSelect(photo)},Modifier.weight(1f).fillMaxWidth())}
                     }
                 }
                 Info("对比画面可能为相机预览，原片细节请下载后查看。")

@@ -17,7 +17,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import java.io.File
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
@@ -38,6 +40,7 @@ class PhysicalCoreUiAcceptanceTest {
         runCatching { UiAutomation::class.java.getMethod("clearCache") }.getOrNull()
     }
     private val windowFlags = mutableListOf<Pair<android.view.Window, Boolean>>()
+    private var touchWindowId: Int? = null
 
     @After fun restoreScreenPolicy() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
@@ -100,14 +103,27 @@ class PhysicalCoreUiAcceptanceTest {
             val firstPage = runBlocking { runtime.database.photos().observe().first().filter { it.id in runtime.currentCameraIds.value } }
             val latestId = firstPage.first().id
             var scrolls = 0
-            while (runtime.galleryHasMore.value && scrolls++ < 100) {
+            while (runtime.galleryHasMore.value && runtime.currentCameraIds.value.size <= firstPage.size && scrolls++ < 24) {
                 nodes().filter { it.isScrollable }.maxByOrNull {
                     Rect().also(it::getBoundsInScreen).height()
                 }?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
                 SystemClock.sleep(250)
                 waitFor(30000) { !runtime.camera.value.loadingPhotos }
             }
-            assertFalse("滑到底应自动补齐相机列表", runtime.galleryHasMore.value)
+            val paginationCount = runtime.currentCameraIds.value.size
+            assertTrue("接近底部应自动读取后续页面", !runtime.galleryHasMore.value || paginationCount > firstPage.size)
+            val expanded = runBlocking { runtime.database.photos().observe().first().filter { it.id in runtime.currentCameraIds.value } }
+            assertEquals("后续页面不能插入更新照片", latestId, expanded.first().id)
+            runtime.browseRecent()
+            waitFor(90000) { runtime.currentCameraIds.value.isNotEmpty() && !runtime.camera.value.loadingPhotos && runtime.galleryDay.value == runtime.captureDates.value.firstOrNull().orEmpty() }
+            scrolls = 0
+            while (runtime.galleryHasMore.value && scrolls++ < 100) {
+                nodes().filter { it.isScrollable }.maxByOrNull { Rect().also(it::getBoundsInScreen).height() }
+                    ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                SystemClock.sleep(250)
+                waitFor(30000) { !runtime.camera.value.loadingPhotos }
+            }
+            assertFalse("当前日期读完应停止加载", runtime.galleryHasMore.value)
             val page = runBlocking { runtime.database.photos().observe().first().filter { it.id in runtime.currentCameraIds.value } }
             assertTrue(page.size >= 2)
             assertEquals("后续页面不能插入更新照片", latestId, page.first().id)
@@ -175,7 +191,8 @@ class PhysicalCoreUiAcceptanceTest {
             report("core-ui.json", JSONObject().put("camera", "ILCE-7CM2").put("firmware", runtime.camera.value.info!!.firmware)
                 .put("listed", page.size).put("selected", 2).put("dragSelection", true).put("downloadedBytes", File(output.originalPath).length())
                 .put("preexistingOriginalsVerified", hashes.size).put("batchPages", sheets.size).put("reconnect", true)
-                .put("firstPageCount", firstPage.size).put("automaticPagination", page.size > firstPage.size)
+                .put("firstPageCount", firstPage.size).put("paginationListed", paginationCount).put("automaticPagination", paginationCount > firstPage.size)
+                .put("endScope", runtime.galleryDay.value).put("endScopeHasMore", false)
                 .put("newestFirst", true).put("firstPhoto", first.name)
                 .put("directReconnect", true).put("layoutsPreserveSelection", GalleryLayout.entries.map { it.key }))
         } finally {
@@ -195,7 +212,7 @@ class PhysicalCoreUiAcceptanceTest {
         val previousSingle = runtime.settings.get("capture.single")
         val previousImport = runtime.settings.get("capture.auto_import")
         val before = runtime.native.newestPage(1, "", 0).items.map { it.id }.toSet()
-        val drive = runtime.native.properties().firstOrNull { it.code == 0x5013 }?.value
+        val drive = runtime.native.shootingState().takeIf { it.has("driveMode") }?.getLong("driveMode")
         report("capture-before.json", JSONObject().put("driveBefore", drive).put("autoImport", false).put("newShotLimit", 1))
         val previousPhoto = runtime.lastCapture.value
         try {
@@ -219,7 +236,8 @@ class PhysicalCoreUiAcceptanceTest {
             val shutterMs = SystemClock.elapsedRealtime() - started
             assertFalse("默认拍摄不能启动原片接收", runtime.postCaptureBusy.value)
             assertEquals(previousPhoto, runtime.lastCapture.value)
-            val afterDrive = runtime.native.properties().firstOrNull { it.code == 0x5013 }?.value
+            val afterDrive = runtime.native.shootingState().takeIf { it.has("driveMode") }?.getLong("driveMode")
+            assertNotNull("机身需提供可独立核对的驱动状态", drive)
             assertEquals("拍摄完成后应恢复机身驱动模式", drive, afterDrive)
             clickDescription("查看相机照片")
             waitFor(90000) { runtime.currentCameraIds.value.isNotEmpty() && !runtime.camera.value.loadingPhotos }
@@ -328,10 +346,88 @@ class PhysicalCoreUiAcceptanceTest {
         }
     }
 
+    @Test fun measurePreviewReceptionAndNetworkWithoutCapture() {
+        connect()
+        try {
+            clickText("取景拍摄")
+            waitFor(30000) { runtime.frame.value?.isNotEmpty() == true }
+            var frames = 0
+            var bytes = 0L
+            val started = SystemClock.elapsedRealtime()
+            runBlocking {
+                withTimeoutOrNull(4000) { runtime.frame.collect { value -> if (value != null) { frames++; bytes += value.size } } }
+            }
+            val elapsed = SystemClock.elapsedRealtime() - started
+            val host = runtime.savedConnection().host
+            check(android.util.Patterns.IP_ADDRESS.matcher(host).matches())
+            val ping = android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("ping -c 5 -W 1 $host")).use { it.bufferedReader().readText() }
+            val rtt = ping.lineSequence().firstOrNull { it.contains("min/avg/max") }.orEmpty().substringAfter("=", "").trim()
+            report("preview-network.json", runtime.native.shootingState().put("receivedFrames", frames).put("sampleMs", elapsed)
+                .put("receivedFps", frames*1000.0/elapsed).put("jpegMbps", bytes*8.0/elapsed/1000)
+                .put("pingSummary", rtt).put("endToEndLatencyMeasured", false))
+            clickDescription("返回相机")
+        } finally { runtime.stopLive() }
+    }
+
+    @Test fun recoverPendingFilesWithoutTakingPhoto() {
+        connect()
+        val before = runtime.native.shootingState()
+        report("pending-before.json", before)
+        runBlocking { runtime.receivePendingCaptures().join() }
+        runtime.native.configureCaptureStorage(false)
+        val after = runtime.native.shootingState()
+        report("pending-after.json", after.put("shutterTriggered", false))
+        assertEquals("仅拍照应使用相机存储卡", 0x10L, after.getLong("storeDestination"))
+        assertEquals("机身待传队列仍有文件", 0, after.optInt("pendingCount"))
+    }
+
+    @Test fun focusTargetsDoNotFireShutter() {
+        connect()
+        val before = runtime.native.newestPage(1, "", 0).items.map { it.id }.toSet()
+        try {
+            clickText("取景拍摄")
+            waitFor(30000) { runtime.frame.value?.isNotEmpty() == true }
+            dismissFullscreenEducation()
+            fun saveFrame(name: String, x: Float? = null, y: Float? = null) {
+                File(app.getExternalFilesDir(null), "physical-read/$name.jpg").apply { parentFile!!.mkdirs() }.writeBytes(runtime.frame.value!!)
+                report("$name.json", runtime.native.shootingState().put("requestedX", x).put("requestedY", y))
+            }
+            saveFrame("focus-scene")
+            val arguments = InstrumentationRegistry.getArguments()
+            for ((index, key) in listOf("focusNear", "focusFar").withIndex()) {
+                val point = arguments.getString(key)?.split(',')?.map { it.toFloat() } ?: continue
+                val node = findDescription("取景画面，点按对焦") ?: error("取景画面不可见")
+                val bounds = Rect().also(node::getBoundsInScreen)
+                val dimensions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                val frame = runtime.frame.value!!; BitmapFactory.decodeByteArray(frame, 0, frame.size, dimensions)
+                val scale = minOf(bounds.width().toFloat()/dimensions.outWidth, bounds.height().toFloat()/dimensions.outHeight)
+                val width = dimensions.outWidth*scale; val height = dimensions.outHeight*scale
+                val x = bounds.left + (bounds.width()-width)/2 + width*point[0]
+                val y = bounds.top + (bounds.height()-height)/2 + height*point[1]
+                touchWindowId = node.windowId
+                val started = SystemClock.uptimeMillis()
+                for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                    val event = MotionEvent.obtain(started, SystemClock.uptimeMillis(), action, x, y, 0)
+                    event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                    try { assertTrue(dispatch(event)) } finally { event.recycle() }
+                    SystemClock.sleep(60)
+                }
+                waitFor(2000) { runtime.focusBusy.value }
+                waitFor(12000) { !runtime.focusBusy.value }
+                SystemClock.sleep(600)
+                saveFrame("focus-target-${index+1}", point[0], point[1])
+            }
+            assertEquals("点按对焦不能触发拍摄", before, runtime.native.newestPage(1, "", 0).items.map { it.id }.toSet())
+            clickDescription("返回相机")
+        } finally { runtime.stopLive(); touchWindowId = null }
+    }
+
     private fun appRoot(): AccessibilityNodeInfo? {
         if (appTouch) {
-            val focused = automation.windows.firstOrNull { it.isFocused }?.root
-            if (focused != null) return focused.takeIf { it.packageName == app.packageName }
+            automation.windows.sortedByDescending { it.layer }.forEach { window ->
+                if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION)
+                    window.root?.takeIf { it.packageName == app.packageName }?.let { return it }
+            }
         }
         return automation.rootInActiveWindow?.takeIf { it.packageName == app.packageName }
     }
@@ -470,9 +566,15 @@ class PhysicalCoreUiAcceptanceTest {
         if (!appTouch) return automation.injectInputEvent(motion, true)
         var dispatched = false
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            val root = checkNotNull(WindowInspector.getGlobalWindowViews().lastOrNull {
+            val candidates = WindowInspector.getGlobalWindowViews().filter {
                 it.hasWindowFocus() && it.isShown && it.isAttachedToWindow && it.context.applicationContext.packageName == app.packageName
-            }) { "光屿窗口未聚焦，停止应用内触控" }
+            }
+            val root = checkNotNull(candidates.lastOrNull { view ->
+                val node = view.createAccessibilityNodeInfo()
+                val matches = node?.windowId == touchWindowId
+                node?.recycle()
+                matches
+            } ?: candidates.lastOrNull()) { "光屿窗口未聚焦，停止应用内触控" }
             val origin = IntArray(2).also(root::getLocationOnScreen)
             val local = MotionEvent.obtain(motion)
             try {

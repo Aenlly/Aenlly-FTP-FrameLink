@@ -4,7 +4,7 @@
 
 카메라에 연결하고, 사진을 살펴보고, 필요한 사진만 가져옵니다. FrameLink는 Aenlly-FTP를 바탕으로 FTP 전송을 유지하면서 무선 라이브 뷰, 현장 사진 선택, 선택형 클라우드 납품 기능을 개발하는 오픈 소스 앱입니다.
 
-**개발 프리뷰: Android 0.1.8 / iOS 0.1.6** · Android 17 지원（최소 8.0） · iOS 17 이상 프로젝트 · GPL-3.0
+**개발 프리뷰: Android 0.1.11 / iOS 0.1.6** · Android 17 지원（최소 8.0） · iOS 17 이상 프로젝트 · GPL-3.0
 
 ## 화면
 | 카메라 | 갤러리 | 사진 보기 |
@@ -12,6 +12,8 @@
 | ![카메라](docs/images/home.png) | ![갤러리](docs/images/gallery.png) | ![사진 보기](docs/images/viewer.png) |
 
 Android 에뮬레이터 화면이며 사용 허가를 받은 샘플 사진을 사용했습니다. [사진 출처와 화면 검증](docs/VISUAL_QA.md)
+
+![가로 뷰파인더와 설정 바 (카메라 통신 시뮬레이터)](docs/images/live-landscape.png)
 
 ## 주요 기능
 - **카메라**: 연결 정보 저장, 최초 지문 확인, 메모리 카드 탐색, 원본 다운로드, 지원 기종의 라이브 뷰와 원격 제어. Android에서는 화면을 눌러 초점을 맞추며 촬영 후 자동 가져오기는 기본으로 꺼져 있습니다.
@@ -42,7 +44,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android 결과물: `artifacts/FrameLink-0.1.8-debug.apk`. iPhone용 IPA는 다시 서명해야 합니다. [설치 안내](ios/INSTALL.md). 시뮬레이터 파일은 별도로 제공됩니다. 현재 앱의 표시 언어는 중국어입니다. [Android](android/README.md) · [iOS](ios/README.md) · [서버](cloud/README.md) · [웹](web/README.md)
+Android 결과물: `artifacts/FrameLink-0.1.11-debug.apk`. iPhone용 IPA는 다시 서명해야 합니다. [설치 안내](ios/INSTALL.md). 시뮬레이터 파일은 별도로 제공됩니다. 현재 앱의 표시 언어는 중국어입니다. [Android](android/README.md) · [iOS](ios/README.md) · [서버](cloud/README.md) · [웹](web/README.md)
 
 ## 기여
 기종 호환성, 재현 가능한 오류, 사용성 의견을 환영합니다. 휴대전화 OS, 카메라 모델과 펌웨어, 연결 방식, 재현 단계를 적어 주세요. 비밀번호나 개인 원본 사진은 올리지 마세요.

@@ -4,7 +4,7 @@
 
 连接相机、看图选片、按需导入。FrameLink是从Aenlly-FTP继续开发的开源相机助手，保留FTP收发，也提供无线取景、客户现场选片和可选的云端交付。
 
-**Android 0.1.8／iOS 0.1.6 开发预览** · Android 17适配（最低8.0） · iOS 17+工程 · GPL-3.0
+**Android 0.1.11／iOS 0.1.6 开发预览** · Android 17适配（最低8.0） · iOS 17+工程 · GPL-3.0
 
 ## 看看界面
 | 相机 | 图库 | 大图 |
@@ -12,6 +12,8 @@
 | ![相机](docs/images/home.png) | ![图库](docs/images/gallery.png) | ![大图](docs/images/viewer.png) |
 
 截图来自Android模拟器，使用已授权样片；[素材与视觉检查](docs/VISUAL_QA.md)。
+
+![横屏取景与参数带（协议模拟画面）](docs/images/live-landscape.png)
 
 ## 能做什么
 - **相机**：记住连接信息，首次确认相机指纹；浏览卡内照片、下载原片、取景和遥控，按机身能力开放。 Android点按画面对焦，拍后导入默认关闭。
@@ -42,7 +44,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android输出：`artifacts/FrameLink-0.1.8-debug.apk`。iOS脚本构建模拟器App，iPhone可通过自签工具安装IPA，见[试装说明](ios/INSTALL.md)。[Android](android/README.md) · [iOS](ios/README.md) · [云服务](cloud/README.md) · [客户网页](web/README.md)
+Android输出：`artifacts/FrameLink-0.1.11-debug.apk`。iOS脚本构建模拟器App，iPhone可通过自签工具安装IPA，见[试装说明](ios/INSTALL.md)。[Android](android/README.md) · [iOS](ios/README.md) · [云服务](cloud/README.md) · [客户网页](web/README.md)
 
 ## 一起开发
 欢迎报告机型兼容、传输问题和不好用的地方。请附手机系统、相机型号与固件、连接方式、复现步骤；不要上传密码或客户原片。

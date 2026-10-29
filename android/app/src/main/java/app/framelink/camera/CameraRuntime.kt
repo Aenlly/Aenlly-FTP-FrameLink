@@ -18,9 +18,11 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -86,6 +88,7 @@ class CameraRuntime(
     private var captureJob: Job? = null
     private var postCaptureJob: Job? = null
     private var focusJob: Job? = null
+    private val pendingFocus = AtomicReference<Pair<Float, Float>?>(null)
     private var galleryRefreshJob: Job? = null
     private val connectionGeneration = AtomicLong()
     val cameraIdentityPrompt = MutableStateFlow<CameraIdentityPrompt?>(null)
@@ -229,6 +232,9 @@ class CameraRuntime(
                 }
                 val info = native.connect(config)
                 val choices = native.properties()
+                if (info.canCapture) runCatching {
+                    native.configureCaptureStorage(settings.get("capture.auto_import") == "true")
+                }.onFailure { notice.value = "已连接，但保存位置未能确认；拍摄前请检查机身遥控拍摄设置" }
                 val dates = runCatching { native.dates(1) }.getOrDefault(emptyList())
                 synchronized(this@CameraRuntime) {
                     if (connectionGeneration.get() != generation) return@launch
@@ -274,6 +280,9 @@ class CameraRuntime(
 
     @Synchronized
     fun disconnect() {
+        pendingFocus.set(null)
+        focusJob?.cancel()
+        focusJob = null
         galleryRefreshJob?.cancel()
         galleryRefreshJob = null
         connectionMonitor?.cancel()
@@ -1044,7 +1053,7 @@ class CameraRuntime(
         val receive = settings.get("capture.auto_import") == "true"
         captureBusy.value = true
         val job =
-            scope.launch {
+            scope.launch(Dispatchers.Main.immediate) {
                 try {
                     for (left in seconds downTo 1) {
                         captureCountdown.value = left
@@ -1053,7 +1062,7 @@ class CameraRuntime(
                     captureCountdown.value = 0
                     focusJob?.join()
                     android.util.Log.i("FrameLink", "Capture shutter started; single=${settings.get("capture.single") != "false"}, autoImport=$receive")
-                    val result = native.capturePhoto(settings.get("capture.single") != "false", receive)
+                    val result = withContext(Dispatchers.IO) { native.capturePhoto(settings.get("capture.single") != "false", receive) }
                     if (generation != connectionGeneration.get()) return@launch
                     android.util.Log.i("FrameLink", "Capture shutter released")
                     notice.value = result.optString("warning").ifBlank {
@@ -1061,8 +1070,8 @@ class CameraRuntime(
                     }
                     if (receive) {
                         postCaptureBusy.value = true
-                        postCaptureJob = scope.launch {
-                            try { receiveCapturedPhoto(generation) }
+                        postCaptureJob = scope.launch(Dispatchers.Main.immediate) {
+                            try { withContext(Dispatchers.IO) { receiveCapturedPhoto(generation) } }
                             catch (error: Exception) {
                                 if (generation == connectionGeneration.get()) notice.value = "拍后接收未完成，请在相机核对照片；无需连续重拍"
                                 android.util.Log.w("FrameLink", "Post-capture receive failed", error)
@@ -1085,7 +1094,7 @@ class CameraRuntime(
     }
 
     /** 接收是独立步骤，不让文件传输占用快门的拍摄中状态 */
-    private suspend fun receiveCapturedPhoto(generation: Long) {
+    private suspend fun receiveCapturedPhoto(generation: Long): Boolean {
         val target = File(context.filesDir, "media/capture/${UUID.randomUUID()}.part-image")
         try {
             val post = native.fetchCaptured(target)
@@ -1097,7 +1106,7 @@ class CameraRuntime(
                         check(target.renameTo(it)) { "拍后文件保存失败" }
                     }
                     else
-                        File(context.cacheDir, "previews/${target.name}.jpg").apply {
+                        File(context.filesDir, "media/capture-previews/${UUID.randomUUID()}-${File(name).name}").apply {
                             parentFile!!.mkdirs()
                             check(target.renameTo(this)) { "预览暂存失败" }
                         }
@@ -1128,11 +1137,15 @@ class CameraRuntime(
                         published = uri.startsWith("content:"),
                     )
                 database.photos().save(photo)
-                if (generation == connectionGeneration.get()) lastCapture.value = photo
-                if (generation == connectionGeneration.get()) notice.value = if (original) "拍摄结果已导入" else "拍后预览已就绪，原片可从相机图库导入"
+                withContext(Dispatchers.Main.immediate) {
+                    if (generation == connectionGeneration.get()) lastCapture.value = photo
+                    if (generation == connectionGeneration.get()) notice.value = if (original) "拍摄结果已导入" else "拍后预览已就绪，原片可从相机图库导入"
+                }
+                return true
             } else if (generation == connectionGeneration.get()) {
-                notice.value = "快门指令已完成；机身未提供拍后文件，可到相机图库刷新查看"
+                notice.value = "机身暂无已就绪的待传文件，可稍后从相机图库导入"
             }
+            return false
         } finally {
             File(target.path + ".part").delete()
         }
@@ -1140,23 +1153,98 @@ class CameraRuntime(
 
     suspend fun awaitPhotoWork() { captureJob?.join(); postCaptureJob?.join(); focusJob?.join() }
 
+    suspend fun setCaptureImport(receive: Boolean): Boolean = withContext(Dispatchers.IO) {
+        try {
+            if (mutableCamera.value.info != null) native.configureCaptureStorage(receive)
+            settings.put("capture.auto_import", receive.toString())
+            true
+        } catch (error: Exception) {
+            notice.value = error.message ?: "保存位置未能确认，请在机身核对"
+            false
+        }
+    }
+
+    /** 只接收已存在的机身待传文件，不触发拍摄、不删除相机原片 */
+    @Synchronized
+    fun receivePendingCaptures(): Job {
+        postCaptureJob?.takeIf { it.isActive }?.let { return it }
+        captureJob?.takeIf { it.isActive }?.let { notice.value = "请等当前拍摄完成"; return it }
+        val generation = connectionGeneration.get()
+        postCaptureBusy.value = true
+        val job = scope.launch {
+            var count = 0
+            var waiting = 0
+            try {
+                while (count < 32 && generation == connectionGeneration.get()) {
+                    val state = native.shootingState()
+                    check(state.optBoolean("pendingStatusKnown")) { "机身待传状态未能确认，暂不操作待传文件" }
+                    if (!state.optBoolean("pendingReady")) {
+                        if (state.optInt("pendingCount") > 0 && waiting++ < 10) { delay(300); continue }
+                        break
+                    }
+                    waiting = 0
+                    if (!receiveCapturedPhoto(generation)) break
+                    count++
+                    notice.value = "已接收 $count 个待传文件"
+                }
+                if (generation == connectionGeneration.get()) {
+                    val state = native.shootingState()
+                    check(state.optBoolean("pendingStatusKnown")) { "机身剩余待传状态未能确认" }
+                    val remaining = state.optInt("pendingCount")
+                    notice.value = if (remaining > 0) "已接收 $count 个文件，机身还有 $remaining 个待传文件，稍后可继续接收"
+                        else "待传文件已接收，请在机身确认写入状态"
+                }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (generation == connectionGeneration.get()) notice.value = "待传文件接收未完成；已保存的副本会保留，请勿重复拍摄"
+                android.util.Log.w("FrameLink", "Pending camera file recovery failed", error)
+            } finally { if (generation == connectionGeneration.get()) postCaptureBusy.value = false }
+        }
+        postCaptureJob = job
+        return job
+    }
+
     @Synchronized
     fun focusAt(x: Float, y: Float): Job {
+        pendingFocus.set(x to y)
         focusJob?.takeIf { it.isActive }?.let { return it }
         val generation = connectionGeneration.get()
         focusBusy.value = true
-        val job = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            val self = coroutineContext[Job]
             try {
-                native.focusAt(x, y)
-                android.util.Log.i("FrameLink", "Touch focus accepted")
-            } catch (error: Exception) {
-                if (generation == connectionGeneration.get()) notice.value =
-                    if (error.message?.contains("ptpip:") == true) "相机未接受点按对焦，请检查机身触摸对焦设置"
-                    else error.message ?: "对焦未完成，请在相机核对"
-                android.util.Log.w("FrameLink", "Touch focus failed", error)
-            } finally { if (generation == connectionGeneration.get()) focusBusy.value = false }
+                while (isActive && generation == connectionGeneration.get()) {
+                    val point = synchronized(this@CameraRuntime) {
+                        pendingFocus.getAndSet(null).also {
+                            if (it == null && focusJob == self) { focusJob = null; focusBusy.value = false }
+                        }
+                    } ?: break
+                    try {
+                        val previousArea = properties.value.firstOrNull { it.code == 0xD22C }?.value
+                        native.focusAt(point.first, point.second)
+                        val updated = native.properties()
+                        if (generation == connectionGeneration.get()) {
+                            properties.value = updated
+                            if (previousArea != updated.firstOrNull { it.code == 0xD22C }?.value)
+                                notice.value = "已使用点对焦，可在专业工具中更改对焦区域"
+                        }
+                        android.util.Log.i("FrameLink", "Touch focus position and AF pulse completed")
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                        if (generation == connectionGeneration.get()) notice.value =
+                            if (error.message?.contains("ptpip:") == true) "相机未接受点按对焦，请检查机身触摸对焦设置"
+                            else error.message ?: "对焦未完成，请在相机核对"
+                        android.util.Log.w("FrameLink", "Touch focus failed", error)
+                    }
+                }
+            } finally {
+                synchronized(this@CameraRuntime) {
+                    if (focusJob == self) { focusJob = null; focusBusy.value = false }
+                }
+            }
         }
         focusJob = job
+        job.start()
         return job
     }
 

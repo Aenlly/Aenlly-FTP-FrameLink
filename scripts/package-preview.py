@@ -11,7 +11,7 @@ import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-version='0.1.8'
+version='0.1.11'
 ios_version='0.1.6'
 checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-instrument-ui','android-instrument-gallery','android-instrument-usability','android-instrument-live','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark','ios','ios-core','ios-ui','ios-device']
 for name in checks:
@@ -68,6 +68,8 @@ if evidence.exists():
     verified=json.loads(evidence.read_text())
     if verified.get('apkSha256')==result['apkSha256']: result['hardwareEvidence']=verified
 result['sourceArchiveSha256']=hashlib.sha256(source.read_bytes()).hexdigest()
+result['sourceCommit']=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
+result['sourceWorktreeDirty']=bool(subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True).strip())
 result['elf16KBAlignment']=True
 alias=artifacts/f'FrameLink-{version}-glass-{datetime.datetime.now().strftime("%Y%m%d-%H%M")}-debug.apk'
 shutil.copyfile(apk,alias)

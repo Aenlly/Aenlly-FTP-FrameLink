@@ -1,6 +1,6 @@
 # 协作审阅指南
 
-本分支为光屿Android 0.1.8／iOS 0.1.6开发测试版，基于Aenlly-FTP的`7bef1146052b3c9f343856bbf3952ee7236b14d1`保留上游历史。Android采用独立包名`app.framelink.camera`，iOS工程位于`ios/`；原始项目源码和许可证保存在`third_party/aenlly-ftp/`
+本分支为光屿Android 0.1.11／iOS 0.1.6开发测试版，基于Aenlly-FTP的`7bef1146052b3c9f343856bbf3952ee7236b14d1`保留上游历史。Android采用独立包名`app.framelink.camera`，iOS工程位于`ios/`；原始项目源码和许可证保存在`third_party/aenlly-ftp/`
 
 ## 获取分支
 

@@ -3,6 +3,7 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"image"
@@ -97,7 +98,8 @@ func main() {
 	defer stream.Close()
 	props := []ptpip.SonyProp{{Code: ptpip.SonyPropLiveViewURL, Type: 0xffff, Enabled: 1, Current: ptpip.SonyValue{Str: "http://localhost:16001/liveview"}},
 		{Code: 0x5013, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 1}, Form: 2, Settable: []ptpip.SonyValue{{Int: 1}, {Int: 2}}},
-		{Code: ptpip.SonyPropStoreDestination, Type: 4, Enabled: 1, Current: ptpip.SonyValue{Int: ptpip.SonyStoreCard}},
+		{Code: ptpip.SonyPropStoreDestination, Type: 4, Enabled: 1, Writable: true, Form: 2,
+			Current: ptpip.SonyValue{Int: ptpip.SonyStoreCard}, Settable: []ptpip.SonyValue{{Int: ptpip.SonyStoreHost}, {Int: ptpip.SonyStoreCard}, {Int: ptpip.SonyStoreHostAndCard}}},
 		{Code: 0xD284, Type: 2, Enabled: 1, Current: ptpip.SonyValue{Int: 1}},
 		{Code: 0x500F, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 100}, Form: 2, Settable: []ptpip.SonyValue{{Int: 100}, {Int: 200}, {Int: 400}}},
 		{Code: 0x5007, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 350}, Form: 2, Settable: []ptpip.SonyValue{{Int: 280}, {Int: 350}, {Int: 400}}},
@@ -140,6 +142,11 @@ func main() {
 		qaAddedShot := filepath.Join(*dir, fmt.Sprintf("QA_NEW_DAY_%d.JPG", time.Now().UnixNano()))
 		qaShotDay := time.Now().UTC().AddDate(1, 0, 0).Truncate(24 * time.Hour).Add(12 * time.Hour)
 		stats := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if request.URL.Path == "/qa-focus-history" {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(server.Controls())
+				return
+			}
 			if request.URL.Path == "/qa-new-day" {
 				if request.Method == http.MethodDelete {
 					if err := os.Remove(qaAddedShot); err != nil && !os.IsNotExist(err) {

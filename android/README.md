@@ -13,7 +13,7 @@ python3 scripts/bootstrap.py
 sh scripts/build-android.sh
 ```
 
-生成`artifacts/FrameLink-0.1.8-debug.apk`。这是Android开发证书签名的测试包，正式签名、商店提交与公开发布是独立步骤
+生成`artifacts/FrameLink-0.1.11-debug.apk`。这是Android开发证书签名的测试包，正式签名、商店提交与公开发布是独立步骤
 
 ## 连接相机
 

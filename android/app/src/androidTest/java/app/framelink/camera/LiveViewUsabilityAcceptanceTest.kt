@@ -47,6 +47,12 @@ class LiveViewUsabilityAcceptanceTest {
             compose.onNodeWithContentDescription("显示取景控制").performClick()
             compose.onNodeWithContentDescription("拍摄").assertIsDisplayed()
             assertEquals("显示菜单不应缩小画面", pictureBounds, compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow)
+            val rail = compose.onNodeWithTag("live-shutter-rail").fetchSemanticsNode().boundsInWindow
+            assertTrue("快门使用右侧留边，避免横跨构图", rail.width <= bounds.width * .20f && rail.left > bounds.width * .75f)
+            val quickBounds = compose.onNodeWithTag("live-quick-properties").fetchSemanticsNode().boundsInWindow
+            val quickValues = compose.onAllNodesWithTag("live-quick-value", useUnmergedTree = true).fetchSemanticsNodes()
+            assertEquals(4, quickValues.size)
+            assertTrue("常用参数值不能被底部裁掉", quickValues.all { it.boundsInWindow.top >= quickBounds.top && it.boundsInWindow.bottom <= quickBounds.bottom })
             val shutter = compose.onNodeWithContentDescription("拍摄").fetchSemanticsNode().boundsInWindow
             compose.waitForIdle()
             acceptanceScreenshot(compose.activity, "live-landscape-before-shutter-check")
@@ -59,9 +65,25 @@ class LiveViewUsabilityAcceptanceTest {
             }
             compose.waitForIdle()
             acceptanceScreenshot(compose.activity, "live-landscape-glass-controls")
+            compose.onNodeWithText("光圈").performClick()
+            val picker = compose.onNodeWithTag("live-property-picker").fetchSemanticsNode().boundsInWindow
+            assertTrue("横屏参数带保持紧凑", picker.width <= bounds.width * .65f && picker.height <= bounds.height * .22f)
+            assertEquals("展开参数带不能缩小画面", pictureBounds, compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow)
+            acceptanceScreenshot(compose.activity, "live-landscape-parameter-strip")
+            val aperture = runtime.properties.value.first { it.code == 0x5007 }
+            val nextAperture = CameraPropertyText.choices(aperture).first { it.value != aperture.value }
+            compose.onNodeWithTag("live-property-choices").performScrollToNode(hasText(nextAperture.label))
+            compose.onNodeWithText(nextAperture.label).performClick()
+            compose.waitUntil(10000) { runtime.properties.value.first { it.code == aperture.code }.value == nextAperture.value }
+            val originalAperture = CameraPropertyText.choices(aperture).first { it.value == aperture.value }
+            compose.onNodeWithTag("live-property-choices").performScrollToNode(hasText(originalAperture.label))
+            compose.onNode(hasText(originalAperture.label) and hasAnyAncestor(hasTestTag("live-property-choices"))).performClick()
+            compose.waitUntil(10000) { runtime.properties.value.first { it.code == aperture.code }.value == aperture.value }
+            compose.onNodeWithContentDescription("关闭参数").performClick()
             compose.onNodeWithText("专业工具").performClick()
             val panel = compose.onNodeWithTag("live-tools-panel").fetchSemanticsNode().boundsInWindow
-            assertTrue("横屏专业面板应控制在屏幕宽度的40%以内：$panel / $bounds", panel.width <= bounds.width * .40f)
+            assertTrue("横屏参数应留在左侧窄区：$panel / $bounds", panel.width <= bounds.width * .24f && panel.center.x < bounds.width * .25f)
+            compose.onNodeWithContentDescription("拍摄").assertIsDisplayed()
             assertEquals("专业面板不应缩小横屏取景", pictureBounds, compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow)
             acceptanceScreenshot(compose.activity, "live-landscape-compact-tools")
             compose.onNodeWithText("预览辅助").performClick()

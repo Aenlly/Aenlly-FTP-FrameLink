@@ -14,6 +14,69 @@ import (
 const driveModeProperty uint16 = 0x5013
 const driveSingle int64 = 1
 
+// applyCaptureStorage keeps record-only shooting out of the host transfer queue.
+// Host-only pending files must be received before changing their destination.
+func applyCaptureStorage(ctx context.Context, c *ptpip.Client, props []ptpip.SonyProp, receive bool) (int64, error) {
+	wanted := int64(ptpip.SonyStoreCard)
+	if receive {
+		wanted = ptpip.SonyStoreHostAndCard
+	}
+	var descriptor *ptpip.SonyProp
+	for i := range props {
+		if props[i].Code == ptpip.SonyPropStoreDestination {
+			descriptor = &props[i]
+		}
+	}
+	if descriptor == nil {
+		return 0, errors.New("机身未提供保存位置，请在相机设置为仅拍摄装置后再使用")
+	}
+	if descriptor.Current.Int == wanted {
+		return wanted, nil
+	}
+	if descriptor.Current.Int == ptpip.SonyStoreHost {
+		_, pending, err := c.SonyCapturedPending(ctx)
+		if err != nil {
+			return 0, errors.New("仅电脑保存的待传状态未能确认，暂不更改保存位置")
+		}
+		if pending > 0 {
+			return 0, errors.New("机身有仅电脑保存的待传照片，请先完成接收，暂不更改保存位置")
+		}
+	}
+	if !descriptor.Writable || descriptor.Enabled != 1 || !slices.ContainsFunc(descriptor.Settable, func(v ptpip.SonyValue) bool { return v.Int == wanted }) {
+		return 0, errors.New("机身未允许切换保存位置，请在遥控拍摄设置中选择仅拍摄装置；自动导入需选择目的地与拍摄装置")
+	}
+	if err := c.SonySetProp(ctx, descriptor.Code, descriptor.Type, ptpip.SonyValue{Int: wanted}); err != nil {
+		return 0, fmt.Errorf("保存位置未能确认，本次不拍摄，请在相机核对：%w", err)
+	}
+	actual, err := c.SonyGetProp(ctx, descriptor.Code)
+	if err != nil || actual.Current.Int != wanted {
+		return 0, errors.New("机身尚未确认保存位置，本次不拍摄，请在相机核对")
+	}
+	return wanted, nil
+}
+
+func (s *Session) ConfigureCaptureStorage(receive bool) (string, error) {
+	if !s.op.TryLock() {
+		return "", errors.New("相机正忙，请稍后再更改保存位置")
+	}
+	defer s.op.Unlock()
+	c, parent, err := s.camera()
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
+	props, err := c.SonyGetProps(ctx, false)
+	if err != nil {
+		return "", err
+	}
+	store, err := applyCaptureStorage(ctx, c, props, receive)
+	if err != nil {
+		return "", err
+	}
+	return marshal(map[string]any{"storeDestination": store})
+}
+
 // CapturePhoto separates shutter completion from optional host-file reception.
 // Single mode is verified before pressing and restored only after a successful release.
 func (s *Session) CapturePhoto(autofocus, single, receive bool) (result string, err error) {
@@ -32,29 +95,14 @@ func (s *Session) CapturePhoto(autofocus, single, receive bool) (result string, 
 		return "", fmt.Errorf("未能核对拍摄设置，本次快门未发送：%w", err)
 	}
 	var drive *ptpip.SonyProp
-	card := false
-	store := int64(0)
-	transferOriginal := false
 	for i := range props {
 		p := &props[i]
 		if p.Code == driveModeProperty {
 			drive = p
 		}
-		if p.Code == ptpip.SonyPropStoreDestination {
-			store = p.Current.Int
-			card = p.Current.Int == ptpip.SonyStoreCard || p.Current.Int == ptpip.SonyStoreHostAndCard
-		}
-		if p.Code == ptpip.SonyPropTransferSize {
-			transferOriginal = p.Current.Int == ptpip.SonyTransferOriginal
-		}
 	}
-	if store == ptpip.SonyStoreHost {
-		if !receive {
-			return "", errors.New("相机当前仅保存到电脑，请先在机身将保存位置改为存储卡，或开启拍后自动导入")
-		}
-		if !transferOriginal {
-			return "", errors.New("相机仅保存到电脑，请先设置原尺寸传输，或改为存储卡保存")
-		}
+	if _, err = applyCaptureStorage(ctx, c, props, receive); err != nil {
+		return "", err
 	}
 	changed := false
 	shutterStarted := false
@@ -101,11 +149,11 @@ func (s *Session) CapturePhoto(autofocus, single, receive bool) (result string, 
 			warning = "快门已完成，机身拍摄模式恢复待确认，请在相机核对"
 		}
 	}
-	return marshal(map[string]any{"shutterComplete": true, "single": single, "cardStorageConfirmed": card, "warning": warning})
+	return marshal(map[string]any{"shutterComplete": true, "single": single, "cardStorageConfirmed": true, "warning": warning})
 }
 
 // FocusAt accepts normalized coordinates inside the actual preview image.
-// It never sends a full shutter press or silently changes the focus area.
+// It selects the position, pulses AF and releases half-press without a full shutter press.
 func (s *Session) FocusAt(x, y float64) (err error) {
 	if math.IsNaN(x) || math.IsNaN(y) || x < 0 || x > 1 || y < 0 || y > 1 {
 		return errors.New("对焦位置无效")
@@ -135,15 +183,19 @@ func (s *Session) FocusAt(x, y float64) (err error) {
 		return errors.New("相机当前为手动对焦，请先切换自动对焦")
 	}
 	position := int64(uint32(math.Round(x*639))<<16 | uint32(math.Round(y*479)))
-	if slices.Contains(controls, ptpip.SonyCtlRemoteTouch) && values[0xD284] == 1 {
-		return c.SonyControl(ctx, ptpip.SonyCtlRemoteTouch, 6, ptpip.SonyValue{Int: position})
-	}
 	area := values[0xD22C]
-	if !slices.Contains(controls, ptpip.SonyCtlAFAreaPosition) || !(area == 2 || area >= 0x101 && area <= 0x104) {
+	pointControl := slices.Contains(controls, ptpip.SonyCtlAFAreaPosition)
+	remoteTouch := slices.Contains(controls, ptpip.SonyCtlRemoteTouch) && values[0xD284] == 1
+	if remoteTouch {
+		if err = c.SonyControl(ctx, ptpip.SonyCtlRemoteTouch, 6, ptpip.SonyValue{Int: position}); err != nil {
+			return err
+		}
+	} else if pointControl && (area == 2 || area >= 0x101 && area <= 0x104) {
+		if err = c.SonyControl(ctx, ptpip.SonyCtlAFAreaPosition, 6, ptpip.SonyValue{Int: position}); err != nil {
+			return err
+		}
+	} else {
 		return errors.New("当前对焦区域不支持点按，请在机身选择区或点对焦")
-	}
-	if err = c.SonyControl(ctx, ptpip.SonyCtlAFAreaPosition, 6, ptpip.SonyValue{Int: position}); err != nil {
-		return err
 	}
 	defer func() {
 		rctx, stop := context.WithTimeout(context.WithoutCancel(parent), 3*time.Second)
@@ -154,9 +206,47 @@ func (s *Session) FocusAt(x, y float64) (err error) {
 		return err
 	}
 	select {
-	case <-time.After(300 * time.Millisecond):
+	case <-time.After(800 * time.Millisecond):
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// ShootingState exposes a small read-only snapshot for validation, never credentials.
+func (s *Session) ShootingState() (string, error) {
+	s.op.Lock()
+	defer s.op.Unlock()
+	c, parent, err := s.camera()
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
+	defer cancel()
+	props, err := c.SonyGetProps(ctx, false)
+	if err != nil {
+		return "", err
+	}
+	names := map[uint16]string{0x5013: "driveMode", 0x500A: "focusMode", 0x5009: "focusDistance", 0xD22C: "focusArea", 0xD284: "remoteTouchUsable", 0xD222: "storeDestination"}
+	result := map[string]any{}
+	for _, p := range props {
+		if p.Code == ptpip.SonyPropCapturedImages {
+			result["pendingReady"] = p.Current.Int&0x8000 != 0
+			result["pendingCount"] = p.Current.Int & 0x7fff
+		}
+		if name, ok := names[p.Code]; ok {
+			result[name] = p.Current.Int
+		}
+		if p.Code == ptpip.SonyPropStoreDestination {
+			result["storeWritable"] = p.Writable
+			result["storeEnabled"] = p.Enabled
+		}
+	}
+	ready, pending, pendingErr := c.SonyCapturedPending(ctx)
+	result["pendingStatusKnown"] = pendingErr == nil
+	if pendingErr == nil {
+		result["pendingReady"] = ready
+		result["pendingCount"] = pending
+	}
+	return marshal(result)
 }

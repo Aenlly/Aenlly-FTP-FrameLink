@@ -102,6 +102,10 @@ class NativeCamera(private val context: Context) {
 
     fun focusAt(x: Float, y: Float) { session.focusAt(x.toDouble(), y.toDouble()) }
 
+    fun shootingState(): JSONObject = JSONObject(session.shootingState())
+
+    fun configureCaptureStorage(receive: Boolean): JSONObject = JSONObject(session.configureCaptureStorage(receive))
+
     fun startLive() {
         session.startLiveView()
     }

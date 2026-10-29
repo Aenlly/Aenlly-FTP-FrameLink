@@ -12,7 +12,7 @@ import (
 	"github.com/knallli/alpha2go/ptpip/ptpiptest"
 )
 
-func shootingFixture(t *testing.T, hostOnly, failShutter bool) (*Session, *ptpiptest.Server) {
+func shootingFixture(t *testing.T, hostOnly, failShutter bool, movableArea ...bool) (*Session, *ptpiptest.Server) {
 	t.Helper()
 	store := int64(ptpip.SonyStoreCard)
 	if hostOnly {
@@ -24,12 +24,26 @@ func shootingFixture(t *testing.T, hostOnly, failShutter bool) (*Session, *ptpip
 		{Code: 0x500A, Type: 4, Enabled: 1, Current: ptpip.SonyValue{Int: 2}},
 		{Code: 0xD284, Type: 2, Enabled: 1, Current: ptpip.SonyValue{Int: 1}},
 	}
+	if len(movableArea) > 1 && movableArea[1] {
+		props[1].Writable = true
+		props[1].Form = 2
+		props[1].Settable = []ptpip.SonyValue{{Int: ptpip.SonyStoreHost}, {Int: ptpip.SonyStoreCard}, {Int: ptpip.SonyStoreHostAndCard}}
+		if !hostOnly {
+			props[1].Current.Int = ptpip.SonyStoreHostAndCard
+		}
+	}
 	fail := uint16(0)
+	controls := []uint16{ptpip.SonyCtlShutterHalf, ptpip.SonyCtlShutterFull, ptpip.SonyCtlRemoteTouch}
+	if len(movableArea) > 0 && movableArea[0] {
+		controls = append(controls, ptpip.SonyCtlAFAreaPosition)
+		props = append(props, ptpip.SonyProp{Code: 0xD22C, Type: 4, Writable: true, Enabled: 1,
+			Current: ptpip.SonyValue{Int: 1}, Form: 2, Settable: []ptpip.SonyValue{{Int: 1}, {Int: 0x102}}})
+	}
 	if failShutter {
 		fail = ptpip.SonyCtlShutterFull
 	}
 	server, err := ptpiptest.Start(ptpiptest.Options{Dir: t.TempDir(), A6700: true, Props: props,
-		ControlCodes: []uint16{ptpip.SonyCtlShutterHalf, ptpip.SonyCtlShutterFull, ptpip.SonyCtlRemoteTouch}, FailControl: fail})
+		ControlCodes: controls, FailControl: fail})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +116,7 @@ func TestTouchFocusUsesAdvertisedControlWithoutTakingPicture(t *testing.T) {
 	if err := s.FocusAt(.25, .75); err != nil {
 		t.Fatal(err)
 	}
-	want := []ptpiptest.ControlCall{{Code: ptpip.SonyCtlRemoteTouch, Value: 160<<16 | 359}}
+	want := []ptpiptest.ControlCall{{Code: ptpip.SonyCtlRemoteTouch, Value: 160<<16 | 359}, {Code: ptpip.SonyCtlShutterHalf, Value: 2}, {Code: ptpip.SonyCtlShutterHalf, Value: 1}}
 	if !slices.Equal(server.Controls(), want) {
 		t.Fatalf("focus sent unexpected control: %v", server.Controls())
 	}
@@ -110,5 +124,63 @@ func TestTouchFocusUsesAdvertisedControlWithoutTakingPicture(t *testing.T) {
 		if err := s.FocusAt(point[0], point[1]); err == nil {
 			t.Fatal("invalid focus coordinate accepted")
 		}
+	}
+}
+
+func TestSingleAutofocusDrivesLensWithoutChangingCameraArea(t *testing.T) {
+	s, server := shootingFixture(t, false, false, true)
+	if err := s.FocusAt(.75, .25); err != nil {
+		t.Fatal(err)
+	}
+	want := []ptpiptest.ControlCall{{Code: ptpip.SonyCtlRemoteTouch, Value: 479<<16 | 120},
+		{Code: ptpip.SonyCtlShutterHalf, Value: 2}, {Code: ptpip.SonyCtlShutterHalf, Value: 1}}
+	if !slices.Equal(server.Controls(), want) {
+		t.Fatalf("AF-S did not select position and drive AF: %v", server.Controls())
+	}
+	p, err := s.client.SonyGetProp(context.Background(), 0xD22C)
+	if err != nil || p.Current.Int != 1 {
+		t.Fatal("tap focus changed the camera's area mode")
+	}
+}
+
+func TestRecordOnlyCaptureChangesDestinationBeforeShutter(t *testing.T) {
+	s, _ := shootingFixture(t, false, false, false, true)
+	if _, err := s.CapturePhoto(true, true, false); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.client.SonyGetProp(context.Background(), ptpip.SonyPropStoreDestination)
+	if err != nil || p.Current.Int != ptpip.SonyStoreCard {
+		t.Fatal("record-only capture left the host queue enabled")
+	}
+}
+
+func TestStorageToggleKeepsCardCopyInBothModes(t *testing.T) {
+	s, _ := shootingFixture(t, false, false, false, true)
+	for _, receive := range []bool{false, true, false} {
+		if _, err := s.ConfigureCaptureStorage(receive); err != nil {
+			t.Fatal(err)
+		}
+		p, err := s.client.SonyGetProp(context.Background(), ptpip.SonyPropStoreDestination)
+		want := int64(ptpip.SonyStoreCard)
+		if receive {
+			want = ptpip.SonyStoreHostAndCard
+		}
+		if err != nil || p.Current.Int != want {
+			t.Fatal("storage toggle did not match import choice")
+		}
+	}
+}
+
+func TestHostOnlyPendingFilesAreNotDiscardedByStorageChange(t *testing.T) {
+	s, _ := shootingFixture(t, true, false, false, true)
+	if err := s.Capture(false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ConfigureCaptureStorage(false); err == nil {
+		t.Fatal("host-only pending files were abandoned")
+	}
+	p, err := s.client.SonyGetProp(context.Background(), ptpip.SonyPropStoreDestination)
+	if err != nil || p.Current.Int != ptpip.SonyStoreHost {
+		t.Fatal("host-only destination changed before reception")
 	}
 }

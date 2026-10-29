@@ -13,10 +13,17 @@ parser.add_argument('--serial', required=True)
 parser.add_argument('--allow-camera-parameter-check', action='store_true', required=True)
 parser.add_argument('--manual-install', action='store_true', help='使用已在手机手动安装的App和诊断组件')
 parser.add_argument('--app-touch', action='store_true', help='仅向App自己的窗口分发触控，不验证系统输入注入')
-parser.add_argument('--case', choices=['all', 'gallery', 'live'], default='all')
+parser.add_argument('--case', choices=['all', 'gallery', 'live', 'focus', 'recover', 'latency'], default='all')
+parser.add_argument('--focus-near', help='仅对焦验收：前景目标归一化坐标x,y')
+parser.add_argument('--focus-far', help='仅对焦验收：后景目标归一化坐标x,y')
 parser.add_argument('--include-ftp', action='store_true', help='追加本机FTP客户端字节、中文文件名与取消校验')
 parser.add_argument('--include-capture', action='store_true', help='明确执行一次真实快门，保留机身照片并验证数量、状态和进入图库连接')
 args = parser.parse_args()
+for point in [args.focus_near, args.focus_far]:
+    if point:
+        coordinates = [float(value) for value in point.split(',')]
+        if len(coordinates) != 2 or not all(0 <= value <= 1 for value in coordinates):
+            parser.error('对焦坐标需为0到1之间的x,y')
 adb = [str(root / '.tools/android-sdk/platform-tools/adb'), '-s', args.serial]
 version = re.search(r'versionName\s*=\s*"([^"]+)"', (root / 'android/app/build.gradle.kts').read_text()).group(1)
 expected_packages = {
@@ -59,16 +66,20 @@ if sdk >= 37:
     commands.append(['shell', 'pm', 'grant', 'app.framelink.camera', 'android.permission.ACCESS_LOCAL_NETWORK'])
 base_class = 'app.framelink.camera.PhysicalCoreUiAcceptanceTest'
 methods = {'gallery': 'connectedGallerySelectionDownloadBatchAndReconnectWorkOnPhone',
-    'live': 'liveLabelsAndFooterStayVisibleAndApertureRestoresExactly'}
+    'live': 'liveLabelsAndFooterStayVisibleAndApertureRestoresExactly', 'focus': 'focusTargetsDoNotFireShutter',
+    'recover': 'recoverPendingFilesWithoutTakingPhoto', 'latency': 'measurePreviewReceptionAndNetworkWithoutCapture'}
 test_class = ','.join(base_class + '#' + methods[case] for case in (['gallery', 'live'] if args.case == 'all' else [args.case]))
 if args.include_capture:
     test_class += ',' + base_class + '#singleShotFinishesWithoutImportAndAlbumKeepsConnection'
 if args.include_ftp:
     test_class += ',app.framelink.camera.FtpClientAcceptanceTest#protocolRoundTripChineseNamesAuthenticationAndNoOverwrite'
-commands.append(['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', test_class,
+instrument = ['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', test_class,
     '-e', 'allowPhysicalCameraRead', 'true', '-e', 'appTouch', str(args.app_touch).lower(),
     '-e', 'allowPhysicalCapture', str(args.include_capture).lower(),
-    'app.framelink.camera.test/androidx.test.runner.AndroidJUnitRunner'])
+    'app.framelink.camera.test/androidx.test.runner.AndroidJUnitRunner']
+for key, point in [('focusNear', args.focus_near), ('focusFar', args.focus_far)]:
+    if point: instrument[-1:-1] = ['-e', key, point]
+commands.append(instrument)
 result = 0
 try:
     with log.open('w') as output:
@@ -81,11 +92,12 @@ try:
                 result = subprocess.run(adb + command, stdout=output, stderr=subprocess.STDOUT, timeout=300).returncode
             except subprocess.TimeoutExpired:
                 output.write('\n真机验收超时，需检查光圈恢复记录\n')
+                subprocess.run(adb + ['shell', 'am', 'force-stop', 'app.framelink.camera'], stdout=output, stderr=subprocess.STDOUT)
                 result = 124
             if result:
                 break
 finally:
-    subprocess.run(adb + ['shell', 'am', 'start', '-n', 'app.framelink.camera/.MainActivity'], capture_output=True)
+    subprocess.run(adb + ['shell', 'am', 'start', '-f', '0x20000000', '-n', 'app.framelink.camera/.MainActivity'], capture_output=True)
 text = log.read_text()
 test_count = (2 if args.case == 'all' else 1) + int(args.include_ftp) + int(args.include_capture)
 expected = f'OK ({test_count} {"test" if test_count == 1 else "tests"})'

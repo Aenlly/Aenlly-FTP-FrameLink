@@ -99,6 +99,12 @@ class NativeUiAcceptanceTest {
             compose.onNodeWithContentDescription("收起工具").performClick()
             compose.onNodeWithTag("live-preview").performTouchInput { click() }
             compose.waitUntil(10000) { !runtime.focusBusy.value }
+            val latestFocus = runtime.focusAt(.25f, .5f).let { runtime.focusAt(.75f, .5f) }
+            runBlocking { latestFocus.join() }
+            val history = URI("http://127.0.0.1:16023/qa-focus-history").toURL().readText()
+            val controls = org.json.JSONArray(history)
+            val focusValues = (0 until controls.length()).map { controls.getJSONObject(it) }.filter { it.getInt("Code") == 0xD2E4 }
+            assertEquals("快速点按必须执行最后的位置", (479L shl 16) or 240L, focusValues.last().getLong("Value"))
             compose.onNodeWithTag("live-quick-properties").assertIsDisplayed()
             compose.onNodeWithContentDescription("无延时").performClick()
             compose.onNodeWithContentDescription("拍摄").performClick()

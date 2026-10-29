@@ -122,6 +122,37 @@ class GalleryInteractionAcceptanceTest {
     }
 
     @Test
+    fun newestPagesAppendAutomaticallyAndStopAtTheEnd() {
+        runtime.disconnect()
+        try {
+            runtime.connect(ConnectionConfig(host = "127.0.0.1"))
+            compose.waitUntil(30000) { runtime.camera.value.info != null }
+            compose.onNodeWithTag("tab-gallery").performClick()
+            compose.onNodeWithText("相机内").performClick()
+            compose.waitUntil(30000) { !runtime.camera.value.loadingPhotos && runtime.currentCameraIds.value.isNotEmpty() }
+            fun listing() = runBlocking { runtime.database.photos().observe().first().filter { it.id in runtime.currentCameraIds.value } }
+            val latest = listing().first().id
+            var pages = 0
+            while (runtime.galleryHasMore.value && pages++ < 10) {
+                val before = runtime.currentCameraIds.value.size
+                compose.onNodeWithTag("gallery-grid").performScrollToIndex(before - 1)
+                compose.waitUntil(30000) { runtime.currentCameraIds.value.size > before || !runtime.galleryHasMore.value }
+                assertEquals(latest, listing().first().id)
+            }
+            assertFalse(runtime.galleryHasMore.value)
+            val rows = listing()
+            assertTrue(rows.zipWithNext().all { (left, right) -> left.capturedAt >= right.capturedAt })
+            compose.onNodeWithTag("gallery-grid").performScrollToIndex(rows.size)
+            compose.onNodeWithText("已加载全部").assertIsDisplayed()
+            compose.onNodeWithText("加载更多").assertDoesNotExist()
+            compose.onNodeWithText("全选", substring = false).performClick()
+            compose.onNodeWithText("已选 ${rows.size}").assertIsDisplayed()
+            compose.onNodeWithContentDescription("清空本次选择").performClick()
+            assertEquals(rows.size, runtime.currentCameraIds.value.size)
+        } finally { runtime.disconnect() }
+    }
+
+    @Test
     fun cameraDropHidesRemoteListingButKeepsImportedFileAndReconnects() {
         runtime.disconnect()
         try {

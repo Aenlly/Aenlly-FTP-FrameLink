@@ -72,6 +72,9 @@ class NativeCamera(private val context: Context) {
     fun page(slot: Int, cursor: Long): CameraPage =
         Json.decode(session.listPage(slot.toLong(), cursor))
 
+    fun newestPage(slot: Int, day: String, cursor: Long): CameraPage =
+        Json.decode(session.listNewestPage(slot.toLong(), day, cursor))
+
     fun dates(slot: Int): List<String> = Json.list(session.dates(slot.toLong()))
 
     fun preview(photo: Photo, file: CameraFile, target: File, large: Boolean) {

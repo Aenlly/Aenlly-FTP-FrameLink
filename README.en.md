@@ -4,7 +4,7 @@
 
 Connect a camera, review photos, and import the ones you want. FrameLink builds on Aenlly-FTP, keeping FTP transfers while adding wireless live view, local client selections, and optional cloud delivery.
 
-**0.1.6 development preview** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
+**Development preview: Android 0.1.7 / iOS 0.1.6** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
 
 ## Preview
 | Camera | Gallery | Viewer |
@@ -15,7 +15,7 @@ Android emulator screenshots use licensed sample photos. [Credits and visual che
 
 ## Features
 - **Camera**: saved connections, first-use fingerprint confirmation, card browsing, original downloads, live view, and remote controls where supported.
-- **Gallery**: grouped RAW+JPEG, drag selection, one shared selection in grid and viewer, favorites, comparison, named batches, and image contact sheets.
+- **Gallery**: grouped RAW+JPEG, drag selection, one shared selection in grid and viewer, favorites, comparison, named batches, and image contact sheets. Android camera browsing shows newest shots first and loads more as you scroll.
 - **Client review**: records named by client, phone number, or session; separate client choices and comments, renaming, deletion, completion, and reopening.
 - **FTP**: receive camera uploads; browse, upload, download, and create folders with FTP or explicit FTPS.
 - **Local files**: import from the phone or card reader; remove list entries or App-owned copies without deleting camera-card originals.
@@ -42,7 +42,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android output: `artifacts/FrameLink-0.1.6-debug.apk`. iPhone IPA files require re-signing; see the [installation guide](ios/INSTALL.md). The simulator archive is separate. The app interface is currently Chinese. [Android](android/README.md) · [iOS](ios/README.md) · [Server](cloud/README.md) · [Web](web/README.md)
+Android output: `artifacts/FrameLink-0.1.7-debug.apk`. iPhone IPA files require re-signing; see the [installation guide](ios/INSTALL.md). The simulator archive is separate. The app interface is currently Chinese. [Android](android/README.md) · [iOS](ios/README.md) · [Server](cloud/README.md) · [Web](web/README.md)
 
 ## Contribute
 Camera reports, reproducible bugs, and usability feedback are welcome. Include phone OS, camera model and firmware, connection method, and steps. Keep passwords and private photos out of reports.

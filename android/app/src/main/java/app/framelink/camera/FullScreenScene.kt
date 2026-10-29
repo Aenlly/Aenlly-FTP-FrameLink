@@ -20,7 +20,9 @@ import androidx.core.view.WindowCompat
 @Composable
 internal fun FullScreenScene(onClose: () -> Unit, content: @Composable () -> Unit) {
     val configuration = LocalConfiguration.current
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    // Compose1.7关闭平台宽度时会按screenHeightDp固定窗口，旧系统会因此漏掉系统栏区域
+    // 保持平台测量，再由窗口明确设置MATCH_PARENT，避免覆盖后又被内容尺寸改回
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = true, decorFitsSystemWindows = false)) {
         val view = LocalView.current
         DisposableEffect(view, configuration.orientation, configuration.screenWidthDp, configuration.screenHeightDp) {
             val window = (view.parent as? DialogWindowProvider)?.window

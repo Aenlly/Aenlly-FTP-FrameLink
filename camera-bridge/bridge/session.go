@@ -45,6 +45,7 @@ type Session struct {
 	binder         NetworkBinder
 	transferCancel context.CancelFunc
 	metadata       string
+	newestIndex    *contentsIndex
 }
 
 type connectionConfig struct {
@@ -577,6 +578,7 @@ func (s *Session) Close() {
 	s.mu.Lock()
 	c, tunnel, cancel := s.client, s.ssh, s.cancel
 	s.client, s.ssh, s.cancel = nil, nil, nil
+	s.newestIndex = nil
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()

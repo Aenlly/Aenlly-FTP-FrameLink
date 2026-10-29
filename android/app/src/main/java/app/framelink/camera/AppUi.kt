@@ -93,6 +93,7 @@ import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -1021,6 +1022,7 @@ private fun Gallery(
     val scope = rememberCoroutineScope()
     var bulkSelection by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val hasMore by runtime.galleryHasMore.collectAsStateWithLifecycle()
+    val pageError by runtime.galleryError.collectAsStateWithLifecycle()
     val selectionSet = remember(selection) { selection.toSet() }
     var burst by remember { mutableStateOf<List<Photo>?>(null) }
     val cameraDay by runtime.galleryDay.collectAsStateWithLifecycle()
@@ -1080,6 +1082,18 @@ private fun Gallery(
         if (bursts) photos.groupBy { it.burstKey.ifBlank { it.id } }.values.toList()
         else photos.map { listOf(it) }
     val displayedGroups = dragGroups ?: groups
+    LaunchedEffect(source, chosenDay, filter, camera.info?.id) { state.scrollToItem(0) }
+    LaunchedEffect(source, camera.info?.id, chosenDay, filter, layout, hasMore, camera.loadingPhotos, photos.size, bulkSelection, dragGroups != null, pageError) {
+        if (source == "camera" && camera.info != null && filter != "picked" && hasMore &&
+            !camera.loadingPhotos && bulkSelection == null && dragGroups == null && pageError.isBlank()) {
+            if (photos.isEmpty()) runtime.loadPhotos().join()
+            else snapshotFlow {
+                val info = state.layoutInfo
+                val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+                last >= 0 && last >= info.totalItemsCount - layout.columns * 2 - 1
+            }.collect { nearEnd -> if (nearEnd) runtime.loadPhotos().join() }
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1131,7 +1145,10 @@ private fun Gallery(
                 if (source == "camera")
                     IconButton(
                         onClick = {
-                            if (camera.info == null) onConnect() else runtime.refreshCameraPhotos()
+                            if (camera.info == null) onConnect() else {
+                                scope.launch { state.scrollToItem(0) }
+                                runtime.refreshCameraPhotos()
+                            }
                         }
                     ) {
                         Icon(
@@ -1205,10 +1222,14 @@ private fun Gallery(
             }
             }
         }
-        if (displayedGroups.isEmpty() && camera.loadingPhotos && source == "camera")
+        if (displayedGroups.isEmpty() && (camera.loadingPhotos || (hasMore && pageError.isBlank() && filter != "picked")) && source == "camera")
             Column(Modifier.weight(1f).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.dp)
                 Text("正在读取相机照片", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 16.dp))
+            }
+        else if (displayedGroups.isEmpty() && source == "camera" && pageError.isNotBlank())
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                EmptyState("照片读取未完成", pageError, "重试读取", { runtime.refreshCameraPhotos() })
             }
         else if (displayedGroups.isEmpty())
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -1258,11 +1279,13 @@ private fun Gallery(
                         onSelection = onSelectionChange)
                 }
                 if (source == "camera")
-                    item {
-                        TextButton(onClick = { runtime.loadPhotos() }) {
-                            if (camera.loadingPhotos)
+                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                        Row(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            if (camera.loadingPhotos) {
                                 CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
-                            else Text("加载更多", fontSize = 11.sp)
+                                Text("正在读取照片", fontSize = 11.sp, color = Muted, modifier = Modifier.padding(start = 8.dp))
+                            } else if (pageError.isNotBlank()) TextButton(onClick = { runtime.loadPhotos() }) { Text("读取失败，点此重试", fontSize = 11.sp) }
+                            else Text(if (filter == "picked") "已显示本次选择" else if (hasMore) "向下滑动继续加载" else "已加载全部", fontSize = 11.sp, color = Muted)
                         }
                     }
             }

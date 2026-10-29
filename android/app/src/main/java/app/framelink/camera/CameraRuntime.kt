@@ -68,6 +68,7 @@ class CameraRuntime(
     val galleryDay = MutableStateFlow("")
     val currentCameraIds = MutableStateFlow<Set<String>>(emptySet())
     val galleryHasMore = MutableStateFlow(false)
+    val galleryError = MutableStateFlow("")
     val captureCountdown = MutableStateFlow(0)
     val lastCapture = MutableStateFlow<Photo?>(null)
     val liveMetadata = MutableStateFlow("")
@@ -228,6 +229,7 @@ class CameraRuntime(
                     settings.put("camera.config", Json.encode(config))
                     currentCameraIds.value = emptySet()
                     galleryHasMore.value = false
+                    galleryError.value = ""
                     properties.value = choices
                     captureDates.value = dates
                     mutableCamera.value = CameraStatus(info = info, message = "已连接 ${info.model}")
@@ -277,6 +279,7 @@ class CameraRuntime(
         mutableCamera.value = CameraStatus(message = "相机已断开，手机中的照片已保留")
         currentCameraIds.value = emptySet()
         galleryHasMore.value = false
+        galleryError.value = ""
         properties.value = emptyList()
         parameterUpdating.value = null
         captureDates.value = emptyList()
@@ -308,21 +311,14 @@ class CameraRuntime(
 
     fun selectCameraDay(day: String) {
         galleryDay.value = day
-        val since =
-            runCatching {
-                    java.time.LocalDate.parse(day)
-                        .atStartOfDay(java.time.ZoneOffset.UTC)
-                        .toInstant()
-                        .toEpochMilli() - java.time.Duration.ofDays(1).toMillis()
-                }
-                .getOrDefault(0L)
-        loadPhotos(true, sinceMillis = since)
+        loadPhotos(true)
     }
 
-    fun loadPhotos(reset: Boolean = false, slot: Int = currentSlot, sinceMillis: Long = 0) =
+    fun loadPhotos(reset: Boolean = false, slot: Int = currentSlot) =
         scope.launch {
             galleryQueue.withLock {
                 val generation = connectionGeneration.get()
+                val requestedDay = galleryDay.value
                 if (mutableCamera.value.info == null) {
                     notice.value = "请先连接相机"
                     return@launch
@@ -332,14 +328,15 @@ class CameraRuntime(
                     return@launch
                 }
                 mutableCamera.value = mutableCamera.value.copy(loadingPhotos = true)
+                galleryError.value = ""
                 try {
                     if (reset || slot != currentSlot) {
-                        cursor = sinceMillis
+                        cursor = 0
                         currentSlot = slot
                         currentCameraIds.value = emptySet()
                     }
-                    val page = native.page(currentSlot, cursor)
-                    if (generation != connectionGeneration.get()) return@withLock
+                    val page = native.newestPage(currentSlot, requestedDay, cursor)
+                    if (generation != connectionGeneration.get() || requestedDay != galleryDay.value) return@withLock
                     val existingPhotos =
                         database.photos().byIds(page.items.map { it.id }).associateBy { it.id }
                     val records =
@@ -382,9 +379,11 @@ class CameraRuntime(
                     currentCameraIds.value = currentCameraIds.value + records.map { it.id }
                     cursor = page.nextCursor
                     galleryHasMore.value = cursor != 0L
-                    notice.value = if (cursor == 0L) "本次列表已读取完成" else "已读取一页，继续下拉加载更多"
                 } catch (error: Exception) {
-                    notice.value = error.message ?: "照片列表读取失败"
+                    if (generation == connectionGeneration.get()) {
+                        galleryError.value = error.message ?: "照片列表读取失败"
+                        notice.value = galleryError.value
+                    }
                 } finally {
                     if (generation == connectionGeneration.get()) mutableCamera.value = mutableCamera.value.copy(loadingPhotos = false)
                 }

@@ -31,8 +31,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
@@ -65,11 +63,7 @@ internal fun FtpClientScreen(runtime: CameraRuntime, onClose: () -> Unit, onTask
         search = ""
     }
     LaunchedEffect(state.connected) { if (state.connected) editing = false }
-    Dialog(
-        onDismissRequest = onClose,
-        properties =
-            DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-    ) {
+    FullScreenScene(onClose) {
         Surface(color = CanvasColor) {
             Column(Modifier.fillMaxSize().padding(dialogSafePadding()).imePadding()) {
                 Row(

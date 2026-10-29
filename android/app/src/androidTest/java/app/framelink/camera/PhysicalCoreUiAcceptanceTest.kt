@@ -22,11 +22,13 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
+import org.junit.After
 import org.junit.Test
 
 /** 实机选片与取景验收；应用内触控模式仅分发到光屿自己的窗口，不依赖系统触控注入 */
 @androidx.test.filters.SdkSuppress(minSdkVersion = 30)
 class PhysicalCoreUiAcceptanceTest {
+    companion object { private const val GUARDED_CAPTURE_VERSION = 10 }
     private var stage = "准备连接"
     private val app get() = ApplicationProvider.getApplicationContext<CameraApp>()
     private val runtime get() = app.runtime
@@ -34,6 +36,16 @@ class PhysicalCoreUiAcceptanceTest {
     private val appTouch get() = InstrumentationRegistry.getArguments().getString("appTouch") == "true"
     private val clearCacheMethod by lazy {
         runCatching { UiAutomation::class.java.getMethod("clearCache") }.getOrNull()
+    }
+    private val windowFlags = mutableListOf<Pair<android.view.Window, Boolean>>()
+
+    @After fun restoreScreenPolicy() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            windowFlags.forEach { (window, keptOn) ->
+                if (!keptOn) window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+        rotate(UiAutomation.ROTATION_UNFREEZE)
     }
 
     private fun connect() {
@@ -52,6 +64,7 @@ class PhysicalCoreUiAcceptanceTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
                 .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).forEach {
+                    windowFlags += it.window to (it.window.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
                     it.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 }
         }
@@ -73,7 +86,15 @@ class PhysicalCoreUiAcceptanceTest {
         var batchId: String? = null
         try {
             clickText("图库"); clickText("相机内")
-            waitFor(45000) { runtime.currentCameraIds.value.isNotEmpty() }
+            runtime.selectCameraDay("")
+            var stableIds: Set<String>? = null
+            var stableSince = 0L
+            waitFor(90000) {
+                val ids = runtime.currentCameraIds.value
+                if (runtime.camera.value.loadingPhotos || ids.isEmpty() || runtime.galleryDay.value.isNotBlank()) stableSince = 0
+                else if (ids != stableIds) { stableIds = ids; stableSince = SystemClock.uptimeMillis() }
+                stableSince > 0 && SystemClock.uptimeMillis() - stableSince >= 700
+            }
             clickDescription("显示方式"); clickText("中图")
             waitFor(90000) { !runtime.camera.value.loadingPhotos }
             val firstPage = runBlocking { runtime.database.photos().observe().first().filter { it.id in runtime.currentCameraIds.value } }
@@ -93,10 +114,12 @@ class PhysicalCoreUiAcceptanceTest {
             assertTrue(page.zipWithNext().all { (left, right) -> left.capturedAt >= right.capturedAt })
             assertFalse(hasText("加载更多"))
             repeat(100) {
-                if (findDescription("查看 ${page.first().name}") == null)
+                if (findDescription("查看 ${page.first().name}") == null) {
                     nodes().filter { it.isScrollable }.maxByOrNull {
                         Rect().also(it::getBoundsInScreen).height()
                     }?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+                    SystemClock.sleep(250)
+                }
             }
             val first = page.first()
             clickDescription("查看 ${first.name}")
@@ -152,12 +175,69 @@ class PhysicalCoreUiAcceptanceTest {
             report("core-ui.json", JSONObject().put("camera", "ILCE-7CM2").put("firmware", runtime.camera.value.info!!.firmware)
                 .put("listed", page.size).put("selected", 2).put("dragSelection", true).put("downloadedBytes", File(output.originalPath).length())
                 .put("preexistingOriginalsVerified", hashes.size).put("batchPages", sheets.size).put("reconnect", true)
-                .put("automaticPagination", true).put("newestFirst", true).put("firstPhoto", first.name)
+                .put("firstPageCount", firstPage.size).put("automaticPagination", page.size > firstPage.size)
+                .put("newestFirst", true).put("firstPhoto", first.name)
                 .put("directReconnect", true).put("layoutsPreserveSelection", GalleryLayout.entries.map { it.key }))
         } finally {
             runtime.settings.put("gallery.layout", previousLayout)
             batchId?.let { runBlocking { runtime.batches.delete(it) } }
             rotate(UiAutomation.ROTATION_UNFREEZE)
+        }
+    }
+
+    @Test
+    fun singleShotFinishesWithoutImportAndAlbumKeepsConnection() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("allowPhysicalCapture") == "true")
+        check(app.packageManager.getPackageInfo(app.packageName, 0).longVersionCode >= GUARDED_CAPTURE_VERSION) {
+            "请先安装具备单张保护的0.1.8或更新版本，禁止在旧主包触发实拍"
+        }
+        connect()
+        val previousSingle = runtime.settings.get("capture.single")
+        val previousImport = runtime.settings.get("capture.auto_import")
+        val before = runtime.native.newestPage(1, "", 0).items.map { it.id }.toSet()
+        val drive = runtime.native.properties().firstOrNull { it.code == 0x5013 }?.value
+        report("capture-before.json", JSONObject().put("driveBefore", drive).put("autoImport", false).put("newShotLimit", 1))
+        val previousPhoto = runtime.lastCapture.value
+        try {
+            runtime.settings.put("capture.single", "true")
+            runtime.settings.put("capture.auto_import", "false")
+            clickText("取景拍摄")
+            waitFor(30000) { runtime.frame.value?.isNotEmpty() == true }
+            dismissFullscreenEducation()
+            if (runtime.camera.value.info?.canFocus == true) {
+                val focusError = runCatching { runtime.native.focusAt(.5f, .5f) }.exceptionOrNull()?.message
+                report("focus-ui.json", JSONObject().put("requestAccepted", focusError == null)
+                    .put("unavailableReason", focusError.orEmpty()).put("opticalFocusConfirmed", false))
+                if (focusError == null) {
+                    val afterFocus = runtime.native.newestPage(1, "", 0).items.map { it.id }.toSet()
+                    assertEquals("点按对焦不能触发拍摄", before, afterFocus)
+                }
+            }
+            val started = SystemClock.elapsedRealtime()
+            clickDescription("拍摄")
+            waitFor(30000) { !runtime.captureBusy.value }
+            val shutterMs = SystemClock.elapsedRealtime() - started
+            assertFalse("默认拍摄不能启动原片接收", runtime.postCaptureBusy.value)
+            assertEquals(previousPhoto, runtime.lastCapture.value)
+            val afterDrive = runtime.native.properties().firstOrNull { it.code == 0x5013 }?.value
+            assertEquals("拍摄完成后应恢复机身驱动模式", drive, afterDrive)
+            clickDescription("查看相机照片")
+            waitFor(90000) { runtime.currentCameraIds.value.isNotEmpty() && !runtime.camera.value.loadingPhotos }
+            assertNotNull("进入相册不能断开相机", runtime.camera.value.info)
+            var added = emptyList<RemotePhoto>()
+            repeat(6) {
+                if (added.isEmpty()) {
+                    added = runtime.native.newestPage(1, "", 0).items.filter { it.id !in before }
+                    if (added.isEmpty()) SystemClock.sleep(600)
+                }
+            }
+            assertEquals("一次轻按应只新增一次拍摄", 1, added.size)
+            report("capture-ui.json", JSONObject().put("newShots", added.size).put("newFile", added.first().files.first().name)
+                .put("shutterMs", shutterMs).put("autoImport", false).put("albumConnected", true)
+                .put("driveBefore", drive).put("driveAfter", afterDrive))
+        } finally {
+            runtime.settings.put("capture.single", previousSingle)
+            runtime.settings.put("capture.auto_import", previousImport)
         }
     }
 
@@ -259,7 +339,12 @@ class PhysicalCoreUiAcceptanceTest {
     private fun nodes(): List<AccessibilityNodeInfo> {
         clearCacheMethod?.invoke(automation)
         val result = mutableListOf<AccessibilityNodeInfo>()
-        fun visit(node: AccessibilityNodeInfo) { if (node.isVisibleToUser) result += node; for (index in 0 until node.childCount) node.getChild(index)?.let(::visit) }
+        fun visit(node: AccessibilityNodeInfo) {
+            // Android13部分厂商不会及时失效UiAutomation缓存，逐层刷新以读取实际窗口
+            if (appTouch && clearCacheMethod == null && !node.refresh()) return
+            if (node.isVisibleToUser) result += node
+            for (index in 0 until node.childCount) node.getChild(index)?.let(::visit)
+        }
         appRoot()?.takeIf { it.packageName == app.packageName }?.let(::visit)
         return result
     }
@@ -291,6 +376,12 @@ class PhysicalCoreUiAcceptanceTest {
         tap(clickable(findDescription(description)!!)!!); SystemClock.sleep(200)
     }
     private fun tap(node: AccessibilityNodeInfo) {
+        if (appTouch) {
+            check(node.packageName == app.packageName)
+            check(node.refresh()) { "光屿控件已变化，请重新定位" }
+            assertTrue("应用内控件点击未生效", node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            return
+        }
         val bounds = Rect(); node.getBoundsInScreen(bounds)
         check(!bounds.isEmpty)
         val start = SystemClock.uptimeMillis()
@@ -380,7 +471,7 @@ class PhysicalCoreUiAcceptanceTest {
         var dispatched = false
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val root = checkNotNull(WindowInspector.getGlobalWindowViews().lastOrNull {
-                it.hasWindowFocus() && it.isShown && it.context.applicationContext.packageName == app.packageName
+                it.hasWindowFocus() && it.isShown && it.isAttachedToWindow && it.context.applicationContext.packageName == app.packageName
             }) { "光屿窗口未聚焦，停止应用内触控" }
             val origin = IntArray(2).also(root::getLocationOnScreen)
             val local = MotionEvent.obtain(motion)
@@ -393,7 +484,7 @@ class PhysicalCoreUiAcceptanceTest {
     }
     private fun report(name: String, value: JSONObject) {
         value.put("phoneModel", Build.MODEL).put("sdk", Build.VERSION.SDK_INT)
-            .put("inputMode", if (appTouch) "app-window-dispatch" else "system-injection")
+            .put("inputMode", if (appTouch) "app-actions-and-touch" else "system-injection")
         File(app.getExternalFilesDir(null), "physical-read/$name").apply { parentFile!!.mkdirs() }.writeText(value.toString(2))
     }
 }

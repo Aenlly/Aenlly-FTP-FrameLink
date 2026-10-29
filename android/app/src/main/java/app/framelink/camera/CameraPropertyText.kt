@@ -12,9 +12,12 @@ internal object CameraPropertyText {
         0x500E to "曝光模式", 0x500F to "感光度", 0x5010 to "曝光补偿", 0x501C to "对焦测光",
         0xD22C to "对焦区域", 0xD284 to "触摸对焦", 0xD285 to "取消触摸对焦",
         0xD20D to "快门速度", 0xD21E to "感光度",
+        0x5013 to "拍摄方式", 0xD222 to "照片保存位置",
     )
     val exposureOrder = listOf(0x5007, 0xD20D, 0x500D, 0xD21E, 0x500F, 0x5010)
     private val values = mapOf(
+        0x5013 to mapOf(1L to "单张", 2L to "连拍", 3L to "间隔拍摄"),
+        0xD222 to mapOf(1L to "仅电脑", 0x10L to "相机存储卡", 0x11L to "电脑与存储卡"),
         0x500A to mapOf(1L to "手动对焦（MF）", 2L to "单次自动对焦（AF-S）", 3L to "微距自动对焦",
             0x8004L to "连续自动对焦（AF-C）", 0x8005L to "自动切换对焦（AF-A）", 0x8006L to "直接手动对焦（DMF）"),
         0xD22C to mapOf(1L to "广域", 2L to "区", 3L to "中间",

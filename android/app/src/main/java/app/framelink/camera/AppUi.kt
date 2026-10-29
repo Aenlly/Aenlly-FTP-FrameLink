@@ -476,7 +476,6 @@ fun FrameLink(runtime: CameraRuntime) {
             LiveScreen(
                 runtime,
                 onClose = { live = false },
-                onPhoto = { viewer = it.id },
                 paused = viewer != null,
                 onGallery = { live = false; source = "camera"; tab = Tab.GALLERY; runtime.browseRecent() },
             )

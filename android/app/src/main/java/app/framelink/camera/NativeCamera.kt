@@ -97,6 +97,11 @@ class NativeCamera(private val context: Context) {
         session.capture(autofocus)
     }
 
+    fun capturePhoto(single: Boolean, receive: Boolean): JSONObject =
+        JSONObject(session.capturePhoto(true, single, receive))
+
+    fun focusAt(x: Float, y: Float) { session.focusAt(x.toDouble(), y.toDouble()) }
+
     fun startLive() {
         session.startLiveView()
     }

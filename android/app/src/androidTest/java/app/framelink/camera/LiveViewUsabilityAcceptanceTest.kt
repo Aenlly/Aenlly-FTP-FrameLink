@@ -110,6 +110,8 @@ class LiveViewUsabilityAcceptanceTest {
             compose.onNodeWithContentDescription("显示取景控制").assertIsDisplayed()
             acceptanceScreenshot(compose.activity, "live-immersive-preview")
             compose.onNodeWithTag("live-preview").performTouchInput { click() }
+            compose.onNodeWithTag("live-quick-properties").assertDoesNotExist()
+            compose.onNodeWithContentDescription("显示取景控制").performClick()
             compose.onNodeWithTag("live-quick-properties").assertIsDisplayed()
             compose.onNodeWithContentDescription("返回相机").performClick()
         } finally { runtime.disconnect() }

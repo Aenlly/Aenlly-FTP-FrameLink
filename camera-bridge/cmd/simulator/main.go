@@ -96,6 +96,9 @@ func main() {
 	go stream.Serve(streamListener)
 	defer stream.Close()
 	props := []ptpip.SonyProp{{Code: ptpip.SonyPropLiveViewURL, Type: 0xffff, Enabled: 1, Current: ptpip.SonyValue{Str: "http://localhost:16001/liveview"}},
+		{Code: 0x5013, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 1}, Form: 2, Settable: []ptpip.SonyValue{{Int: 1}, {Int: 2}}},
+		{Code: ptpip.SonyPropStoreDestination, Type: 4, Enabled: 1, Current: ptpip.SonyValue{Int: ptpip.SonyStoreCard}},
+		{Code: 0xD284, Type: 2, Enabled: 1, Current: ptpip.SonyValue{Int: 1}},
 		{Code: 0x500F, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 100}, Form: 2, Settable: []ptpip.SonyValue{{Int: 100}, {Int: 200}, {Int: 400}}},
 		{Code: 0x5007, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 350}, Form: 2, Settable: []ptpip.SonyValue{{Int: 280}, {Int: 350}, {Int: 400}}},
 		{Code: 0xD20D, Type: 6, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 65536 + 125}, Form: 2, Settable: []ptpip.SonyValue{{Int: 65536 + 125}, {Int: 65536 + 250}}},
@@ -105,7 +108,7 @@ func main() {
 		{Code: 0x5005, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 2}, Form: 2, Settable: []ptpip.SonyValue{{Int: 2}, {Int: 4}, {Int: 0x8010}}},
 		{Code: 0xD22C, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 1}, Form: 2, Settable: []ptpip.SonyValue{{Int: 1}, {Int: 0x103}, {Int: 0x205}}},
 		{Code: ptpip.SonyPropTransferSize, Type: 4, Enabled: 1, Current: ptpip.SonyValue{Int: ptpip.SonyTransferOriginal}}}
-	server, err := ptpiptest.Start(ptpiptest.Options{Dir: *dir, A6700: true, Model: "QA SIMULATED CAMERA", SerialNumber: "FRAMELINK-QA-NOT-HARDWARE", Preview: preview, Props: props, ControlCodes: []uint16{0xD2C1, 0xD2C2}})
+	server, err := ptpiptest.Start(ptpiptest.Options{Dir: *dir, A6700: true, Model: "QA SIMULATED CAMERA", SerialNumber: "FRAMELINK-QA-NOT-HARDWARE", Preview: preview, Props: props, ControlCodes: []uint16{0xD2C1, 0xD2C2, ptpip.SonyCtlRemoteTouch}})
 	if err != nil {
 		panic(err)
 	}
@@ -134,7 +137,33 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		qaAddedShot := filepath.Join(*dir, fmt.Sprintf("QA_NEW_DAY_%d.JPG", time.Now().UnixNano()))
+		qaShotDay := time.Now().UTC().AddDate(1, 0, 0).Truncate(24 * time.Hour).Add(12 * time.Hour)
 		stats := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if request.URL.Path == "/qa-new-day" {
+				if request.Method == http.MethodDelete {
+					if err := os.Remove(qaAddedShot); err != nil && !os.IsNotExist(err) {
+						http.Error(w, err.Error(), 500)
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				if request.Method != http.MethodPost {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				if err := os.WriteFile(qaAddedShot, preview, 0600); err != nil {
+					http.Error(w, err.Error(), 500)
+					return
+				}
+				if err := os.Chtimes(qaAddedShot, qaShotDay, qaShotDay); err != nil {
+					http.Error(w, err.Error(), 500)
+					return
+				}
+				fmt.Fprint(w, qaShotDay.Format("2006-01-02"))
+				return
+			}
 			if request.Method == http.MethodPost && request.URL.Path == "/drop" {
 				server.DropConnections()
 				w.WriteHeader(http.StatusNoContent)

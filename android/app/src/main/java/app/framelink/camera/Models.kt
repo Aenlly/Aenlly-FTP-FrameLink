@@ -149,6 +149,7 @@ data class CameraInfo(
     val canPreview: Boolean = false,
     val canCapture: Boolean = false,
     val canLiveView: Boolean = false,
+    val canFocus: Boolean = false,
     val hardwareVerified: Boolean = false,
 )
 

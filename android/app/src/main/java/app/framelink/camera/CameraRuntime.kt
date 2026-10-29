@@ -70,6 +70,9 @@ class CameraRuntime(
     val galleryHasMore = MutableStateFlow(false)
     val galleryError = MutableStateFlow("")
     val captureCountdown = MutableStateFlow(0)
+    val captureBusy = MutableStateFlow(false)
+    val postCaptureBusy = MutableStateFlow(false)
+    val focusBusy = MutableStateFlow(false)
     val lastCapture = MutableStateFlow<Photo?>(null)
     val liveMetadata = MutableStateFlow("")
     val ftpStatus = MutableStateFlow("未启动接收")
@@ -81,6 +84,9 @@ class CameraRuntime(
     private var liveJob: Job? = null
     private var connectionMonitor: Job? = null
     private var captureJob: Job? = null
+    private var postCaptureJob: Job? = null
+    private var focusJob: Job? = null
+    private var galleryRefreshJob: Job? = null
     private val connectionGeneration = AtomicLong()
     val cameraIdentityPrompt = MutableStateFlow<CameraIdentityPrompt?>(null)
     @Volatile private var pendingCameraConnection: PendingCameraConnection? = null
@@ -268,6 +274,8 @@ class CameraRuntime(
 
     @Synchronized
     fun disconnect() {
+        galleryRefreshJob?.cancel()
+        galleryRefreshJob = null
         connectionMonitor?.cancel()
         connectionMonitor = null
         connectionGeneration.incrementAndGet()
@@ -284,16 +292,43 @@ class CameraRuntime(
         parameterUpdating.value = null
         captureDates.value = emptyList()
         galleryDay.value = ""
+        captureBusy.value = false
+        postCaptureBusy.value = false
+        focusBusy.value = false
     }
 
-    fun browseRecent() {
-        val day = captureDates.value.firstOrNull().orEmpty()
-        selectCameraDay(day)
-    }
+    fun browseRecent() { refreshCaptureDates(true) }
 
-    fun refreshCameraPhotos() {
-        selectCameraDay(galleryDay.value.takeIf { it in captureDates.value }
-            ?: captureDates.value.firstOrNull().orEmpty())
+    fun refreshCameraPhotos() { refreshCaptureDates(false) }
+
+    /** 重新读取机身日期目录，避免拍摄跨日后仍沿用连接时的旧日期 */
+    private fun refreshCaptureDates(recent: Boolean) {
+        if (mutableCamera.value.info == null) { notice.value = "请先连接相机"; return }
+        galleryRefreshJob?.cancel()
+        val generation = connectionGeneration.get()
+        val slot = currentSlot
+        val previousDay = galleryDay.value
+        currentCameraIds.value = emptySet()
+        galleryHasMore.value = false
+        galleryError.value = ""
+        mutableCamera.value = mutableCamera.value.copy(loadingPhotos = true)
+        galleryRefreshJob = scope.launch {
+            try {
+                val dates = native.dates(slot)
+                if (!isActive || generation != connectionGeneration.get() || slot != currentSlot) return@launch
+                captureDates.value = dates
+                galleryDay.value = if (recent) dates.firstOrNull().orEmpty()
+                    else previousDay.takeIf { it in dates } ?: dates.firstOrNull().orEmpty()
+                loadPhotos(true).join()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                if (generation == connectionGeneration.get()) {
+                    galleryError.value = error.message ?: "相机日期目录读取失败"
+                    notice.value = galleryError.value
+                    mutableCamera.value = mutableCamera.value.copy(loadingPhotos = false)
+                }
+            }
+        }
     }
 
     /** 批量选片只补齐当前相机索引，由用户随后决定下载格式 */
@@ -310,6 +345,7 @@ class CameraRuntime(
     }
 
     fun selectCameraDay(day: String) {
+        galleryRefreshJob?.cancel()
         galleryDay.value = day
         loadPhotos(true)
     }
@@ -1000,6 +1036,13 @@ class CameraRuntime(
             ?.let {
                 return it
             }
+        postCaptureJob?.takeIf { it.isActive }?.let {
+            notice.value = "正在接收拍后照片，请完成后再拍"
+            return it
+        }
+        val generation = connectionGeneration.get()
+        val receive = settings.get("capture.auto_import") == "true"
+        captureBusy.value = true
         val job =
             scope.launch {
                 try {
@@ -1008,60 +1051,112 @@ class CameraRuntime(
                         delay(1000)
                     }
                     captureCountdown.value = 0
-                    native.capture(true)
-                    notice.value = "快门指令已完成，正在查看拍后结果"
-                    val target = File(context.filesDir, "media/capture/${UUID.randomUUID()}.jpg")
-                    val post = runCatching { native.fetchCaptured(target) }.getOrNull()
-                    if (post?.optBoolean("ready") == true) {
-                        val original = post.optBoolean("original")
-                        val name = post.optString("name", "capture.jpg")
-                        val actual =
-                            if (original) target
-                            else
-                                File(context.cacheDir, "previews/${target.name}").apply {
-                                    parentFile!!.mkdirs()
-                                    check(target.renameTo(this)) { "预览暂存失败" }
-                                }
-                        val uri =
-                            if (original)
-                                runCatching { MediaFiles.publish(context, actual, name).toString() }
-                                    .getOrDefault(Uri.fromFile(actual).toString())
-                            else ""
-                        val id = "capture:" + MediaFiles.digest(actual.inputStream())
-                        val photo =
-                            Photo(
-                                id,
-                                id,
-                                name,
-                                PhotoSource.CAPTURE.name,
-                                System.currentTimeMillis(),
-                                Json.encode(
-                                    listOf(
-                                        CameraFile(
-                                            name = name,
-                                            size = actual.length(),
-                                            localUri = uri,
-                                            originalPath = if (original) actual.absolutePath else "",
-                                        )
-                                    )
-                                ),
-                                previewPath = actual.absolutePath,
-                                published = uri.startsWith("content:"),
-                            )
-                        database.photos().save(photo)
-                        lastCapture.value = photo
-                        notice.value = if (original) "拍摄结果已导入" else "拍后预览已就绪，原片可从相机图库导入"
-                    } else {
-                        notice.value = "快门指令已完成；机身未提供拍后文件，可到相机图库刷新查看"
+                    focusJob?.join()
+                    android.util.Log.i("FrameLink", "Capture shutter started; single=${settings.get("capture.single") != "false"}, autoImport=$receive")
+                    val result = native.capturePhoto(settings.get("capture.single") != "false", receive)
+                    if (generation != connectionGeneration.get()) return@launch
+                    android.util.Log.i("FrameLink", "Capture shutter released")
+                    notice.value = result.optString("warning").ifBlank {
+                        if (result.optBoolean("cardStorageConfirmed")) "快门指令已完成，可在相机图库查看照片" else "快门指令已完成，请核对机身照片"
+                    }
+                    if (receive) {
+                        postCaptureBusy.value = true
+                        postCaptureJob = scope.launch {
+                            try { receiveCapturedPhoto(generation) }
+                            catch (error: Exception) {
+                                if (generation == connectionGeneration.get()) notice.value = "拍后接收未完成，请在相机核对照片；无需连续重拍"
+                                android.util.Log.w("FrameLink", "Post-capture receive failed", error)
+                            } finally { if (generation == connectionGeneration.get()) postCaptureBusy.value = false }
+                        }
                     }
                 } catch (error: Exception) {
-                    notice.value =
+                    if (generation == connectionGeneration.get()) notice.value =
                         if (error is CancellationException) "倒计时已取消" else error.message.orEmpty()
+                    if (error !is CancellationException) android.util.Log.w("FrameLink", "Capture shutter failed or awaits confirmation", error)
                 } finally {
-                    captureCountdown.value = 0
+                    if (generation == connectionGeneration.get()) {
+                        captureCountdown.value = 0
+                        captureBusy.value = false
+                    }
                 }
             }
         captureJob = job
+        return job
+    }
+
+    /** 接收是独立步骤，不让文件传输占用快门的拍摄中状态 */
+    private suspend fun receiveCapturedPhoto(generation: Long) {
+        val target = File(context.filesDir, "media/capture/${UUID.randomUUID()}.part-image")
+        try {
+            val post = native.fetchCaptured(target)
+            if (post.optBoolean("ready") == true) {
+                val original = post.optBoolean("original")
+                val name = post.optString("name", "capture.jpg")
+                val actual =
+                    if (original) File(target.parentFile, "${UUID.randomUUID()}-${File(name).name}").also {
+                        check(target.renameTo(it)) { "拍后文件保存失败" }
+                    }
+                    else
+                        File(context.cacheDir, "previews/${target.name}.jpg").apply {
+                            parentFile!!.mkdirs()
+                            check(target.renameTo(this)) { "预览暂存失败" }
+                        }
+                val uri =
+                    if (original)
+                        runCatching { MediaFiles.publish(context, actual, name).toString() }
+                            .getOrDefault(Uri.fromFile(actual).toString())
+                    else ""
+                val id = "capture:" + MediaFiles.digest(actual.inputStream())
+                val photo =
+                    Photo(
+                        id,
+                        id,
+                        name,
+                        PhotoSource.CAPTURE.name,
+                        MediaFiles.capturedTime(actual),
+                        Json.encode(
+                            listOf(
+                                CameraFile(
+                                    name = name,
+                                    size = actual.length(),
+                                    localUri = uri,
+                                    originalPath = if (original) actual.absolutePath else "",
+                                )
+                            )
+                        ),
+                        previewPath = actual.absolutePath,
+                        published = uri.startsWith("content:"),
+                    )
+                database.photos().save(photo)
+                if (generation == connectionGeneration.get()) lastCapture.value = photo
+                if (generation == connectionGeneration.get()) notice.value = if (original) "拍摄结果已导入" else "拍后预览已就绪，原片可从相机图库导入"
+            } else if (generation == connectionGeneration.get()) {
+                notice.value = "快门指令已完成；机身未提供拍后文件，可到相机图库刷新查看"
+            }
+        } finally {
+            File(target.path + ".part").delete()
+        }
+    }
+
+    suspend fun awaitPhotoWork() { captureJob?.join(); postCaptureJob?.join(); focusJob?.join() }
+
+    @Synchronized
+    fun focusAt(x: Float, y: Float): Job {
+        focusJob?.takeIf { it.isActive }?.let { return it }
+        val generation = connectionGeneration.get()
+        focusBusy.value = true
+        val job = scope.launch {
+            try {
+                native.focusAt(x, y)
+                android.util.Log.i("FrameLink", "Touch focus accepted")
+            } catch (error: Exception) {
+                if (generation == connectionGeneration.get()) notice.value =
+                    if (error.message?.contains("ptpip:") == true) "相机未接受点按对焦，请检查机身触摸对焦设置"
+                    else error.message ?: "对焦未完成，请在相机核对"
+                android.util.Log.w("FrameLink", "Touch focus failed", error)
+            } finally { if (generation == connectionGeneration.get()) focusBusy.value = false }
+        }
+        focusJob = job
         return job
     }
 

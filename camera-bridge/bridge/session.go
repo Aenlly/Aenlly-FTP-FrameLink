@@ -32,7 +32,7 @@ type Progress interface{ OnProgress(done, total int64) }
 // NetworkBinder binds a camera socket without changing the application's cloud network.
 type NetworkBinder interface{ BindSocket(fd int64) error }
 
-// Session owns one camera connection. It never deletes media or restores settings.
+// Session owns one camera connection. It never deletes media or applies bulk settings restores.
 type Session struct {
 	mu             sync.Mutex
 	op             sync.Mutex
@@ -46,6 +46,7 @@ type Session struct {
 	transferCancel context.CancelFunc
 	metadata       string
 	newestIndex    *contentsIndex
+	controls       []uint16
 }
 
 type connectionConfig struct {
@@ -174,11 +175,12 @@ func (s *Session) Connect(raw string) (string, error) {
 		return fail(errors.New("连接已取消"))
 	}
 	s.client, s.ssh, s.ctx, s.cancel, s.identity = c, tunnel, ctx, cancel, hex.EncodeToString(identity[:12])
+	s.controls = slices.Clone(ext.Controls)
 	s.mu.Unlock()
 	return marshal(map[string]any{"id": s.identity, "model": di.Model, "firmware": di.DeviceVersion, "manufacturer": di.Manufacturer,
 		"canBrowse": slices.Contains(di.Operations, uint16(0x923C)), "canDownload": slices.Contains(di.Operations, uint16(0x923D)),
 		"canPreview": slices.Contains(di.Operations, uint16(0x923E)), "canCapture": slices.Contains(ext.Controls, uint16(0xD2C2)),
-		"canLiveView": canLive, "hardwareVerified": false})
+		"canLiveView": canLive, "canFocus": slices.Contains(ext.Controls, ptpip.SonyCtlRemoteTouch) || slices.Contains(ext.Controls, ptpip.SonyCtlAFAreaPosition), "hardwareVerified": false})
 }
 
 func (s *Session) camera() (*ptpip.Client, context.Context, error) {
@@ -579,6 +581,7 @@ func (s *Session) Close() {
 	c, tunnel, cancel := s.client, s.ssh, s.cancel
 	s.client, s.ssh, s.cancel = nil, nil, nil
 	s.newestIndex = nil
+	s.controls = nil
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()

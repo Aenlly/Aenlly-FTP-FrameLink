@@ -16,7 +16,7 @@ mode=sys.argv[1] if len(sys.argv)>1 else 'all'
 prefix='app.framelink.camera.'
 classes={'all':','.join(prefix+x for x in ['LocalAcceptanceTest','NativeProtocolAcceptanceTest','NativeUiAcceptanceTest','FtpClientAcceptanceTest','PhotoManagementAcceptanceTest','CameraIdentityAcceptanceTest','GalleryInteractionAcceptanceTest','SelectionBatchesAcceptanceTest','LiveViewUsabilityAcceptanceTest','CameraUsabilityAcceptanceTest']), 'native':prefix+'NativeProtocolAcceptanceTest', 'ui':prefix+'NativeUiAcceptanceTest', 'ftp':prefix+'FtpClientAcceptanceTest', 'ftp-ui':prefix+'FtpClientAcceptanceTest#installedUiShowsCoreActionsConnectsAndDownloads', 'visual':prefix+'VisualAcceptanceTest','photos':prefix+'PhotoManagementAcceptanceTest','identity':prefix+'CameraIdentityAcceptanceTest','gallery':prefix+'GalleryInteractionAcceptanceTest','batches':prefix+'SelectionBatchesAcceptanceTest','live':prefix+'LiveViewUsabilityAcceptanceTest','usability':prefix+'CameraUsabilityAcceptanceTest'}
 if mode not in classes: raise SystemExit('未知验收模式：'+mode)
-if mode in ['all', 'identity', 'gallery']:
+if mode in ['all', 'identity', 'gallery', 'ui']:
     # 仅测试设备需要绑定反向端口22；业务App连接相机不需要root
     commands[0:0] = [['root'], ['wait-for-device'], ['reverse','tcp:22','tcp:16022'], ['reverse','tcp:16023','tcp:16023']]
 variant=sys.argv[2] if len(sys.argv)>2 else 'phone'

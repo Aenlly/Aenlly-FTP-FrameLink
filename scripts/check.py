@@ -23,7 +23,7 @@ checks = {
     'android': ('.', [['sh', 'scripts/build-android.sh']]),
     'android-deps': ('android', [['./gradlew', '--no-daemon', ':app:dependencies', '--configuration', 'debugCompileClasspath']]),
     'android-tests-build': ('android', [['./gradlew','--no-daemon','testDebugUnitTest','assembleDebug','assembleDebugAndroidTest']]),
-    'android-lint': ('android', [['./gradlew','--no-daemon','lintDebug']]),
+    'android-lint': ('android', [['./gradlew','--no-daemon','--max-workers=1','-Dorg.gradle.jvmargs=-Xmx1536m','lintDebug']]),
     'ios-core': ('.', [['swift','test','--package-path','ios'], ['swift','run','--package-path','ios','FrameLinkCoreCheck']]),
     'ios': ('.', [['sh','scripts/build-ios.sh']]),
     'ios-ui': ('.', [[sys.executable,'scripts/check-ios-ui.py']]),

@@ -23,6 +23,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -45,12 +47,15 @@ import kotlinx.coroutines.launch
 
 /** 竖屏采用系统相机的拍摄层级；横屏保持完整窗口，控制作为可收起的玻璃浮层 */
 @Composable
-internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->Unit,paused:Boolean,onGallery:()->Unit) {
+internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,onGallery:()->Unit) {
     val frame by runtime.frame.collectAsStateWithLifecycle()
     val camera by runtime.camera.collectAsStateWithLifecycle()
     val properties by runtime.properties.collectAsStateWithLifecycle()
     val updating by runtime.parameterUpdating.collectAsStateWithLifecycle()
     val countdown by runtime.captureCountdown.collectAsStateWithLifecycle()
+    val shooting by runtime.captureBusy.collectAsStateWithLifecycle()
+    val receiving by runtime.postCaptureBusy.collectAsStateWithLifecycle()
+    val focusing by runtime.focusBusy.collectAsStateWithLifecycle()
     val latest by runtime.lastCapture.collectAsStateWithLifecycle()
     val notice by runtime.notice.collectAsStateWithLifecycle()
     val landscape=LocalConfiguration.current.orientation==Configuration.ORIENTATION_LANDSCAPE
@@ -65,7 +70,12 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->
     var zebra by rememberSaveable{mutableStateOf(false)}
     var peak by rememberSaveable{mutableStateOf(false)}
     var timer by rememberSaveable{mutableIntStateOf(0)}
-    var shooting by remember{mutableStateOf(false)}
+    var shootingSettings by remember{mutableStateOf(false)}
+    var autoImport by remember{mutableStateOf(runtime.settings.get("capture.auto_import")=="true")}
+    var singleShot by remember{mutableStateOf(runtime.settings.get("capture.single")!="false")}
+    var openingGallery by remember{mutableStateOf(false)}
+    var viewport by remember{mutableStateOf(IntSize.Zero)}
+    var focusPoint by remember{mutableStateOf<Offset?>(null)}
     var histogram by remember{mutableStateOf(IntArray(64))}
     var dimensions by remember{mutableStateOf(IntSize.Zero)}
     var rendererError by remember{mutableStateOf("")}
@@ -77,9 +87,22 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->
     fun hide(){controls=false;tools=false}
     fun retry(){rendererError="";presented=false;rendererKey++;runtime.stopLive();runtime.startLive()}
     fun shoot(){
-        if(countdown>0){runtime.cancelCountdown();shooting=false}
-        else if(!shooting){shooting=true;scope.launch{try{runtime.capture(timer).join()}finally{shooting=false}}}
+        if(countdown>0)runtime.cancelCountdown()
+        else if(!shooting&&!receiving)runtime.capture(timer)
     }
+    fun openAlbum(){
+        if(openingGallery)return
+        runtime.cancelCountdown()
+        openingGallery=true
+        scope.launch{try{runtime.awaitPhotoWork();runtime.stopLive();onGallery()}finally{openingGallery=false}}
+    }
+    fun focus(point:Offset){
+        val normalized=liveFocusPoint(point,viewport,dimensions)?:return
+        if(camera.info?.canFocus!=true){runtime.notice.value="当前相机未开放点按对焦，请在机身调整";return}
+        focusPoint=point
+        runtime.focusAt(normalized.x,normalized.y)
+    }
+    LaunchedEffect(focusPoint,focusing){if(focusPoint!=null&&!focusing){kotlinx.coroutines.delay(1600);focusPoint=null}}
     fun cycleTimer(){timer=when(timer){0->3;3->10;else->0}}
     @Composable fun Quick(modifier:Modifier=Modifier){
         LazyRow(modifier.testTag("live-quick-properties"),horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -103,11 +126,12 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->
                 val portraitFrame=if(!landscape&&controls) PaddingValues(top=safe.calculateTopPadding()+56.dp,bottom=safe.calculateBottomPadding()+if(tools) panelHeight+12.dp else 194.dp) else PaddingValues(0.dp)
                 Box(Modifier.fillMaxSize().then(if(controls)Modifier.hazeSource(glass) else Modifier)){
                     Box(Modifier.fillMaxSize().padding(portraitFrame).testTag("live-preview")
+                        .onSizeChanged{viewport=it}
                         .semantics{
-                            contentDescription=if(controls)"取景画面，点按隐藏控制" else "显示取景控制"
+                            contentDescription="取景画面，点按对焦"
                             stateDescription=if(rendererError.isNotBlank())rendererError else if(presented)"取景画面已显示" else "等待取景画面"
-                            onClick{controls=!controls;if(!controls)tools=false;true}
-                        }.pointerInput(Unit){detectTapGestures(onTap={controls=!controls;if(!controls)tools=false})},
+                            onClick{focus(Offset(viewport.width/2f,viewport.height/2f));true}
+                        }.pointerInput(viewport,dimensions,camera.info?.canFocus){detectTapGestures(onTap={focus(it)})},
                         contentAlignment=Alignment.Center
                     ){
                         key(rendererKey){
@@ -134,6 +158,9 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->
                             if(rendererError.isNotBlank())TextButton(onClick=::retry){Text("重新打开取景")}
                         }
                         if(countdown>0)Text(countdown.toString(),color=Color.White,fontSize=64.sp)
+                        focusPoint?.let{point->Canvas(Modifier.fillMaxSize()){
+                            drawRect(Color(0xffffd66b),topLeft=point-Offset(24.dp.toPx(),24.dp.toPx()),size=androidx.compose.ui.geometry.Size(48.dp.toPx(),48.dp.toPx()),style=Stroke(1.5.dp.toPx()))
+                        }}
                         if(controls&&showHistogram)Canvas(Modifier.align(Alignment.BottomStart).padding(12.dp).size(104.dp,52.dp).testTag("live-histogram")
                             .semantics{contentDescription="预览亮度直方图"}.clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha=.48f)).padding(6.dp)){
                             val highest=(histogram.maxOrNull()?:1).coerceAtLeast(1)
@@ -141,6 +168,10 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->
                             drawLine(Color.White.copy(alpha=.28f),Offset(0f,size.height),Offset(size.width,size.height),1f)
                         }
                     }
+                }
+                if(!controls)IconButton(onClick={controls=true},modifier=Modifier.align(Alignment.TopEnd).padding(safe).padding(12.dp).background(Color.Black.copy(alpha=.3f),CircleShape)
+                    .semantics{stateDescription=if(presented)"取景画面已显示" else "等待取景画面"}){
+                    Icon(Icons.Outlined.Tune,"显示取景控制",tint=Color.White)
                 }
                 if(controls&&!landscape&&!tools){
                     Column(Modifier.fillMaxSize().padding(safe).padding(horizontal=16.dp)){
@@ -150,7 +181,7 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->
                             IconButton(onClick=::cycleTimer){Icon(Icons.Outlined.Timer,if(timer==0)"无延时" else "$timer 秒延时",tint=if(timer>0)Color(0xffb8d7f0)else Color.White)}
                             IconButton(onClick={grid=!grid}){Icon(Icons.Outlined.Grid3x3,"构图网格",tint=if(grid)Color(0xffb8d7f0)else Color.White)}
                             IconButton(onClick=::hide){Icon(Icons.Outlined.Fullscreen,"沉浸取景",tint=Color.White)}
-                            IconButton(onClick={info=true}){Icon(Icons.Outlined.MoreHoriz,"连接信息",tint=Color.White)}
+                            IconButton(onClick={shootingSettings=true}){Icon(Icons.Outlined.MoreHoriz,"拍摄设置",tint=Color.White)}
                         }
                         Spacer(Modifier.weight(1f))
                         Column(Modifier.fillMaxWidth().height(194.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(8.dp)){
@@ -160,11 +191,11 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->
                                 TextButton(onClick={tools=true}){Text("专业工具",color=Color.White.copy(alpha=.75f),fontSize=13.sp)}
                             }
                             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
-                                Box(Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick={if(latest!=null)onPhoto(latest!!)else onGallery()}),contentAlignment=Alignment.Center){
-                                    if(latest!=null)AsyncImage(latest!!.displayUri,"查看拍后照片",Modifier.fillMaxSize())
+                                Box(Modifier.size(64.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick=::openAlbum),contentAlignment=Alignment.Center){
+                                    if(latest!=null)AsyncImage(latest!!.displayUri,"查看相机照片",Modifier.fillMaxSize())
                                     else Icon(Icons.Outlined.PhotoLibrary,"查看相机照片",tint=Color.White,modifier=Modifier.size(28.dp))
                                 }
-                                Shutter(76,shooting,countdown,camera.info?.canCapture==true,::shoot)
+                                Shutter(76,shooting,countdown,camera.info?.canCapture==true&&!receiving,::shoot)
                                 IconButton(onClick=::retry,modifier=Modifier.size(64.dp).background(Color.White.copy(alpha=.09f),CircleShape)){
                                     Icon(Icons.Outlined.Refresh,"重新打开取景",tint=Color.White,modifier=Modifier.size(28.dp))
                                 }
@@ -190,7 +221,7 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->
                         Column(Modifier.align(Alignment.CenterEnd).width(112.dp).fillMaxHeight(),horizontalAlignment=Alignment.CenterHorizontally){
                             GlassSurface(glass,radius=24.dp,dark=true){
                                 Row{
-                                    IconButton(onClick={info=true}){Icon(Icons.Outlined.MoreHoriz,"连接信息",tint=Color.White)}
+                                    IconButton(onClick={shootingSettings=true}){Icon(Icons.Outlined.MoreHoriz,"拍摄设置",tint=Color.White)}
                                     IconButton(onClick=::hide){Icon(Icons.Outlined.Fullscreen,"沉浸取景",tint=Color.White)}
                                 }
                             }
@@ -199,8 +230,8 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->
                             GlassSurface(glass,radius=30.dp,dark=true){
                                 Column(Modifier.padding(8.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(8.dp)){
                                     TextButton(onClick=::cycleTimer){Text(if(timer==0)"无延时" else "$timer 秒",fontSize=11.sp,color=Color.White)}
-                                    Shutter(64,shooting,countdown,camera.info?.canCapture==true,::shoot)
-                                    IconButton(onClick={if(latest!=null)onPhoto(latest!!)else onGallery()}){
+                                    Shutter(64,shooting,countdown,camera.info?.canCapture==true&&!receiving,::shoot)
+                                    IconButton(onClick=::openAlbum){
                                         Icon(Icons.Outlined.PhotoLibrary,"查看相机照片",tint=Color.White)
                                     }
                                 }
@@ -240,16 +271,31 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,onPhoto:(Photo)->
                                 }
                             }
                             Row(Modifier.fillMaxWidth().padding(top=6.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){
-                                IconButton(onClick={if(latest!=null)onPhoto(latest!!)else onGallery()}){Icon(Icons.Outlined.PhotoLibrary,"查看相机照片",tint=Color.White,modifier=Modifier.size(22.dp))}
-                                Shutter(48,shooting,countdown,camera.info?.canCapture==true,::shoot)
+                                IconButton(onClick=::openAlbum){Icon(Icons.Outlined.PhotoLibrary,"查看相机照片",tint=Color.White,modifier=Modifier.size(22.dp))}
+                                Shutter(48,shooting,countdown,camera.info?.canCapture==true&&!receiving,::shoot)
                                 TextButton(onClick=::cycleTimer){Text(if(timer==0)"无延时" else "$timer 秒",fontSize=11.sp,color=Color.White)}
                             }
                         }
                     }
                 }
                 if(controls&&notice.isNotBlank()&&!tools)Text(notice,color=Color.White,fontSize=11.sp,maxLines=2,modifier=Modifier.align(Alignment.Center).background(Color.Black.copy(alpha=.6f),UiTokens.control).padding(12.dp))
+                if(receiving||openingGallery)Text(if(openingGallery)"正在完成拍摄操作，稍后打开图库" else "正在接收拍后照片",color=Color.White,fontSize=11.sp,modifier=Modifier.align(Alignment.TopCenter).padding(safe).padding(top=64.dp).background(Color.Black.copy(alpha=.5f),UiTokens.control).padding(8.dp))
             }
         }
+        if(shootingSettings)AlertDialog(onDismissRequest={shootingSettings=false},title={Text("拍摄设置")},text={
+            Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+                Row(verticalAlignment=Alignment.CenterVertically){
+                    Column(Modifier.weight(1f)){Text("单张拍摄");Text(if(singleShot)"拍摄时切换单张，完成后恢复机身模式" else "跟随机身模式，连拍设置可能拍摄多张",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+                    Switch(singleShot,{singleShot=it;runtime.settings.put("capture.single",it.toString())},modifier=Modifier.semantics{contentDescription="单张拍摄"},enabled=!shooting&&!receiving)
+                }
+                Row(verticalAlignment=Alignment.CenterVertically){
+                    Column(Modifier.weight(1f)){Text("拍后自动导入");Text("默认关闭。开启时需在机身设置电脑与存储卡保存；导入期间需等待传输完成",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+                    Switch(autoImport,{autoImport=it;runtime.settings.put("capture.auto_import",it.toString())},modifier=Modifier.semantics{contentDescription="拍后自动导入"},enabled=!shooting&&!receiving)
+                }
+                Text("点按画面选择对焦位置。机身能力或当前对焦模式不支持时会给出提示。",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick={shootingSettings=false;info=true}){Text("连接信息")}
+            }
+        },confirmButton={TextButton(onClick={shootingSettings=false}){Text("完成")}})
         if(info)AlertDialog(onDismissRequest={info=false},title={Text("连接信息")},text={
             Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
                 Text(camera.info?.displayName()?:"相机未连接")

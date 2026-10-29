@@ -2,7 +2,9 @@
 """在明确指定的小米17或红米设备验证Sony A7C II，手动安装与应用内触控需显式选择"""
 import argparse
 import datetime
+import hashlib
 import pathlib
+import re
 import subprocess
 
 root = pathlib.Path(__file__).resolve().parents[1]
@@ -13,13 +15,37 @@ parser.add_argument('--manual-install', action='store_true', help='使用已在�
 parser.add_argument('--app-touch', action='store_true', help='仅向App自己的窗口分发触控，不验证系统输入注入')
 parser.add_argument('--case', choices=['all', 'gallery', 'live'], default='all')
 parser.add_argument('--include-ftp', action='store_true', help='追加本机FTP客户端字节、中文文件名与取消校验')
+parser.add_argument('--include-capture', action='store_true', help='明确执行一次真实快门，保留机身照片并验证数量、状态和进入图库连接')
 args = parser.parse_args()
 adb = [str(root / '.tools/android-sdk/platform-tools/adb'), '-s', args.serial]
+version = re.search(r'versionName\s*=\s*"([^"]+)"', (root / 'android/app/build.gradle.kts').read_text()).group(1)
+expected_packages = {
+    'app.framelink.camera': root / (f'artifacts/FrameLink-{version}-debug.apk' if args.manual_install else 'android/app/build/outputs/apk/debug/app-debug.apk'),
+    'app.framelink.camera.test': root / (f'artifacts/FrameLink-{version}-diagnostics.apk' if args.manual_install else 'android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'),
+}
+
+def verify_installed_packages():
+    for package, expected in expected_packages.items():
+        if not expected.is_file():
+            raise SystemExit(f'缺少本轮安装包：{expected}')
+        paths = subprocess.check_output(adb + ['shell', 'pm', 'path', package], text=True).splitlines()
+        if len(paths) != 1 or not paths[0].startswith('package:/data/app/'):
+            raise SystemExit(f'未找到可核对的整包：{package}')
+        actual = subprocess.check_output(adb + ['shell', 'sha256sum', paths[0].removeprefix('package:')], text=True).split()[0]
+        digest = hashlib.sha256()
+        with expected.open('rb') as source:
+            for block in iter(lambda: source.read(1024 * 1024), b''):
+                digest.update(block)
+        if actual != digest.hexdigest():
+            raise SystemExit(f'{package}不是本轮构建，停止测试；请先覆盖安装主包和诊断组件')
+
 model = subprocess.check_output(adb + ['shell', 'getprop', 'ro.product.model'], text=True).strip()
 if model not in {'25113PN0EC', '23013RK75C'}:
     raise SystemExit('设备不在本项目已确认的实机验收范围内')
 sdk = int(subprocess.check_output(adb + ['shell', 'getprop', 'ro.build.version.sdk'], text=True).strip())
 stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+if args.manual_install:
+    verify_installed_packages()
 backup = root / f'artifacts/phone-before-physical-{stamp}.tar'
 log = root / f'build-logs/physical-ui-{stamp}.log'
 subprocess.run(adb + ['shell', 'am', 'force-stop', 'app.framelink.camera'], check=True)
@@ -31,19 +57,24 @@ commands = [] if args.manual_install else [
 ]
 if sdk >= 37:
     commands.append(['shell', 'pm', 'grant', 'app.framelink.camera', 'android.permission.ACCESS_LOCAL_NETWORK'])
-test_class = 'app.framelink.camera.PhysicalCoreUiAcceptanceTest'
-if args.case != 'all':
-    test_class += '#' + {'gallery': 'connectedGallerySelectionDownloadBatchAndReconnectWorkOnPhone',
-        'live': 'liveLabelsAndFooterStayVisibleAndApertureRestoresExactly'}[args.case]
+base_class = 'app.framelink.camera.PhysicalCoreUiAcceptanceTest'
+methods = {'gallery': 'connectedGallerySelectionDownloadBatchAndReconnectWorkOnPhone',
+    'live': 'liveLabelsAndFooterStayVisibleAndApertureRestoresExactly'}
+test_class = ','.join(base_class + '#' + methods[case] for case in (['gallery', 'live'] if args.case == 'all' else [args.case]))
+if args.include_capture:
+    test_class += ',' + base_class + '#singleShotFinishesWithoutImportAndAlbumKeepsConnection'
 if args.include_ftp:
     test_class += ',app.framelink.camera.FtpClientAcceptanceTest#protocolRoundTripChineseNamesAuthenticationAndNoOverwrite'
 commands.append(['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', test_class,
     '-e', 'allowPhysicalCameraRead', 'true', '-e', 'appTouch', str(args.app_touch).lower(),
+    '-e', 'allowPhysicalCapture', str(args.include_capture).lower(),
     'app.framelink.camera.test/androidx.test.runner.AndroidJUnitRunner'])
 result = 0
 try:
     with log.open('w') as output:
         for command in commands:
+            if command[:3] == ['shell', 'am', 'instrument']:
+                verify_installed_packages()
             output.write('COMMAND: ' + ' '.join(command) + '\n')
             output.flush()
             try:
@@ -56,7 +87,7 @@ try:
 finally:
     subprocess.run(adb + ['shell', 'am', 'start', '-n', 'app.framelink.camera/.MainActivity'], capture_output=True)
 text = log.read_text()
-test_count = (2 if args.case == 'all' else 1) + int(args.include_ftp)
+test_count = (2 if args.case == 'all' else 1) + int(args.include_ftp) + int(args.include_capture)
 expected = f'OK ({test_count} {"test" if test_count == 1 else "tests"})'
 if 'FAILURES!!!' in text or 'INSTRUMENTATION_FAILED' in text or expected not in text:
     result = result or 1

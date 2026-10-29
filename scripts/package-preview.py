@@ -11,7 +11,7 @@ import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-version='0.1.15'
+version='0.1.16'
 ios_version='0.1.6'
 checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-instrument-ui','android-instrument-gallery','android-instrument-usability','android-instrument-live','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark','ios','ios-core','ios-ui','ios-device']
 checks.append('android-instrument-live-flow')
@@ -97,7 +97,7 @@ def freeze_ui_evidence(kind,source,data):
         if old.get('apkSha256')!=data.get('apkSha256')or old.get('diagnosticSha256')!=data.get('diagnosticSha256'):
             raise SystemExit('该版本界面证据已冻结为其他构建，请使用新版本：'+str(directory))
     directory.mkdir(exist_ok=True)
-    media=list(data.get('screenshots',[]))
+    media=list(data.get('screenshots',[]))+list(data.get('receipts',[]))
     if data.get('video'):media.append(data['video'])
     for item in media:
         relative=pathlib.Path(item['file'])

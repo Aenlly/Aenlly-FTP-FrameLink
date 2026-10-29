@@ -141,6 +141,7 @@ class NativeUiAcceptanceTest {
             compose.onNodeWithText("取景拍摄").performClick()
             compose.waitUntil(20000) { runtime.frame.value?.isNotEmpty() == true }
             compose.onNodeWithContentDescription("更多控制").performClick()
+            compose.onNodeWithText("预览辅助").performClick()
             compose.onNodeWithContentDescription("拍摄设置").performClick()
             compose.onNodeWithContentDescription("拍后自动导入").assertIsOff().performClick()
             compose.onNodeWithText("完成", substring = false).performClick()

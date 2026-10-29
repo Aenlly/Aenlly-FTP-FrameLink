@@ -97,6 +97,8 @@ class LiveViewUsabilityAcceptanceTest {
             compose.waitForIdle()
             acceptanceScreenshot(compose.activity, "live-landscape-glass-menu")
             assertEquals(landscape, compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow)
+            compose.onNodeWithText("预览辅助").performClick()
+            acceptanceScreenshot(compose.activity, "live-landscape-assist-menu")
             compose.onNodeWithContentDescription("直方图", substring = false).performClick()
             compose.onNodeWithContentDescription("收起工具").performClick()
             val histogram = compose.onNodeWithTag("live-histogram").fetchSemanticsNode().boundsInWindow
@@ -173,6 +175,8 @@ class LiveViewUsabilityAcceptanceTest {
             assertFalse("菜单空白不应穿透对焦",runtime.focusBusy.value)
             compose.waitForIdle()
             acceptanceScreenshot(compose.activity, "live-portrait-glass-menu")
+            compose.onNodeWithText("预览辅助").performClick()
+            acceptanceScreenshot(compose.activity, "live-portrait-assist-menu")
             compose.onNodeWithText("机身参数").performClick()
             compose.onNodeWithTag("live-properties").performScrollToNode(hasText("对焦模式"))
             compose.onNodeWithText("对焦模式").performClick()
@@ -195,5 +199,41 @@ class LiveViewUsabilityAcceptanceTest {
             compose.onNodeWithContentDescription("显示取景控制").performClick()
             compose.onNodeWithContentDescription("返回相机").performClick()
         } finally { runtime.disconnect() }
+    }
+
+    @Test
+    fun compactMenusKeepBodyDefaultAndReadableTargetsAcrossRotation() {
+        runtime.disconnect()
+        try {
+            openLive()
+            compose.onNodeWithContentDescription("更多控制").performClick()
+            compose.onNodeWithText("机身参数").assert(hasStateDescription("已选中"))
+            for ((orientation,label) in listOf(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT to "portrait",ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE to "landscape")) {
+                compose.activity.requestedOrientation=orientation
+                compose.waitUntil(15000) { compose.activity.resources.configuration.orientation==if(orientation==ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)android.content.res.Configuration.ORIENTATION_PORTRAIT else android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+                for ((tab,suffix) in listOf("机身参数" to "body","预览辅助" to "assist")) {
+                    compose.onNodeWithText(tab).performClick()
+                    compose.waitForIdle()
+                    val window=compose.onNodeWithTag("fullscreen-scene").fetchSemanticsNode().boundsInWindow
+                    val panel=compose.onNodeWithTag("live-tools-panel").fetchSemanticsNode().boundsInWindow
+                    val density=compose.activity.resources.displayMetrics.density
+                    val cells=compose.onAllNodesWithTag("live-tool-cell",useUnmergedTree=true).fetchSemanticsNodes().filter { it.boundsInWindow.overlaps(panel) }
+                    assertTrue("默认菜单锚定上方",panel.top<window.top+window.height*.3f)
+                    assertTrue("菜单宽度保持紧凑",panel.width<=269*density)
+                    assertTrue("菜单完整留在窗口内",panel.left>=window.left&&panel.right<=window.right&&panel.bottom<=window.bottom)
+                    assertTrue("菜单项目保持可触控",cells.isNotEmpty()&&cells.all { it.boundsInWindow.width>=44*density&&it.boundsInWindow.height>=44*density })
+                    val firstRow=cells.count { kotlin.math.abs(it.boundsInWindow.top-cells.first().boundsInWindow.top)<density }
+                    if(compose.activity.resources.configuration.fontScale<=1.05f)assertEquals("普通字号使用四列",4,firstRow)
+                    else assertTrue("大字自动减列",firstRow<4)
+                    acceptanceScreenshot(compose.activity,"live-menu-$label-$suffix")
+                }
+            }
+            compose.onNodeWithContentDescription("收起工具").performClick()
+            compose.onNodeWithContentDescription("拍摄").assertIsDisplayed()
+            compose.onNodeWithContentDescription("返回相机").performClick()
+        } finally {
+            compose.activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            runtime.disconnect()
+        }
     }
 }

@@ -37,6 +37,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -56,6 +57,18 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.launch
 
+private data class LiveToolItem(val title:String,val value:String,val selected:Boolean=false,val enabled:Boolean=true,val onClick:()->Unit)
+
+@Composable
+private fun LiveToolCell(item:LiveToolItem,modifier:Modifier){
+    Column(modifier.testTag("live-tool-cell").heightIn(min=52.dp).clip(RoundedCornerShape(12.dp)).background(if(item.selected)LiveAccent.copy(alpha=.16f)else Color.Black.copy(alpha=.16f))
+        .clickable(enabled=item.enabled,onClick=item.onClick).semantics{contentDescription=item.title;stateDescription=item.value}
+        .padding(horizontal=2.dp,vertical=6.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(4.dp)){
+        Text(item.title,fontSize=11.sp,lineHeight=14.sp,color=if(item.selected)LiveAccent else Color.White,maxLines=2,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+        Text(item.value,fontSize=10.sp,lineHeight=13.sp,color=Color.White.copy(alpha=.68f),maxLines=2,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+    }
+}
+
 /** 拍照界面保持简洁，专业参数按需展开；两种方向共享完整取景与真实机身状态 */
 @Composable
 internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,onGallery:()->Unit) {
@@ -74,7 +87,7 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
     val glass=remember{HazeState()}
     var controls by rememberSaveable{mutableStateOf(true)}
     var tools by rememberSaveable{mutableStateOf(false)}
-    var assistants by rememberSaveable{mutableStateOf(true)}
+    var assistants by rememberSaveable{mutableStateOf(false)}
     var professional by rememberSaveable{mutableStateOf(false)}
     var showHistogram by rememberSaveable{mutableStateOf(false)}
     var info by rememberSaveable{mutableStateOf(false)}
@@ -237,8 +250,12 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                 val imageRatio=if(dimensions.height>0)dimensions.width.toFloat()/dimensions.height else 1.5f
                 val cameraSpace=(maxWidth-maxHeight*imageRatio).coerceIn(112.dp,320.dp)
                 val dockHeight=if(professional)220.dp else 162.dp
-                val panelHeight=minOf(300.dp,(maxHeight-safe.calculateTopPadding()-safe.calculateBottomPadding()-(if(landscape)82.dp else dockHeight+24.dp)).coerceAtLeast(120.dp))
-                val panelWidth=if(landscape) minOf(238.dp,maxWidth*.4f) else minOf(maxWidth-28.dp,360.dp)
+                val panelTop=if(maxHeight-safe.calculateTopPadding()-safe.calculateBottomPadding()<240.dp)12.dp else 66.dp
+                val panelEnd=if(landscape&&maxWidth>=600.dp)200.dp else 14.dp
+                val panelHeight=(maxHeight-safe.calculateTopPadding()-safe.calculateBottomPadding()-panelTop-14.dp).coerceAtLeast(120.dp)
+                val panelWidth=minOf(if(landscape)238.dp else 268.dp,maxWidth-panelEnd-14.dp-safe.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)-safe.calculateRightPadding(androidx.compose.ui.unit.LayoutDirection.Ltr))
+                // 普通字号保持四列；大字或窄窗口增加单项宽度，保留至少44dp触控区域
+                val toolColumns=((panelWidth-20.dp)/(52.dp*LocalDensity.current.fontScale.coerceAtLeast(1f))).toInt().coerceIn(1,4)
                 val portraitFrame=PaddingValues(end=if(landscape)cameraSpace else 0.dp)
                 Box(Modifier.fillMaxSize().then(if(controls)Modifier.hazeSource(glass) else Modifier)){
                     Box(Modifier.fillMaxSize().padding(portraitFrame).testTag("live-preview")
@@ -322,61 +339,41 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                     }
                 }
                 AnimatedVisibility(visible=controls&&tools,
-                    modifier=Modifier.align(if(landscape)Alignment.TopEnd else Alignment.BottomCenter).padding(safe).padding(start=14.dp,end=if(landscape)200.dp else 14.dp,top=if(landscape)66.dp else 0.dp,bottom=if(landscape)14.dp else dockHeight+12.dp),
+                    modifier=Modifier.align(Alignment.TopEnd).padding(safe).padding(start=14.dp,end=panelEnd,top=panelTop,bottom=14.dp),
                     enter=fadeIn(tween(160))+scaleIn(tween(180),initialScale=.96f),exit=fadeOut(tween(120))+scaleOut(tween(120),targetScale=.98f)){
-                    GlassSurface(glass,Modifier.width(panelWidth).height(panelHeight).testTag("live-tools-panel").pointerInput(Unit){detectTapGestures(onTap={})},radius=24.dp,dark=true){
-                        Column(Modifier.padding(horizontal=16.dp,vertical=8.dp)){
+                    GlassSurface(glass,Modifier.width(panelWidth).heightIn(max=panelHeight).testTag("live-tools-panel").pointerInput(Unit){detectTapGestures(onTap={})},radius=23.dp,dark=true){
+                        Column(Modifier.padding(horizontal=10.dp,vertical=8.dp)){
                             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-                                Text("取景设置",Modifier.weight(1f),fontSize=15.sp,color=Color.White)
-                                IconButton(onClick=::hide){Icon(Icons.Outlined.Fullscreen,"沉浸取景",tint=Color.White,modifier=Modifier.size(20.dp))}
-                                IconButton(onClick={tools=false}){Icon(Icons.Outlined.Close,"收起工具",tint=Color.White,modifier=Modifier.size(20.dp))}
+                                Text("取景设置",Modifier.weight(1f),fontSize=13.sp,color=Color.White)
+                                IconButton(onClick=::hide,modifier=Modifier.size(44.dp)){Icon(Icons.Outlined.Fullscreen,"沉浸取景",tint=Color.White,modifier=Modifier.size(18.dp))}
+                                IconButton(onClick={tools=false},modifier=Modifier.size(44.dp)){Icon(Icons.Outlined.Close,"收起工具",tint=Color.White,modifier=Modifier.size(18.dp))}
                             }
-                            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.Center){
-                                TextButton(onClick={assistants=true}){Text("预览辅助",color=if(assistants)LiveAccent else Color.White.copy(alpha=.55f),fontSize=12.sp)}
-                                TextButton(onClick={assistants=false}){Text("机身参数",color=if(!assistants)LiveAccent else Color.White.copy(alpha=.55f),fontSize=12.sp)}
+                            Row(Modifier.fillMaxWidth().padding(bottom=6.dp).clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha=.16f))){
+                                listOf(false to "机身参数",true to "预览辅助").forEach{(tab,title)->
+                                    Box(Modifier.weight(1f).heightIn(min=44.dp).clip(RoundedCornerShape(12.dp)).background(if(assistants==tab)Color.White.copy(alpha=.12f)else Color.Transparent)
+                                        .clickable{assistants=tab}.padding(horizontal=4.dp,vertical=10.dp).semantics{stateDescription=if(assistants==tab)"已选中"else"未选中"},contentAlignment=Alignment.Center){
+                                        Text(title,color=if(assistants==tab)LiveAccent else Color.White.copy(alpha=.65f),fontSize=11.sp)
+                                    }
+                                }
                             }
-                            LazyColumn(Modifier.weight(1f).testTag("live-properties"),verticalArrangement=Arrangement.spacedBy(8.dp)){
-                                if(assistants){
-                                    val aids=listOf(
-                                        Triple("构图网格",Icons.Outlined.Grid3x3,grid),Triple("直方图",Icons.Outlined.BarChart,showHistogram),
-                                        Triple("峰值对焦",Icons.Outlined.CenterFocusStrong,peak),Triple("过曝提示",Icons.Outlined.Contrast,zebra),
-                                        Triple("延时快门",Icons.Outlined.Timer,timer>0),Triple("拍摄设置",Icons.Outlined.Tune,false))
-                                    items(aids.chunked(3)){row->
-                                        Row(Modifier.fillMaxWidth()){
-                                            row.forEach{(title,icon,selected)->
-                                                Column(Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).clickable{
-                                                    when(title){
-                                                        "构图网格"->grid=!grid
-                                                        "直方图"->showHistogram=!showHistogram
-                                                        "峰值对焦"->peak=!peak
-                                                        "过曝提示"->zebra=!zebra
-                                                        "延时快门"->cycleTimer()
-                                                        else->{tools=false;shootingSettings=true}
-                                                    }
-                                                }.padding(vertical=8.dp).semantics{contentDescription=title},horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(6.dp)){
-                                                    Box(Modifier.size(46.dp).background(if(selected)LiveAccent.copy(alpha=.18f)else Color.Black.copy(alpha=.25f),CircleShape),contentAlignment=Alignment.Center){
-                                                        Icon(icon,null,tint=if(selected)LiveAccent else Color.White,modifier=Modifier.size(24.dp))
-                                                    }
-                                                    Text(if(title=="延时快门"&&timer>0)"$timer 秒" else title,fontSize=11.sp,color=Color.White.copy(alpha=.85f))
-                                                }
-                                            }
-                                        }
+                            val toolItems=if(assistants)listOf(
+                                LiveToolItem("构图网格",if(grid)"开"else"关",selected=grid){grid=!grid},
+                                LiveToolItem("直方图",if(showHistogram)"开"else"关",selected=showHistogram){showHistogram=!showHistogram},
+                                LiveToolItem("峰值对焦",if(peak)"开"else"关",selected=peak){peak=!peak},
+                                LiveToolItem("过曝提示",if(zebra)"开"else"关",selected=zebra){zebra=!zebra},
+                                LiveToolItem("延时快门",if(timer>0)"$timer 秒"else"关闭",selected=timer>0){cycleTimer()},
+                                LiveToolItem("拍摄设置","打开"){tools=false;shootingSettings=true}
+                            )else CameraPropertyText.controls(properties).map{item->
+                                LiveToolItem(CameraPropertyText.name(item).let{if(it=="照片保存位置")"保存位置"else it},if(updating==item.code)"应用中…"else CameraPropertyText.compact(item),enabled=updating==null&&CameraPropertyText.editable(item)){
+                                    propertyCode=item.code;tools=false
+                                }
+                            }+listOf(LiveToolItem("创意外观","机身调整"){tools=false;lookUnavailable=true},LiveToolItem("连接信息","查看"){tools=false;info=true})
+                            LazyColumn(Modifier.heightIn(max=(panelHeight-110.dp).coerceAtLeast(44.dp)).testTag("live-properties"),verticalArrangement=Arrangement.spacedBy(5.dp)){
+                                items(toolItems.chunked(toolColumns)){row->
+                                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(5.dp)){
+                                        row.forEach{item->LiveToolCell(item,Modifier.weight(1f))}
+                                        repeat(toolColumns-row.size){Spacer(Modifier.weight(1f))}
                                     }
-                                }else{
-                                    items(CameraPropertyText.controls(properties).chunked(2)){row->
-                                        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                                            row.forEach{item->
-                                                Column(Modifier.weight(1f).heightIn(min=66.dp).clip(RoundedCornerShape(14.dp)).background(Color.Black.copy(alpha=.18f))
-                                                    .clickable(enabled=updating==null&&CameraPropertyText.editable(item)){propertyCode=item.code;tools=false}.padding(9.dp)){
-                                                    Text(CameraPropertyText.name(item),fontSize=12.sp,color=Color.White)
-                                                    Text(if(updating==item.code)"应用中…"else CameraPropertyText.compact(item),fontSize=11.sp,color=Color.White.copy(alpha=.68f),maxLines=2,modifier=Modifier.padding(top=5.dp))
-                                                }
-                                            }
-                                            if(row.size==1)Spacer(Modifier.weight(1f))
-                                        }
-                                    }
-                                    item{TextButton(onClick={tools=false;lookUnavailable=true}){Text("创意外观",fontSize=12.sp)}}
-                                    item{TextButton(onClick={tools=false;info=true}){Text("连接信息与预览规格",fontSize=11.sp)}}
                                 }
                             }
                         }

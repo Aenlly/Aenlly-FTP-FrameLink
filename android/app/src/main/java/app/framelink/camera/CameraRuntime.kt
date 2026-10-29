@@ -344,19 +344,21 @@ class CameraRuntime(
     suspend fun readAllCameraPhotos() {
         val generation = connectionGeneration.get()
         while (mutableCamera.value.loadingPhotos) delay(50)
+        check(galleryError.value.isBlank()) { galleryError.value }
         while (galleryHasMore.value) {
             check(connectionGeneration.get() == generation && mutableCamera.value.info != null) { "相机连接已变化，请重新选择" }
             val previous = cursor
             loadPhotos().join()
+            check(galleryError.value.isBlank()) { galleryError.value }
             check(cursor != previous || !galleryHasMore.value) { "相机列表未能继续读取，请重试" }
         }
         check(connectionGeneration.get() == generation && mutableCamera.value.info != null) { "相机已断开" }
     }
 
-    fun selectCameraDay(day: String) {
+    fun selectCameraDay(day: String): Job {
         galleryRefreshJob?.cancel()
         galleryDay.value = day
-        loadPhotos(true)
+        return loadPhotos(true)
     }
 
     fun loadPhotos(reset: Boolean = false, slot: Int = currentSlot) =
@@ -410,7 +412,10 @@ class CameraRuntime(
                                     Json.encode(merged),
                                     item.contentId,
                                     item.slot,
-                                    existing?.previewPath.orEmpty(),
+                                    existing?.takeIf { cached ->
+                                        cached.capturedAt==item.capturedAt&&cached.contentId==item.contentId&&cached.slot==item.slot&&
+                                            cached.files().size==item.files.size&&item.files.all { current -> cached.files().any { canReuseCameraFile(current,it) } }
+                                    }?.previewPath.orEmpty(),
                                     existing?.mark ?: PhotoMark.NONE.name,
                                     existing?.projectId.orEmpty(),
                                     if (item.groupId > 0)
@@ -442,11 +447,12 @@ class CameraRuntime(
                 val target =
                     File(
                         context.cacheDir,
-                        "previews/${MediaFiles.key(photo.id)}${if (large) "-large" else ""}.preview",
+                        "previews/${photo.selectionResourceKey()}${if (large) "-large" else ""}.preview",
                     )
                 if (target.exists() && target.length() > 0) return@withLock target.absolutePath
                 if (
                     photo.source == PhotoSource.CAMERA.name &&
+                        photo.id in currentCameraIds.value &&
                         mutableCamera.value.info?.id?.let { photo.sourceKey.startsWith(it) } == true
                 ) {
                     val file =
@@ -455,6 +461,10 @@ class CameraRuntime(
                             ?: error("没有可预览文件")
                     native.preview(photo, file, target, large)
                     database.photos().find(photo.id)?.let {
+                        if(it.selectionResourceKey()!=photo.selectionResourceKey()){
+                            target.delete()
+                            error("照片资源已变化，请刷新相机列表")
+                        }
                         database.photos().save(it.copy(previewPath = target.absolutePath))
                     }
                     target.absolutePath
@@ -472,7 +482,7 @@ class CameraRuntime(
                         database.photos().save(it.copy(previewPath = file.absolutePath))
                     }
                     file.absolutePath
-                } else error("相机未连接，暂时只能查看已经缓存的预览")
+                } else error("请连接并重新浏览相机以核对照片，已有缓存仍可离线查看")
             }
 
     fun mark(photo: Photo, mark: PhotoMark) =

@@ -46,10 +46,17 @@ object MediaFiles {
             }
             .getOrDefault(file.lastModified())
 
-    fun key(value: String): String =
-        MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") {
-            "%02x".format(it)
+    fun key(value: String): String {
+        val bytes=MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
+        val digits="0123456789abcdef"
+        val output=CharArray(bytes.size*2)
+        bytes.forEachIndexed { index,byte ->
+            val number=byte.toInt() and 0xff
+            output[index*2]=digits[number ushr 4]
+            output[index*2+1]=digits[number and 15]
         }
+        return String(output)
+    }
 
     fun digest(input: InputStream): String {
         val md = MessageDigest.getInstance("SHA-256")

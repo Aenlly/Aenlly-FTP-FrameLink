@@ -100,8 +100,9 @@ class SelectionBatchesAcceptanceTest {
             compose.onNodeWithTag("tab-gallery").performClick()
             compose.onNodeWithText("已导入").performClick()
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(0)
+            enterGallerySelection(compose)
             photos.forEach { compose.onNodeWithContentDescription("选择 ${it.name}").performClick() }
-            compose.onNodeWithText("保存", substring = false).performClick()
+            compose.onNodeWithText("存选片", substring = false).performClick()
             compose.onNode(hasSetTextAction() and hasText("选片名称")).performTextReplacement(title)
             compose.onNodeWithText("保存选片").performClick()
             compose.waitUntil(10000) { runBlocking { runtime.database.batches().all().any { it.title == title } } }
@@ -109,8 +110,10 @@ class SelectionBatchesAcceptanceTest {
             compose.onNodeWithText("图文选片单").assertIsDisplayed()
             acceptanceScreenshot(context, "saved-selection-batch")
             compose.onNodeWithText("恢复这组选择").performClick()
-            compose.onNodeWithText("已选 2").assertIsDisplayed()
+            compose.onNodeWithText("本次已选 2 张",substring=false).assertIsDisplayed()
+            enterGallerySelection(compose)
             photos.forEach { compose.onNodeWithContentDescription("选择 ${it.name}").assertIsOn() }
+            finishGallerySelection(compose)
             compose.onNodeWithTag("tab-projects").performClick()
             compose.onNodeWithText(title).performScrollTo().performClick()
             compose.onNodeWithContentDescription("删除选片记录").performClick()

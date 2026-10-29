@@ -57,7 +57,10 @@ class NativeUiAcceptanceTest {
                     it.id in runtime.currentCameraIds.value
                 }
             }
+            // 独立模拟相机夹具重置导入标记，确保这轮确实经过传输而不是命中旧结果
+            runBlocking { runtime.database.photos().save(target.copy(filesJson=Json.encode(target.files().map{it.copy(localUri="",originalPath="")}))) }
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(0)
+            enterGallerySelection(compose)
             compose.waitUntil(10000) {
                 compose
                     .onAllNodesWithContentDescription("选择 ${target.name}")
@@ -66,12 +69,13 @@ class NativeUiAcceptanceTest {
             }
             compose.onNodeWithContentDescription("选择 ${target.name}").performClick()
             screenshot("android-gallery")
-            compose.onNodeWithText("下载 1 张").performClick()
+            compose.onNodeWithText("导入 1 张").performClick()
             compose.onNodeWithText("JPEG / HEIF").performClick()
             compose.waitUntil(30000) {
                 runBlocking { runtime.database.photos().find(target.id)?.imported == true }
             }
             compose.onNodeWithText("图库", useUnmergedTree = true).performClick()
+            compose.onNodeWithContentDescription("图库更多操作").performClick()
             compose.onNodeWithContentDescription("现场客户选片").performClick()
             compose.onNodeWithText("开始选片").performClick()
             compose.waitUntil(10000) {

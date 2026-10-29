@@ -6,8 +6,8 @@ android {
         applicationId = "app.framelink.camera"
         minSdk = 26
         targetSdk = 37
-        versionCode = 14
-        versionName = "0.1.12"
+        versionCode = 15
+        versionName = "0.1.13"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters.addAll(listOf("arm64-v8a", "x86_64")) }
     }

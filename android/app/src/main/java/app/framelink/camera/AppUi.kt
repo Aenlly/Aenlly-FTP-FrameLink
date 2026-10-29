@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -35,9 +36,13 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -46,6 +51,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,6 +68,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
@@ -126,8 +134,11 @@ fun FrameLink(runtime: CameraRuntime) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val photos by runtime.photos.collectAsStateWithLifecycle(emptyList())
+    val photoIndex=remember(photos){photos.associateBy{it.id}}
     val tasks by runtime.tasks.collectAsStateWithLifecycle(emptyList())
     val camera by runtime.camera.collectAsStateWithLifecycle()
+    val cameraIds by runtime.currentCameraIds.collectAsStateWithLifecycle()
+    val cameraHasMore by runtime.galleryHasMore.collectAsStateWithLifecycle()
     val message by runtime.notice.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.CAMERA) }
     var sheet by remember { mutableStateOf<Sheet?>(null) }
@@ -136,8 +147,21 @@ fun FrameLink(runtime: CameraRuntime) {
     var afterReconnect by remember { mutableStateOf<(() -> Unit)?>(null) }
     var source by rememberSaveable { mutableStateOf("local") }
     var filter by rememberSaveable { mutableStateOf("all") }
+    var galleryLocalDay by rememberSaveable { mutableStateOf("") }
     var selection by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var selectionKeys by rememberSaveable { mutableStateOf<Map<String,String>>(emptyMap()) }
+    val hasRemoteDraft=remember(photos,selection){val ids=selection.toSet();photos.any{it.id in ids&&it.source==PhotoSource.CAMERA.name}}
+    var gallerySelecting by rememberSaveable { mutableStateOf(false) }
+    var selectionNeedsCheck by rememberSaveable { mutableStateOf(false) }
+    var checkingSelection by remember { mutableStateOf(false) }
+    var sharingSelection by remember { mutableStateOf(false) }
+    var checkingSelectionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var lastCameraId by rememberSaveable { mutableStateOf<String?>(null) }
+    var cameraEpoch by rememberSaveable { mutableIntStateOf(0) }
     var viewer by rememberSaveable { mutableStateOf<String?>(null) }
+    var viewerIds by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var viewerAutoLoad by rememberSaveable{mutableStateOf(false)}
+    var viewerContext by rememberSaveable{mutableStateOf("")}
     var removing by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var savingSelection by remember { mutableStateOf(false) }
     var savedBatchId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -148,7 +172,9 @@ fun FrameLink(runtime: CameraRuntime) {
     var live by rememberSaveable { mutableStateOf(false) }
     var projectId by rememberSaveable { mutableStateOf<String?>(null) }
     val gridState = rememberLazyGridState()
+    val tabStates=rememberSaveableStateHolder()
     val snackbar = remember { SnackbarHostState() }
+    fun galleryContext()="$source:$filter:${if(source=="camera")runtime.galleryDay.value else galleryLocalDay}:${camera.info?.id.orEmpty()}:$cameraEpoch"
     var pendingNetwork by remember { mutableStateOf<(() -> Unit)?>(null) }
     var networkPermissionHelp by remember { mutableStateOf(false) }
     val networkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
@@ -188,9 +214,49 @@ fun FrameLink(runtime: CameraRuntime) {
             }
         }
     }
-    fun togglePhoto(id: String) {
-        selection = selection.toMutableSet().apply { if (!remove(id)) add(id) }.toList()
+    fun changeSelection(ids:List<String>){
+        val lookup=photoIndex
+        selection=ids.distinct()
+        selectionKeys=selection.mapNotNull { id -> (selectionKeys[id]?:lookup[id]?.selectionResourceKey())?.let { id to it } }.toMap()
+        if(selection.none{lookup[it]?.source==PhotoSource.CAMERA.name})selectionNeedsCheck=false
     }
+    fun togglePhoto(id: String) {
+        changeSelection(selection.toMutableSet().apply { if (!remove(id)) add(id) }.toList())
+    }
+    fun validSelection():Boolean{
+        val lookup=photoIndex
+        val valid=selection.filter { id -> lookup[id]?.selectionResourceKey()?.let { it==selectionKeys[id] }==true }
+        if(valid.size==selection.size)return true
+        changeSelection(valid)
+        runtime.notice.value="部分照片的资源信息已变化，已移出本次选择，请重新核对"
+        return false
+    }
+    fun continueSelection(){
+        if(source!="camera"||!selectionNeedsCheck){gallerySelecting=true;return}
+        val connected=camera.info?.id
+        if(connected==null){reconnect{continueSelection()};return}
+        if(checkingSelection)return
+        checkingSelection=true
+        checkingSelectionJob=scope.launch{
+            try{
+                runtime.selectCameraDay("").join()
+                runtime.readAllCameraPhotos()
+                check(runtime.camera.value.info?.id==connected){"相机连接已变化，请重新核对"}
+                val ids=runtime.currentCameraIds.value
+                val lookup=selection.chunked(500).flatMap{runtime.database.photos().byIds(it)}.associateBy{it.id}
+                val valid=selection.filter { id -> lookup[id]?.let { p -> p.selectionResourceKey()==selectionKeys[id]&&(p.source!=PhotoSource.CAMERA.name||id in ids) }==true }
+                val removed=selection.size-valid.size
+                changeSelection(valid)
+                selectionNeedsCheck=false
+                gallerySelecting=true
+                filter="all"
+                if(removed>0)runtime.notice.value="有 $removed 张相机资源不再匹配，已移出本次选择"
+            }catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}
+            catch(error:Exception){runtime.notice.value=error.message?:"选片核对未完成，草稿保留"}
+            finally{checkingSelection=false}
+        }
+    }
+    BackHandler(tab==Tab.GALLERY&&gallerySelecting&&viewer==null){gallerySelecting=false}
     val notifications =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val permissions =
@@ -230,7 +296,17 @@ fun FrameLink(runtime: CameraRuntime) {
             if (ready != null) ready()
             else if (tab == Tab.GALLERY && source == "camera") runtime.refreshCameraPhotos()
         }
-        if (camera.info == null && source == "camera") selection = emptyList()
+        if(camera.info==null){
+            if(lastCameraId!=null)cameraEpoch++
+            if(hasRemoteDraft)selectionNeedsCheck=true
+        }
+        camera.info?.id?.let { currentId ->
+            if(lastCameraId!=null&&lastCameraId!=currentId&&selection.isNotEmpty())selectionNeedsCheck=true
+            lastCameraId=currentId
+        }
+    }
+    LaunchedEffect(photos,selection,camera.info?.id){
+        if(camera.info==null&&hasRemoteDraft)selectionNeedsCheck=true
     }
     MaterialTheme(
         typography = UiTokens.typography,
@@ -262,7 +338,7 @@ fun FrameLink(runtime: CameraRuntime) {
                 )
             },
             bottomBar = {
-                Box(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                if(tab!=Tab.GALLERY||!gallerySelecting)Box(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
                     GlassNavigation(glass, Tab.entries.map { NavigationEntry(it.title, it.icon, "tab-${it.name.lowercase(Locale.ROOT)}") }, tab.ordinal) { tab = Tab.entries[it] }
                 }
             },
@@ -274,11 +350,10 @@ fun FrameLink(runtime: CameraRuntime) {
                     .padding(
                         top = padding.calculateTopPadding(),
                         bottom =
-                            if (tab == Tab.GALLERY && selection.isEmpty()) 0.dp
-                            else padding.calculateBottomPadding(),
+                            if(tab==Tab.GALLERY&&gallerySelecting)0.dp else padding.calculateBottomPadding(),
                     )
             ) {
-                Row(
+                if(tab!=Tab.GALLERY)Row(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -319,7 +394,7 @@ fun FrameLink(runtime: CameraRuntime) {
                         )
                     }
                 }
-                when (tab) {
+                tabStates.SaveableStateProvider(tab.name){when (tab) {
                     Tab.CAMERA ->
                         CameraHome(
                             runtime,
@@ -358,7 +433,7 @@ fun FrameLink(runtime: CameraRuntime) {
                                     else arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
                                 permissions.launch(required)
                             },
-                            onPhoto = { viewer = it.id },
+                            onPhoto = { viewerAutoLoad=false;viewerIds=photos.filter{p->p.inLibrary}.map{p->p.id};viewer = it.id },
                         )
                     Tab.GALLERY ->
                         Gallery(
@@ -367,39 +442,66 @@ fun FrameLink(runtime: CameraRuntime) {
                             camera,
                             source,
                             filter,
-                            gridState,
-                            selection,
+                            localDay=galleryLocalDay,
+                            onLocalDay={galleryLocalDay=it},
+                            state=gridState,
+                            selection=selection,
+                            selecting=gallerySelecting,
+                            needsCheck=selectionNeedsCheck,
+                            onSelecting={gallerySelecting=it},
+                            onRecheck=::continueSelection,
                             onSource = {
-                                if (source != it) {
-                                    selection = emptyList()
-                                    if (filter == "picked") filter = "all"
-                                }
+                                gallerySelecting=false
                                 source = it
+                                if(it=="camera"&&selection.any{id->photoIndex[id]?.source==PhotoSource.CAMERA.name&&id !in cameraIds})selectionNeedsCheck=true
                                 if (it == "camera" && camera.info != null) runtime.refreshCameraPhotos()
                             },
                             onFilter = { filter = it },
                             onSelect = ::togglePhoto,
-                            onSelectionChange = { selection = it },
+                            onSelectionChange = ::changeSelection,
                             onOpen = { viewer = it.id },
+                            onViewerScope={ids,automatic->
+                                val contextKey=galleryContext()
+                                if(viewer==null||!automatic){viewerIds=ids;viewerAutoLoad=automatic;viewerContext=contextKey}
+                                else if(viewerAutoLoad&&viewerContext==contextKey)viewerIds=(viewerIds+ids).distinct()
+                            },
                             onImport = {
                                 picker.launch(arrayOf("image/*", "application/octet-stream"))
                             },
                             onConnect = { reconnect { runtime.refreshCameraPhotos() } },
                             onDownload = { format ->
-                                runtime.enqueueDownload(selection, format)
-                                selection = arrayListOf()
-                                tab = Tab.TRANSFERS
+                                if(selectionNeedsCheck||selection.any{id->photoIndex[id]?.source==PhotoSource.CAMERA.name&&id !in cameraIds}){
+                                    selectionNeedsCheck=true
+                                    continueSelection()
+                                }
+                                else if(validSelection()){
+                                    runtime.enqueueDownload(selection.filter { id -> photoIndex[id]?.source==PhotoSource.CAMERA.name }, format)
+                                    gallerySelecting=false
+                                    tab=Tab.TRANSFERS
+                                }
                             },
-                            onCompare = { comparingIds = selection.take(2); compare = true },
-                            onSaveSelection = { savingSelection = true },
-                            onRemove = { removing = it },
+                            onCompare = { if(validSelection()){comparingIds = selection.take(2); compare = true} },
+                            onSaveSelection = { if(validSelection())savingSelection = true },
+                            onShareSelection = {
+                                if(!sharingSelection&&validSelection())scope.launch{
+                                    sharingSelection=true
+                                    runtime.notice.value="正在生成图文选片单"
+                                    try{
+                                        val chosen=selection.mapNotNull(photoIndex::get)
+                                        val batch=SelectionBatch(UUID.randomUUID().toString(),"本次选片",Json.encode(selection),Json.encode(chosen))
+                                        shareContactSheets(context,runtime.batches.contactSheets(batch))
+                                    }catch(error:Exception){runtime.notice.value=error.message?:"图文选片单未能生成"}
+                                    finally{sharingSelection=false}
+                                }
+                            },
+                            onRemove = { if(validSelection())removing = it },
                             onUpload = {
-                                sheet =
+                                if(validSelection())sheet =
                                     if (runtime.cloud.signedIn) Sheet.PROJECT_PICKER
                                     else Sheet.CLOUD
                             },
                             onReview = { chosen ->
-                                if (chosen.isNotEmpty()) newReviewPhotos = chosen.map { it.id }
+                                if (chosen.isNotEmpty()&&(selection.isEmpty()||validSelection())) newReviewPhotos = chosen.map { it.id }
                             },
                         )
                     Tab.PROJECTS ->
@@ -420,7 +522,7 @@ fun FrameLink(runtime: CameraRuntime) {
                             onFtp = { ensureNetwork { sheet = Sheet.FTP } },
                             onFtpClient = { ensureNetwork { sheet = Sheet.FTP_CLIENT } },
                         )
-                }
+                }}
             }
         }
         when (sheet) {
@@ -489,17 +591,19 @@ fun FrameLink(runtime: CameraRuntime) {
         )
         if (savingSelection) SaveSelectionDialog(runtime, selection,
             onClose = { savingSelection = false },
-            onSaved = { savingSelection = false; savedBatchId = it.id; tab = Tab.PROJECTS },
+            onSaved = { savingSelection = false; gallerySelecting=false; savedBatchId = it.id; tab = Tab.PROJECTS },
         )
         savedBatchId?.let { id ->
             SavedSelectionScreen(runtime, id, photos,
-                onClose = { savedBatchId = null }, onPhoto = { viewer = it.id },
+                onClose = { savedBatchId = null }, onPhoto = { target -> scope.launch{viewerAutoLoad=false;viewerIds=runtime.database.batches().find(id)?.photoIds().orEmpty();viewer=target.id} },
                 onUse = { ids ->
                     scope.launch {
                         val chosen = ids.chunked(500).flatMap { runtime.database.photos().byIds(it) }
                         runtime.database.photos().saveAll(chosen.filter { it.localHidden && it.imported }.map { it.copy(localHidden = false) })
                         source = if (chosen.any { !it.imported && it.source == PhotoSource.CAMERA.name }) "camera" else "local"
-                        selection = ids; filter = "all"; tab = Tab.GALLERY; savedBatchId = null
+                        changeSelection(ids)
+                        runtime.database.batches().find(id)?.snapshots()?.takeIf{it.isNotEmpty()}?.let{snapshots->selectionKeys=snapshots.filter{it.id in ids}.associate{it.id to it.selectionResourceKey()}}
+                        selectionNeedsCheck=source=="camera"; gallerySelecting=false; galleryLocalDay=""; filter = "all"; tab = Tab.GALLERY; savedBatchId = null
                     }
                 },
             )
@@ -514,6 +618,13 @@ fun FrameLink(runtime: CameraRuntime) {
                     onRemove = { removing = listOf(photo.id) },
                     selected = photo.id in selection,
                     cameraConnected = camera.info != null,
+                    resourceConfirmed=photo.source!=PhotoSource.CAMERA.name||photo.id in cameraIds,
+                    canDownload=camera.info?.canDownload==true,
+                    neighbors=viewerIds.mapNotNull(photoIndex::get).takeIf{list->list.any{it.id==photo.id}}?:listOf(photo),
+                    onNavigate={viewer=it},
+                    canLoadMore=viewerAutoLoad&&viewerContext==galleryContext()&&source=="camera"&&filter!="picked"&&cameraHasMore,
+                    loadingMore=camera.loadingPhotos,
+                    onNeedMore={if(runtime.galleryError.value.isBlank())runtime.loadPhotos()},
                     onSelect = { togglePhoto(photo.id) },
                     onMark = { mark ->
                         val previous = photo.mark
@@ -545,6 +656,7 @@ fun FrameLink(runtime: CameraRuntime) {
                 onSelect = { togglePhoto(it.id) },
                 onClose = { compare = false },
             )
+        if(checkingSelection)AlertDialog(onDismissRequest={checkingSelectionJob?.cancel()},title={Text("正在核对选片")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){LinearProgressIndicator(Modifier.fillMaxWidth());Text("重新读取相机资源，确认草稿仍对应原来的照片。不会拍照或删除文件。")}},confirmButton={},dismissButton={TextButton(onClick={checkingSelectionJob?.cancel()}){Text("取消")}})
     }
 }
 
@@ -997,18 +1109,26 @@ private fun Gallery(
     camera: CameraStatus,
     source: String,
     filter: String,
+    localDay:String,
+    onLocalDay:(String)->Unit,
     state: LazyGridState,
     selection: List<String>,
+    selecting: Boolean,
+    needsCheck: Boolean,
+    onSelecting: (Boolean) -> Unit,
+    onRecheck: () -> Unit,
     onSource: (String) -> Unit,
     onFilter: (String) -> Unit,
     onSelect: (String) -> Unit,
     onSelectionChange: (List<String>) -> Unit,
     onOpen: (Photo) -> Unit,
+    onViewerScope: (List<String>,Boolean) -> Unit,
     onImport: () -> Unit,
     onConnect: () -> Unit,
     onDownload: (DownloadFormat) -> Unit,
     onCompare: () -> Unit,
     onSaveSelection: () -> Unit,
+    onShareSelection: () -> Unit,
     onRemove: (List<String>) -> Unit,
     onUpload: () -> Unit,
     onReview: (List<Photo>) -> Unit,
@@ -1018,6 +1138,11 @@ private fun Gallery(
     var bursts by rememberSaveable { mutableStateOf(false) }
     var layout by remember { mutableStateOf(GalleryLayout.from(runtime.settings.get("gallery.layout"))) }
     var choosingLayout by remember { mutableStateOf(false) }
+    var choosingFilter by remember { mutableStateOf(false) }
+    var libraryMore by remember { mutableStateOf(false) }
+    var clearSelection by remember { mutableStateOf(false) }
+    val windowWidth=androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    val columns=if(layout==GalleryLayout.LIST)1 else if(windowWidth<600)layout.columns else (windowWidth/when(layout){GalleryLayout.SMALL->84;GalleryLayout.MEDIUM->132;else->200}).coerceAtLeast(layout.columns)
     val scope = rememberCoroutineScope()
     var bulkSelection by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val hasMore by runtime.galleryHasMore.collectAsStateWithLifecycle()
@@ -1027,10 +1152,10 @@ private fun Gallery(
     val cameraDay by runtime.galleryDay.collectAsStateWithLifecycle()
     val listedIds by runtime.currentCameraIds.collectAsStateWithLifecycle()
     val availableDays by runtime.captureDates.collectAsStateWithLifecycle()
-    var localDay by rememberSaveable { mutableStateOf("") }
     val chosenDay = if (source == "camera") cameraDay else localDay
     val dragContext = "$source:$filter:$bursts:$chosenDay:${layout.key}:${if (source == "camera") camera.info?.id.orEmpty() else ""}"
     var dragGroups by remember(dragContext) { mutableStateOf<List<List<Photo>>?>(null) }
+    var dragHadScopeNote by remember { mutableStateOf(false) }
     var choosingDay by remember { mutableStateOf(false) }
     LaunchedEffect(dragContext) { bulkSelection?.cancel(); bulkSelection = null }
     var follow by rememberSaveable {
@@ -1055,6 +1180,8 @@ private fun Gallery(
                 }
         }
     val photos = matching(all)
+    var scopedBurstViewer by remember{mutableStateOf(false)}
+    LaunchedEffect(photos.map{it.id}){if(!scopedBurstViewer)onViewerScope(photos.map{it.id},true)}
     val allSelected = photos.isNotEmpty() && photos.all { it.id in selectionSet } && !(source == "camera" && hasMore)
     fun selectAll() {
         if (allSelected) {
@@ -1089,136 +1216,60 @@ private fun Gallery(
             else snapshotFlow {
                 val info = state.layoutInfo
                 val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-                last >= 0 && last >= info.totalItemsCount - layout.columns * 2 - 1
+                last >= 0 && last >= info.totalItemsCount - columns * 2 - 1
             }.collect { nearEnd -> if (nearEnd) runtime.loadPhotos().join() }
         }
     }
-    Column(Modifier.fillMaxSize()) {
-        Column(Modifier.padding(horizontal = 16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
-                    SegmentedButton(
-                        selected = source == "local",
-                        onClick = { onSource("local") },
-                        shape = SegmentedButtonDefaults.itemShape(0, 2),
-                    ) {
-                        Text("已导入", fontSize = 12.sp)
-                    }
-                    SegmentedButton(
-                        selected = source == "camera",
-                        onClick = { onSource("camera") },
-                        shape = SegmentedButtonDefaults.itemShape(1, 2),
-                    ) {
-                        Text("相机内", fontSize = 12.sp)
-                    }
+    Column(Modifier.fillMaxSize().background(Color.White)) {
+        Column(Modifier.padding(horizontal=16.dp)){
+            Row(Modifier.fillMaxWidth().heightIn(min=70.dp),verticalAlignment=Alignment.CenterVertically){
+                Column(Modifier.weight(1f)){
+                    Text(if(selecting)"选择照片" else "图库",fontSize=26.sp,fontWeight=FontWeight.SemiBold,color=Ink)
+                    Text(if(selecting)"本次已选 "+selection.size+" 张 · "+photos.count{it.id in selectionSet}+" 张在当前范围"
+                        else if(source=="local")"原片保存在手机" else camera.info?.displayName()?.plus(" · 已连接")?:"相机未连接",
+                        modifier=Modifier.testTag("gallery-selection-count"),fontSize=12.sp,color=Muted,maxLines=1,overflow=TextOverflow.Ellipsis)
                 }
-                IconButton(
-                    onClick = {
-                        onReview(
-                            if (selection.isEmpty()) photos else all.filter { it.id in selection }
-                        )
-                    },
-                    enabled = photos.isNotEmpty(),
-                ) {
-                    Icon(
-                        Icons.Outlined.PeopleOutline,
-                        "现场客户选片",
-                        tint = Brand,
-                        modifier = Modifier.size(UiTokens.icon),
-                    )
+                TextButton(onClick={onSelecting(!selecting)},modifier=Modifier.semantics{contentDescription=if(selecting)"完成选择" else "选择照片"}){
+                    Text(if(selecting)"完成" else if(selection.isEmpty())"选择" else "选择 ("+selection.size+")",fontSize=14.sp)
                 }
-                IconButton(onClick = onImport) {
-                    Icon(
-                        Icons.Outlined.AddPhotoAlternate,
-                        "导入本机照片",
-                        tint = Brand,
-                        modifier = Modifier.size(UiTokens.icon),
-                    )
-                }
-                Box {
-                    IconButton(onClick={choosingLayout=true}) { Icon(if(layout==GalleryLayout.LIST) Icons.Outlined.ViewList else Icons.Outlined.GridView,"显示方式",tint=Brand,modifier=Modifier.size(UiTokens.icon)) }
-                    DropdownMenu(choosingLayout,{choosingLayout=false}) {
-                        GalleryLayout.entries.forEach { option -> DropdownMenuItem(text={Text(option.title)},leadingIcon={if(option==layout) Icon(Icons.Outlined.Check,null)},onClick={layout=option;runtime.settings.put("gallery.layout",option.key);choosingLayout=false}) }
+                Box{
+                    IconButton(onClick={libraryMore=true}){Icon(Icons.Outlined.MoreHoriz,"图库更多操作",tint=Ink)}
+                    DropdownMenu(libraryMore,{libraryMore=false}){
+                        DropdownMenuItem(text={Text("导入本机照片")},leadingIcon={Icon(Icons.Outlined.AddPhotoAlternate,null)},onClick={libraryMore=false;onImport()})
+                        DropdownMenuItem(text={Text("现场客户选片")},leadingIcon={Icon(Icons.Outlined.PeopleOutline,null)},enabled=photos.isNotEmpty(),onClick={
+                            libraryMore=false;onReview(if(selection.isEmpty())photos else all.filter{it.id in selectionSet})
+                        },modifier=Modifier.semantics{contentDescription="现场客户选片"})
+                        if(source=="camera")DropdownMenuItem(text={Text(if(camera.info==null)"重新连接相机" else "刷新相机照片")},onClick={
+                            libraryMore=false
+                            if(camera.info==null)onConnect()else runtime.refreshCameraPhotos()
+                        },modifier=Modifier.semantics{contentDescription="刷新相机照片"})
+                        if(source=="local")DropdownMenuItem(text={Text(if(follow)"关闭跟随最新" else "跟随最新照片")},onClick={follow=!follow;runtime.settings.put("gallery.follow",follow.toString());libraryMore=false})
                     }
-                }
-                if (source == "camera")
-                    IconButton(
-                        onClick = {
-                            if (camera.info == null) onConnect() else {
-                                scope.launch { state.scrollToItem(0) }
-                                runtime.refreshCameraPhotos()
-                            }
-                        }
-                    ) {
-                        Icon(
-                            Icons.Outlined.Refresh,
-                            "刷新相机照片",
-                            tint = Brand,
-                            modifier = Modifier.size(UiTokens.icon),
-                        )
-                    }
-            }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(
-                    listOf(
-                        "all" to "全部",
-                        "picked" to "已选",
-                        "favorite" to "收藏",
-                        "new" to "未导入",
-                        "raw" to "RAW",
-                    )
-                ) { (key, label) ->
-                    FilterChip(filter == key, { onFilter(key) }, { Text(label, fontSize = 11.sp) })
                 }
             }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = ::selectAll, enabled = photos.isNotEmpty() && !camera.loadingPhotos && bulkSelection == null) {
-                Text(if (allSelected) "取消全选" else "全选", fontSize = 11.sp)
-            }
-            LazyRow(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                item {
-                    TextButton(
-                        enabled = !camera.loadingPhotos && (source != "camera" || camera.info != null),
-                        onClick = { choosingDay = true },
-                        contentPadding = PaddingValues(horizontal = 4.dp),
-                    ) {
-                        Icon(Icons.Outlined.CalendarToday, null, Modifier.size(15.dp))
-                        Text(
-                            chosenDay.ifBlank { "日期" },
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(start = 6.dp),
-                        )
+            Row(Modifier.padding(vertical=6.dp).clip(RoundedCornerShape(22.dp)).background(CanvasColor).padding(4.dp)){
+                listOf("camera" to "相机内","local" to "已导入").forEach{(key,title)->
+                    Box(Modifier.clip(RoundedCornerShape(18.dp)).background(if(source==key)Color.White else Color.Transparent)
+                        .clickable{onSource(key)}.padding(horizontal=22.dp,vertical=9.dp),contentAlignment=Alignment.Center){
+                        Text(title,fontSize=13.sp,color=if(source==key)Ink else Muted,fontWeight=if(source==key)FontWeight.Medium else FontWeight.Normal)
                     }
                 }
-                item { FilterChip(bursts, {
-                    bursts = !bursts
-                    if (bursts) runtime.notice.value = "连拍照片会合并成一组，点开可逐张选择"
-                }, { Text(if (bursts) "连拍分组 · 开" else "连拍分组", fontSize = 11.sp) }) }
-                if (source == "local")
-                    item {
-                        FilterChip(
-                            follow,
-                            {
-                                follow = !follow
-                                runtime.settings.put("gallery.follow", follow.toString())
-                            },
-                            { Text("跟随最新", fontSize = 11.sp) },
-                        )
-                    }
-                item {
-                    Text(
-                        if (source == "camera" && camera.info == null) "相机未连接"
-                        else if (source == "camera") "已读取 ${photos.size} 张" else "${photos.size} 张",
-                        fontSize = 11.sp,
-                        color = Muted,
-                    )
-                }
-                item { Text("长按滑动多选", fontSize = 10.sp, color = Muted) }
             }
+            Row(Modifier.fillMaxWidth().height(48.dp),verticalAlignment=Alignment.CenterVertically){
+                TextButton(onClick={choosingDay=true},enabled=source!="camera"||camera.info!=null,contentPadding=PaddingValues(horizontal=0.dp)){
+                    Text(chosenDay.ifBlank{"全部日期"},fontSize=13.sp,color=Ink)
+                    Icon(Icons.Outlined.ExpandMore,null,Modifier.padding(start=3.dp).size(17.dp),tint=Muted)
+                }
+                Text(photos.size.toString()+" 张"+if(filter!="all")" · "+when(filter){"picked"->"本次已选";"favorite"->"收藏";"new"->"未导入";else->"RAW"}else"",
+                    modifier=Modifier.weight(1f).padding(start=12.dp),fontSize=11.sp,color=Muted,maxLines=1,overflow=TextOverflow.Ellipsis)
+                IconButton(onClick={choosingFilter=true}){Icon(Icons.Outlined.FilterList,"筛选照片",tint=if(filter=="all")Muted else SelectionAccent,modifier=Modifier.size(22.dp))}
+                IconButton(onClick={choosingLayout=true}){Icon(if(layout==GalleryLayout.LIST)Icons.Outlined.ViewList else Icons.Outlined.GridView,"显示方式",tint=Muted,modifier=Modifier.size(22.dp))}
+            }
+            if(selecting&&(dragGroups==null||dragHadScopeNote))Row(Modifier.fillMaxWidth().padding(bottom=6.dp),verticalAlignment=Alignment.CenterVertically){
+                Text(if(needsCheck&&source=="camera")"重连后需核对相机资源" else "全选作用于当前日期和筛选",fontSize=11.sp,color=Muted,modifier=Modifier.weight(1f))
+                TextButton(onClick=::selectAll,enabled=photos.isNotEmpty()&&!camera.loadingPhotos&&bulkSelection==null){
+                    Text(if(allSelected)"取消全选" else "全选",fontSize=12.sp)
+                }
             }
         }
         if (displayedGroups.isEmpty() && (camera.loadingPhotos || (hasMore && pageError.isBlank() && filter != "picked")) && source == "camera")
@@ -1249,32 +1300,39 @@ private fun Gallery(
             }
         else
             LazyVerticalGrid(
-                columns = GridCells.Fixed(layout.columns),
+                columns = GridCells.Fixed(columns),
                 state = state,
                 userScrollEnabled = dragGroups == null,
                 modifier = Modifier.weight(1f).testTag("gallery-grid")
+                    .galleryDensityGesture(!selecting&&layout!=GalleryLayout.LIST){larger->
+                        val options=listOf(GalleryLayout.SMALL,GalleryLayout.MEDIUM,GalleryLayout.LARGE)
+                        layout=options[(options.indexOf(layout)+if(larger)1 else -1).coerceIn(0,options.lastIndex)]
+                        runtime.settings.put("gallery.layout",layout.key)
+                    }
                     .galleryDragSelection(state, dragContext, displayedGroups.map { group -> group.map { it.id } }, selection,
                         onSelectionChange,
                         onDragging = { dragging ->
+                            if(dragging)dragHadScopeNote=selecting
                             dragGroups = if (dragging) groups else null
                             if (dragging) {
+                                onSelecting(true)
                                 follow = false
                                 runtime.settings.put("gallery.follow", "false")
                             }
                         }),
                 contentPadding =
                     PaddingValues(
-                        start = if (layout == GalleryLayout.SMALL) 2.dp else 8.dp,
-                        end = if (layout == GalleryLayout.SMALL) 2.dp else 8.dp,
+                        start = if (layout == GalleryLayout.LIST) 12.dp else 2.dp,
+                        end = if (layout == GalleryLayout.LIST) 12.dp else 2.dp,
                         top = 4.dp,
-                        bottom = if (selection.isEmpty()) 144.dp else 8.dp,
+                        bottom = 8.dp,
                     ),
-                verticalArrangement = Arrangement.spacedBy(if (layout == GalleryLayout.SMALL) 2.dp else 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(if (layout == GalleryLayout.SMALL) 2.dp else 8.dp),
+                verticalArrangement = Arrangement.spacedBy(if(layout==GalleryLayout.LIST)8.dp else 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 items(displayedGroups, key = { it.first().id }) { group ->
-                    GalleryMediaItem(runtime, group, selectionSet, layout == GalleryLayout.LIST, layout == GalleryLayout.SMALL,
-                        onOpen = { follow = false; runtime.settings.put("gallery.follow","false"); if(group.size>1) burst=group else onOpen(group.first()) },
+                    GalleryMediaItem(runtime, group, selectionSet, layout == GalleryLayout.LIST, layout == GalleryLayout.SMALL, selecting=selecting,
+                        onOpen = { follow = false; runtime.settings.put("gallery.follow","false"); if(selecting){val ids=group.map{it.id}.toSet();onSelectionChange((if(group.all{it.id in selectionSet})selectionSet-ids else selectionSet+ids).toList())} else if(group.size>1) burst=group else {scopedBurstViewer=false;onViewerScope(photos.map{it.id},true);onOpen(group.first())} },
                         onSelection = onSelectionChange)
                 }
                 if (source == "camera")
@@ -1288,45 +1346,54 @@ private fun Gallery(
                         }
                     }
             }
-        if (selection.isNotEmpty())
-            Surface(color = Color.White, shadowElevation = 5.dp) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = { onSelectionChange(emptyList()) }, contentPadding = PaddingValues(horizontal = 2.dp)) {
-                        Text("已选 ${selection.size}", fontSize = 11.sp, color = Brand)
-                        Icon(Icons.Outlined.Close, "清空本次选择", Modifier.padding(start = 4.dp).size(14.dp))
+        if(selecting)Surface(color=Color.White,shadowElevation=2.dp){
+            Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=12.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween){
+                TextButton(onClick={clearSelection=true},enabled=selection.isNotEmpty(),contentPadding=PaddingValues(horizontal=4.dp),modifier=Modifier.semantics{contentDescription="清空本次选择"}){Text("清空",fontSize=12.sp)}
+                TextButton(onClick=onCompare,enabled=selection.size==2,contentPadding=PaddingValues(horizontal=4.dp)){Text("对比",fontSize=12.sp)}
+                TextButton(onClick=onSaveSelection,enabled=selection.isNotEmpty(),contentPadding=PaddingValues(horizontal=4.dp)){Text("存选片",fontSize=12.sp)}
+                Box{
+                    IconButton(onClick={moreSelection=true},enabled=selection.isNotEmpty()){Icon(Icons.Outlined.MoreHoriz,"更多选片操作",Modifier.size(21.dp))}
+                    DropdownMenu(moreSelection,{moreSelection=false}){
+                        if(source=="local")DropdownMenuItem(text={Text("移除所选照片")},leadingIcon={Icon(Icons.Outlined.DeleteOutline,null)},onClick={moreSelection=false;onRemove(selection)})
+                        DropdownMenuItem(text={Text("现场客户选片")},onClick={moreSelection=false;onReview(all.filter{it.id in selectionSet})})
+                        DropdownMenuItem(text={Text("加入云端项目")},onClick={moreSelection=false;onUpload()})
                     }
-                    TextButton(onClick = onCompare, enabled = selection.size == 2) {
-                        Text("对比", fontSize = 11.sp)
-                    }
-                    TextButton(onClick = onSaveSelection) {
-                        Icon(Icons.Outlined.BookmarkAdd, null, Modifier.size(16.dp))
-                        Text("保存", fontSize = 11.sp, modifier = Modifier.padding(start = 5.dp))
-                    }
-                    Box {
-                        IconButton(onClick = { moreSelection = true }) { Icon(Icons.Outlined.MoreHoriz, "更多选片操作", Modifier.size(19.dp)) }
-                        DropdownMenu(moreSelection, { moreSelection = false }) {
-                            DropdownMenuItem(text = { Text("加入云端项目") }, onClick = { moreSelection = false; onUpload() })
-                        }
-                    }
-                    if (source == "local")
-                        TextButton(onClick = { onRemove(selection) }) {
-                            Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(17.dp))
-                            Text("移除", fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
-                        }
-                    if (source == "camera")
-                        Primary(
-                            "下载 ${selection.size} 张",
-                            camera.info?.canDownload == true,
-                            Icons.Outlined.Download,
-                        ) {
-                            download = true
-                        }
+                }
+                if(source=="camera")Button(
+                    enabled=all.any{it.id in selectionSet&&it.source==PhotoSource.CAMERA.name}&&camera.info!=null,
+                    onClick={if(needsCheck)onRecheck()else download=true},
+                    shape=RoundedCornerShape(22.dp),contentPadding=PaddingValues(horizontal=16.dp,vertical=12.dp)){
+                    Text(if(needsCheck)"核对选片" else "导入 "+all.count{it.id in selectionSet&&it.source==PhotoSource.CAMERA.name}+" 张",fontSize=13.sp)
+                }else Button(onClick=onShareSelection,enabled=selection.isNotEmpty(),shape=RoundedCornerShape(22.dp),contentPadding=PaddingValues(horizontal=16.dp,vertical=12.dp)){
+                    Text("分享选片单",fontSize=13.sp)
                 }
             }
+        }else if(selection.isNotEmpty())Box(Modifier.fillMaxWidth().padding(horizontal=20.dp,vertical=8.dp),contentAlignment=Alignment.Center){
+            Row(Modifier.clip(RoundedCornerShape(22.dp)).background(Color(0xffeaf2ff)).clickable{onSelecting(true)}.padding(horizontal=16.dp,vertical=10.dp),verticalAlignment=Alignment.CenterVertically){
+                Text("本次已选 "+selection.size+" 张",fontSize=12.sp,color=SelectionAccent)
+                Text(if(needsCheck&&source=="camera")" · 待核对" else " · 继续处理",fontSize=12.sp,color=SelectionAccent,modifier=Modifier.padding(start=8.dp))
+                Icon(Icons.Outlined.ChevronRight,null,Modifier.size(16.dp),tint=SelectionAccent)
+            }
+        }
+    }
+    if(clearSelection)AlertDialog(onDismissRequest={clearSelection=false},title={Text("清空本次选择？")},text={Text("只清空当前选择，收藏、选片记录和原片保留。")},
+        confirmButton={TextButton(onClick={onSelectionChange(emptyList());clearSelection=false}){Text("清空选择")}},dismissButton={TextButton(onClick={clearSelection=false}){Text("取消")}})
+    if(choosingFilter)ModalSheet("筛选照片",{choosingFilter=false}){
+        listOf("all" to "全部","picked" to "本次已选","favorite" to "收藏","new" to "未导入","raw" to "RAW").forEach{(key,title)->
+            Row(Modifier.fillMaxWidth().clickable{onFilter(key);choosingFilter=false}.padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically){
+                Text(title,Modifier.weight(1f),fontSize=15.sp)
+                if(filter==key)Icon(Icons.Outlined.Check,null,tint=SelectionAccent)
+            }
+        }
+    }
+    if(choosingLayout)ModalSheet("显示方式",{choosingLayout=false}){
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
+            GalleryLayout.entries.forEach{option->FilterChip(option==layout,{layout=option;runtime.settings.put("gallery.layout",option.key);choosingLayout=false},{Text(option.title,fontSize=12.sp)})}
+        }
+        Row(Modifier.fillMaxWidth().clickable{bursts=!bursts}.padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically){
+            Column(Modifier.weight(1f)){Text("连拍分组",fontSize=15.sp);Text("合并相邻连拍，点开仍可逐张选择",fontSize=12.sp,color=Muted)}
+            Switch(bursts,{bursts=it},modifier=Modifier.semantics{contentDescription="连拍分组"})
+        }
     }
     if (bulkSelection != null) AlertDialog(
         onDismissRequest = { bulkSelection?.cancel() }, title = { Text("正在读取全部照片") },
@@ -1342,7 +1409,10 @@ private fun Gallery(
                 Column {
                     Info("RAW与JPEG属于同一次拍摄，可按需要分别导入。原片按原始字节保存。")
                     DownloadFormat.entries.forEach { format ->
+                        val files=all.filter{it.id in selectionSet&&it.source==PhotoSource.CAMERA.name}.flatMap{it.downloadFiles(format)}
+                        val pending=files.filter{it.savedUri.isBlank()}
                         TextButton(
+                            enabled=pending.isNotEmpty()&&camera.info?.canDownload==true,
                             onClick = {
                                 download = false
                                 onDownload(format)
@@ -1355,6 +1425,7 @@ private fun Gallery(
                                     DownloadFormat.ALL -> "全部文件"
                                 }
                             )
+                            Text(if(files.isEmpty())" · 无此格式" else if(pending.isEmpty())" · 已导入" else " · "+pending.size+" 个文件 · "+android.text.format.Formatter.formatShortFileSize(LocalContext.current,pending.sumOf{it.size}),fontSize=11.sp,color=Muted)
                         }
                     }
                 }
@@ -1373,7 +1444,7 @@ private fun Gallery(
                             onClick = {
                                 choosingDay = false
                                 if (source == "camera") runtime.selectCameraDay("")
-                                else localDay = ""
+                                else onLocalDay("")
                             }
                         ) {
                             Text("全部日期")
@@ -1391,7 +1462,7 @@ private fun Gallery(
                             onClick = {
                                 choosingDay = false
                                 if (source == "camera") runtime.selectCameraDay(day)
-                                else localDay = day
+                                else onLocalDay(day)
                             }
                         ) {
                             Text(day)
@@ -1408,6 +1479,7 @@ private fun Gallery(
                     Modifier.fillMaxWidth()
                         .clickable {
                             burst = null
+                            scopedBurstViewer=true;onViewerScope(group.map{it.id},false)
                             onOpen(photo)
                         }
                         .padding(vertical = 7.dp),
@@ -2547,19 +2619,55 @@ private fun PhotoViewer(
     onRemove: () -> Unit,
     selected: Boolean,
     cameraConnected: Boolean,
+    resourceConfirmed:Boolean,
+    canDownload:Boolean,
+    neighbors:List<Photo>,
+    onNavigate:(String)->Unit,
+    canLoadMore:Boolean,
+    loadingMore:Boolean,
+    onNeedMore:()->Unit,
     onSelect: () -> Unit,
     onMark: (PhotoMark) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val original = photo.files().firstOrNull { !it.raw && it.savedUri.isNotBlank() }
-    var model by remember(photo.id) { mutableStateOf(original?.savedUri ?: photo.displayUri) }
+    var model by remember(photo.selectionResourceKey(),original?.savedUri) { mutableStateOf(original?.savedUri ?: photo.displayUri) }
     var viewerLoading by remember(photo.id) { mutableStateOf(true) }
     var viewerFailure by remember(photo.id) { mutableStateOf("") }
     var filesInfo by remember { mutableStateOf(false) }
     var retryKey by remember(photo.id) { mutableIntStateOf(0) }
-    var scale by remember { mutableFloatStateOf(1f) }
-    var pan by remember { mutableStateOf(Offset.Zero) }
+    var scale by remember(photo.id) { mutableFloatStateOf(1f) }
+    var pan by remember(photo.id) { mutableStateOf(Offset.Zero) }
+    var imageBounds by remember(photo.id){mutableStateOf(IntSize.Zero)}
+    val decodedSizes=remember{mutableStateMapOf<String,IntSize>()}
+    val readyModels=remember{mutableStateMapOf<String,String>()}
+    var imageViewport by remember{mutableStateOf(IntSize.Zero)}
+    fun boundedPan(position:Offset,zoom:Float):Offset{
+        val bounds=if(imageBounds.width>0)imageBounds else decodedSizes[photo.id]?:IntSize.Zero
+        if(bounds.width<=0||imageViewport.width<=0)return Offset.Zero
+        val fit=minOf(imageViewport.width.toFloat()/bounds.width,imageViewport.height.toFloat()/bounds.height)
+        val x=((bounds.width*fit*zoom-imageViewport.width)/2).coerceAtLeast(0f)
+        val y=((bounds.height*fit*zoom-imageViewport.height)/2).coerceAtLeast(0f)
+        return Offset(position.x.coerceIn(-x,x),position.y.coerceIn(-y,y))
+    }
+    var viewerControls by remember { mutableStateOf(true) }
+    var viewerMore by remember { mutableStateOf(false) }
+    var importingCurrent by remember { mutableStateOf(false) }
+    val pager=rememberPagerState(initialPage=neighbors.indexOfFirst{it.id==photo.id}.coerceAtLeast(0),pageCount={neighbors.size})
+    val strip=rememberLazyListState()
+    LaunchedEffect(pager.settledPage,neighbors.size,canLoadMore,loadingMore){
+        if(canLoadMore&&!loadingMore&&pager.settledPage>=neighbors.lastIndex-2)onNeedMore()
+    }
+    LaunchedEffect(photo.id,model){if(model.isNotBlank()&&readyModels[photo.id]==model){viewerLoading=false;viewerFailure=""}}
+    LaunchedEffect(photo.id){
+        val index=neighbors.indexOfFirst{it.id==photo.id}.coerceAtLeast(0)
+        if(!pager.isScrollInProgress&&pager.settledPage!=index)pager.scrollToPage(index)
+        strip.animateScrollToItem(index)
+    }
+    LaunchedEffect(pager,neighbors.map{it.id},photo.id){
+        snapshotFlow{pager.settledPage}.collect { index -> neighbors.getOrNull(index)?.takeIf{it.id!=photo.id}?.let{onNavigate(it.id)} }
+    }
     var edited by remember { mutableStateOf<File?>(null) }
     val edit =
         rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result
@@ -2570,7 +2678,7 @@ private fun PhotoViewer(
     fun share(editing: Boolean) {
         scope.launch {
             try {
-                val source = original?.localUri ?: model
+                val source = original?.savedUri ?: model
                 check(source.isNotBlank()) { "请先下载原片或加载预览" }
                 val raw = Uri.parse(source)
                 val name = if (original != null) original.name else "preview.jpg"
@@ -2609,14 +2717,14 @@ private fun PhotoViewer(
             }
         }
     }
-    LaunchedEffect(photo.id, retryKey) {
+    LaunchedEffect(photo.selectionResourceKey(), retryKey) {
         if (original == null)
             withContext(Dispatchers.IO) {
                 runCatching { runtime.ensurePreview(photo, true) }
                     .onSuccess { model = it }
                     .onFailure {
                         viewerLoading = false
-                        viewerFailure = it.message ?: "预览加载失败，请重试"
+                        viewerFailure = if(model.isBlank())it.message ?: "预览加载失败，请重试" else ""
                     }
             }
     }
@@ -2625,6 +2733,9 @@ private fun PhotoViewer(
         FullScreenScene(onClose) {
             DarkDialogBars()
             if (filesInfo) PhotoFilesDialog(photo) { filesInfo = false }
+            if(importingCurrent)AlertDialog(onDismissRequest={importingCurrent=false},title={Text("导入当前照片")},text={Column{
+                DownloadFormat.entries.forEach{format->TextButton(enabled=photo.downloadFiles(format).any{it.savedUri.isBlank()},onClick={runtime.enqueueDownload(listOf(photo.id),format);runtime.notice.value="已加入导入队列，可在传输页查看";importingCurrent=false;onClose()}){Text(when(format){DownloadFormat.JPEG->"JPEG / HEIF";DownloadFormat.RAW->"RAW原片";DownloadFormat.ALL->"全部文件"})}}
+            }},confirmButton={},dismissButton={TextButton(onClick={importingCurrent=false}){Text("取消")}})
             Box(Modifier.fillMaxSize().background(Color(0xff111318)).padding(dialogSafePadding())) {
                 Box(
                     Modifier.fillMaxSize()
@@ -2641,50 +2752,39 @@ private fun PhotoViewer(
                 ) {
                     if (model.isBlank() && viewerFailure.isBlank()) Info("等待预览")
                     else if (model.isNotBlank())
-                        key(retryKey) {
-                            AsyncImage(
-                                model = model,
-                                contentDescription = photo.name,
-                                contentScale = ContentScale.Fit,
-                                modifier =
-                                    Modifier.fillMaxSize()
-                                        .drawWithContent {
-                                            withTransform({
-                                                translate(pan.x, pan.y)
-                                                scale(scale, scale, center)
-                                            }) {
+                        key(retryKey){
+                            HorizontalPager(state=pager,userScrollEnabled=scale<=1.01f,modifier=Modifier.fillMaxSize().testTag("photo-viewer-pager")){page->
+                                val pagePhoto=neighbors[page]
+                                val active=pagePhoto.id==photo.id
+                                AsyncImage(model=if(active)model else pagePhoto.displayUri,contentDescription=pagePhoto.name,contentScale=ContentScale.Fit,
+                                    modifier=Modifier.fillMaxSize().onSizeChanged{if(active)imageViewport=it}
+                                        .drawWithContent{
+                                            withTransform({translate(if(active)pan.x else 0f,if(active)pan.y else 0f);scale(if(active)scale else 1f,if(active)scale else 1f,center)}){
                                                 this@drawWithContent.drawContent()
                                             }
-                                        }
-                                        .transformable(
-                                            rememberTransformableState { zoom, offset, _ ->
-                                                scale = (scale * zoom).coerceIn(1f, 6f)
-                                                pan = if (scale <= 1f) Offset.Zero else pan + offset
+                                        }.transformable(state=rememberTransformableState{zoom,offset,_->
+                                            if(active){
+                                                scale=(scale*zoom).coerceIn(1f,6f)
+                                                pan=if(scale<=1f)Offset.Zero else boundedPan(pan+offset,scale)
                                             }
-                                        )
-                                        .pointerInput(photo.id) {
-                                            detectTapGestures(
-                                                onDoubleTap = {
-                                                    scale = if (scale > 1f) 1f else 3f
-                                                    pan = Offset.Zero
+                                        },canPan={scale>1f},enabled=active)
+                                        .pointerInput(pagePhoto.id){
+                                            detectTapGestures(onTap={viewerControls=!viewerControls},onDoubleTap={point->
+                                                if(active){
+                                                    scale=if(scale>1f)1f else 3f
+                                                    pan=if(scale<=1f)Offset.Zero else boundedPan(Offset((imageViewport.width/2f-point.x)*2,(imageViewport.height/2f-point.y)*2),scale)
                                                 }
-                                            )
+                                            })
                                         },
-                                onLoading = {
-                                    viewerLoading = true
-                                    viewerFailure = ""
-                                },
-                                onSuccess = {
-                                    viewerLoading = false
-                                    viewerFailure = ""
-                                },
-                                onError = {
-                                    viewerLoading = false
-                                    viewerFailure =
-                                        if (photo.imported) "此格式暂不能显示，已保存的原文件可在传输页打开或另存。"
-                                        else "预览暂不能显示，请检查相机连接后重试。"
-                                },
-                            )
+                                    onLoading={if(active){viewerLoading=true;viewerFailure=""}},
+                                    onSuccess={
+                                        val bounds=IntSize(it.result.drawable.intrinsicWidth,it.result.drawable.intrinsicHeight)
+                                        decodedSizes[pagePhoto.id]=bounds
+                                        readyModels[pagePhoto.id]=if(active)model else pagePhoto.displayUri
+                                        if(active){viewerLoading=false;viewerFailure="";imageBounds=bounds}
+                                    },
+                                    onError={if(active){viewerLoading=false;viewerFailure=if(photo.imported)"此格式暂不能显示，原文件仍可在文件信息中查看。" else "预览暂不能显示，请检查连接后重试。"}})
+                            }
                         }
                     if (viewerLoading)
                         CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
@@ -2705,83 +2805,45 @@ private fun PhotoViewer(
                             }
                         }
                 }
-                GlassSurface(
-                    glass,
-                    Modifier.align(Alignment.TopCenter).padding(12.dp).fillMaxWidth(),
-                    radius = 20.dp,
-                    dark = true,
-                ) {
-                    Row(
-                        Modifier.padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                photo.displayTitle(),
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                if (original != null) "已导入原片"
-                                else if (photo.imported) "已导入RAW原片 · 当前显示预览"
-                                else if (photo.source == PhotoSource.CAMERA.name && !cameraConnected) "离线预览 · 相机已断开"
-                                else "相机预览 · 清晰度以原片为准",
-                                fontSize = 10.sp,
-                                color = Color.White.copy(alpha = .8f),
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                            Text(photo.importTitle(),fontSize=10.sp,color=Color.White.copy(alpha=.75f),maxLines=2)
+                if(viewerControls){
+                    Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(8.dp).background(Color.Black.copy(alpha=.42f),RoundedCornerShape(24.dp)).padding(horizontal=4.dp,vertical=2.dp),verticalAlignment=Alignment.CenterVertically){
+                        IconButton(onClick=onClose){Icon(Icons.Outlined.ArrowBack,"关闭照片",tint=Color.White)}
+                        Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally){
+                            Text(SimpleDateFormat("M月d日 · HH:mm",Locale.CHINA).format(Date(photo.capturedAt)),color=Color.White,fontSize=14.sp,fontWeight=FontWeight.Medium)
+                            Text(if(original!=null)"已导入原片 · "+photo.formatTitle() else if(photo.imported)"已导入RAW · 当前为预览" else if(!cameraConnected&&photo.source==PhotoSource.CAMERA.name)"离线缓存 · 相机已断开" else if(!resourceConfirmed)"缓存预览 · 需重新核对相机" else "相机预览 · "+photo.formatTitle(),
+                                fontSize=11.sp,color=Color.White.copy(alpha=.72f),maxLines=1,overflow=TextOverflow.Ellipsis)
                         }
-                        if (scale > 1.01f)
-                            Text(
-                                "%.1f×".format(Locale.ROOT, scale),
-                                color = Color(0xffc8dceb),
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(horizontal = 6.dp),
-                            )
-                        IconButton(onClick={filesInfo=true}) { Icon(Icons.Outlined.Info,"文件信息",tint=Color.White) }
-                        if (photo.inLibrary)
-                            IconButton(onClick = onRemove) {
-                                Icon(Icons.Outlined.DeleteOutline, "移除照片", tint = Color.White)
-                            }
-                        IconButton(onClick = onClose) {
-                            Icon(Icons.Outlined.Close, "关闭照片", tint = Color.White)
-                        }
+                        PhotoSelectionAction(selected,onSelect,enabled=!pager.isScrollInProgress)
                     }
-                }
-                Column(Modifier.align(Alignment.BottomCenter).padding(12.dp)) {
-                    GlassSurface(glass, Modifier.fillMaxWidth(), radius = 22.dp, dark = true) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                        ) {
-                            MarkAction(
-                                "收藏",
-                                Icons.Outlined.FavoriteBorder,
-                                photo.mark == PhotoMark.FAVORITE.name,
-                            ) {
-                                onMark(
-                                    if (photo.mark == PhotoMark.FAVORITE.name) PhotoMark.NONE
-                                    else PhotoMark.FAVORITE
-                                )
+                    if(scale>1.01f)TextButton(onClick={scale=1f;pan=Offset.Zero},modifier=Modifier.align(Alignment.TopEnd).padding(top=80.dp,end=16.dp).background(Color.Black.copy(alpha=.5f),CircleShape)){Text("还原",color=Color.White,fontSize=12.sp)}
+                    Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal=12.dp,vertical=8.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(8.dp)){
+                        LazyRow(state=strip,modifier=Modifier.fillMaxWidth().height(54.dp).testTag("viewer-filmstrip"),horizontalArrangement=Arrangement.spacedBy(6.dp),contentPadding=PaddingValues(horizontal=8.dp)){
+                            items(neighbors,key={it.id}){item->
+                                Box(Modifier.size(50.dp).clip(RoundedCornerShape(7.dp)).border(if(item.id==photo.id)2.dp else 0.dp,if(item.id==photo.id)Color.White else Color.Transparent,RoundedCornerShape(7.dp))
+                                    .clickable{scope.launch{pager.animateScrollToPage(neighbors.indexOf(item))}}.semantics{contentDescription="缩略图 "+item.name}){
+                                    PhotoThumbnail(runtime,item,Modifier.fillMaxSize().padding(if(item.id==photo.id)3.dp else 0.dp).graphicsLayer{alpha=if(item.id==photo.id)1f else .6f})
+                                }
                             }
-                            PhotoSelectionAction(selected, onSelect)
-                            MarkAction("修图", Icons.Outlined.Tune, false) { share(true) }
-                            MarkAction("分享", Icons.Outlined.IosShare, false) { share(false) }
                         }
+                        GlassSurface(glass,Modifier.widthIn(max=520.dp).fillMaxWidth(),radius=26.dp,dark=true){
+                            Row(Modifier.fillMaxWidth().padding(vertical=2.dp),horizontalArrangement=Arrangement.SpaceEvenly){
+                                IconButton(onClick={share(false)},enabled=!pager.isScrollInProgress){Icon(Icons.Outlined.IosShare,"分享照片",tint=Color.White)}
+                                IconButton(onClick={onMark(if(photo.mark==PhotoMark.FAVORITE.name)PhotoMark.NONE else PhotoMark.FAVORITE)},enabled=!pager.isScrollInProgress){
+                                    Icon(if(photo.mark==PhotoMark.FAVORITE.name)Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,"收藏照片",tint=if(photo.mark==PhotoMark.FAVORITE.name)SelectionAccent else Color.White)
+                                }
+                                IconButton(onClick={filesInfo=true},enabled=!pager.isScrollInProgress){Icon(Icons.Outlined.Info,"文件信息",tint=Color.White)}
+                                Box{
+                                    IconButton(onClick={viewerMore=true},enabled=!pager.isScrollInProgress){Icon(Icons.Outlined.MoreHoriz,"照片更多操作",tint=Color.White)}
+                                    DropdownMenu(viewerMore,{viewerMore=false}){
+                                        DropdownMenuItem(text={Text("系统修图（创建副本）")},onClick={viewerMore=false;share(true)})
+                                        if(photo.source==PhotoSource.CAMERA.name&&photo.hasUnimportedFiles())DropdownMenuItem(text={Text("导入当前照片")},enabled=canDownload&&resourceConfirmed,onClick={viewerMore=false;importingCurrent=true})
+                                        if(photo.inLibrary)DropdownMenuItem(text={Text("移除照片")},onClick={viewerMore=false;onRemove()},modifier=Modifier.semantics{contentDescription="移除照片"})
+                                    }
+                                }
+                            }
+                        }
+                        Text((neighbors.indexOfFirst{it.id==photo.id}+1).toString()+" / "+neighbors.size+" · "+photo.displayTitle(),fontSize=11.sp,color=Color.White.copy(alpha=.68f),maxLines=1,overflow=TextOverflow.Ellipsis)
                     }
-                    Text(
-                        "双指缩放 · 双击查看细节 · 修图先创建副本",
-                        color = Color.White.copy(alpha = .9f),
-                        fontSize = 10.sp,
-                        modifier =
-                            Modifier.align(Alignment.CenterHorizontally)
-                                .padding(top = 8.dp)
-                                .background(Color.Black.copy(alpha = .7f), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
                 }
             }
         }
@@ -2865,19 +2927,16 @@ private fun ComparePhotos(runtime: CameraRuntime, photos: List<Photo>, selection
 }
 
 @Composable
-private fun PhotoSelectionAction(selected: Boolean, onClick: () -> Unit) {
-    Column(
-        Modifier.clip(UiTokens.control)
-            .background(if (selected) SelectionAccent else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 13.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(if (selected) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked, null, tint = Color.White, modifier = Modifier.size(22.dp))
-        Text(if (selected) "已选择" else "选择", color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp))
+private fun PhotoSelectionAction(selected: Boolean, onClick: () -> Unit,enabled:Boolean=true) {
+    Box(Modifier.size(44.dp).clip(CircleShape).toggleable(selected,enabled=enabled,role=androidx.compose.ui.semantics.Role.Checkbox,onValueChange={onClick()}).semantics{
+        contentDescription="选择当前照片"
+        stateDescription=if(selected)"已选择" else "未选择"
+    },contentAlignment=Alignment.Center){
+        Box(Modifier.size(27.dp).background(if(selected)SelectionAccent else Color.Black.copy(alpha=.18f),CircleShape).border(2.dp,Color.White,CircleShape),contentAlignment=Alignment.Center){
+            if(selected)Icon(Icons.Outlined.Check,null,tint=Color.White,modifier=Modifier.size(19.dp))
+        }
     }
 }
-
 
 private fun photoDay(photo: Photo): String =
     photo.files().firstOrNull()?.cameraDay?.takeIf { it.isNotBlank() }

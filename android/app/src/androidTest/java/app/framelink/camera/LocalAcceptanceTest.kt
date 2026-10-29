@@ -32,7 +32,9 @@ class LocalAcceptanceTest {
     fun navigationUsesRealEmptyAndSettingsStates() {
         compose.onNodeWithText("连接相机").assertIsDisplayed()
         compose.onNodeWithText("图库", useUnmergedTree = true).performClick()
-        compose.onNodeWithContentDescription("导入本机照片").assertIsDisplayed()
+        compose.onNodeWithContentDescription("图库更多操作").performClick()
+        compose.onNodeWithText("导入本机照片").assertIsDisplayed()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         compose.onNodeWithText("项目", useUnmergedTree = true).performClick()
         compose.onNodeWithText("启用云端选片").assertIsDisplayed()
         compose.onNodeWithText("传输", useUnmergedTree = true).performClick()

@@ -186,8 +186,10 @@ class PhotoManagementAcceptanceTest {
         try {
             compose.onNodeWithText("图库", useUnmergedTree = true).performClick()
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(0)
+            enterGallerySelection(compose)
             compose.onNodeWithContentDescription("选择 ${first.name}").performClick()
-            compose.onNodeWithText("移除").performClick()
+            compose.onNodeWithContentDescription("更多选片操作").performClick()
+            compose.onNodeWithText("移除所选照片").performClick()
             compose.onNodeWithText("仅从图库移除").assertIsDisplayed()
             compose.onNodeWithText("删除本机文件并移除").assertIsDisplayed()
             compose.waitForIdle()
@@ -195,13 +197,16 @@ class PhotoManagementAcceptanceTest {
             compose.onNodeWithText("取消").performClick()
             assertTrue(firstFile.isFile)
             assertFalse(runtime.database.photos().find(first.id)!!.localHidden)
-            compose.onNodeWithText("移除").performClick()
+            compose.onNodeWithContentDescription("更多选片操作").performClick()
+            compose.onNodeWithText("移除所选照片").performClick()
             compose.waitUntil(10000) { !compose.onNodeWithText("确认移除").fetchSemanticsNode().config.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) }
             compose.onNodeWithText("确认移除").performClick()
             compose.waitUntil(10000) { runBlocking { runtime.database.photos().find(first.id)!!.localHidden } }
             assertTrue(firstFile.isFile)
+            finishGallerySelection(compose)
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(0)
-            compose.onNodeWithText(second.name).performClick()
+            compose.onNodeWithTag("photo-${second.id}").performClick()
+            compose.onNodeWithContentDescription("照片更多操作").performClick()
             compose.onNodeWithContentDescription("移除照片").performClick()
             compose.onNodeWithText("删除本机文件并移除").performClick()
             compose.waitUntil(10000) { compose.onAllNodesWithText("确认删除文件").fetchSemanticsNodes().singleOrNull()?.config?.contains(androidx.compose.ui.semantics.SemanticsProperties.Disabled) == false }

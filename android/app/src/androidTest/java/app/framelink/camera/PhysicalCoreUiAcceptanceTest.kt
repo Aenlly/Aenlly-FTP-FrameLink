@@ -140,13 +140,14 @@ class PhysicalCoreUiAcceptanceTest {
             }
             val first = page.first()
             clickDescription("查看 ${first.name}")
-            clickText("选择"); waitFor { hasText("已选择") }
+            clickDescription("选择当前照片"); waitFor { findDescription("选择当前照片")?.isChecked==true }
             clickDescription("关闭照片")
+            clickDescription("选择照片")
             waitFor { findDescription("选择 ${first.name}")?.isChecked == true }
-            clickDescription("选择 ${page[1].name}"); waitFor { hasText("已选 2") }
+            clickDescription("选择 ${page[1].name}"); waitFor { hasSelectionCount(2) }
             GalleryLayout.entries.forEach { layout ->
                 clickDescription("显示方式"); clickText(layout.title)
-                waitFor { runtime.settings.get("gallery.layout") == layout.key && hasText("已选 2") }
+                waitFor { runtime.settings.get("gallery.layout") == layout.key && hasSelectionCount(2) }
                 assertGridSelection(first.name, backwards = true)
                 assertGridSelection(page[1].name)
             }
@@ -154,12 +155,13 @@ class PhysicalCoreUiAcceptanceTest {
             clickDescription("显示方式"); clickText("中图")
             assertGridSelection(first.name, backwards = true)
             clickDescription("清空本次选择")
-            waitFor { nodes().none { it.text?.toString()?.matches(Regex("已选 \\d+")) == true } }
+            clickText("清空选择")
+            waitFor { hasSelectionCount(0) }
             dragBetween(findDescription("查看 ${first.name}")!!, findDescription("查看 ${page[1].name}")!!)
             screenshot("physical-drag-result")
-            waitFor { hasText("已选 2") }
+            waitFor { hasSelectionCount(2) }
             screenshot("physical-connected-selection")
-            clickText("保存")
+            clickText("存选片")
             val title = "真机验收选片-${System.currentTimeMillis()}"
             waitFor { nodes().any { it.isEditable } }
             assertTrue(nodes().first { it.isEditable }.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,
@@ -448,6 +450,7 @@ class PhysicalCoreUiAcceptanceTest {
         return result
     }
     private fun hasText(text: String) = nodes().any { it.text?.toString() == text }
+    private fun hasSelectionCount(count:Int)=nodes().any{it.text?.toString()?.startsWith("本次已选 $count 张")==true}
     private fun findDescription(description: String): AccessibilityNodeInfo? {
         val all = nodes()
         return all.firstOrNull { it.contentDescription?.toString() == description }

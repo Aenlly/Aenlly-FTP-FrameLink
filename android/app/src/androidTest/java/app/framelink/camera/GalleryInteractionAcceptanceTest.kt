@@ -43,21 +43,57 @@ class GalleryInteractionAcceptanceTest {
             compose.onNodeWithContentDescription("查看 ${photos[0].name}").performTouchInput { click(Offset(width * .25f, height * .25f)) }
             compose.onNodeWithText("排除").assertDoesNotExist()
             compose.onNodeWithText("选中").assertDoesNotExist()
-            compose.onNodeWithText("选择", substring = false).performClick()
-            compose.onNodeWithText("已选择").assertIsDisplayed()
+            compose.onNodeWithContentDescription("选择当前照片").performClick()
+            compose.onNodeWithContentDescription("选择当前照片").assertIsOn()
+            compose.onNodeWithTag("photo-viewer-pager").performTouchInput { swipeLeft() }
+            compose.waitUntil(10000){compose.onNodeWithContentDescription("选择当前照片").fetchSemanticsNode().config[SemanticsProperties.ToggleableState]==androidx.compose.ui.state.ToggleableState.Off}
+            compose.onNodeWithTag("photo-viewer-pager").performTouchInput { swipeRight() }
+            compose.waitUntil(10000){compose.onNodeWithContentDescription("选择当前照片").fetchSemanticsNode().config[SemanticsProperties.ToggleableState]==androidx.compose.ui.state.ToggleableState.On}
             compose.onNodeWithContentDescription("关闭照片").performClick()
+            enterGallerySelection(compose)
             checkbox(photos[0]).assertIsOn()
-            compose.onNodeWithText("已选 1").assertIsDisplayed()
-            compose.onNodeWithText("已选", substring = false).performClick()
-            compose.onNodeWithContentDescription("查看 ${photos[0].name}").assertIsDisplayed()
-            compose.onNodeWithContentDescription("查看 ${photos[1].name}").assertDoesNotExist()
-            compose.onNodeWithContentDescription("查看 ${photos[0].name}").performTouchInput { click(Offset(width * .25f, height * .25f)) }
-            compose.onNodeWithText("已选择").performClick()
+            assertEquals(1,selectedCount())
+            filterGallery(compose,"本次已选")
+            compose.onNodeWithContentDescription("查看 "+photos[0].name).assertIsDisplayed()
+            compose.onNodeWithContentDescription("查看 "+photos[1].name).assertDoesNotExist()
+            finishGallerySelection(compose)
+            compose.onNodeWithContentDescription("查看 "+photos[0].name).performTouchInput { click(Offset(width*.25f,height*.25f)) }
+            compose.onNodeWithContentDescription("选择当前照片").performClick()
             compose.onNodeWithContentDescription("关闭照片").performClick()
             compose.onNodeWithText("还没有选择照片").assertIsDisplayed()
             compose.onNodeWithText("查看全部").performClick()
+            enterGallerySelection(compose)
             checkbox(photos[0]).assertIsOff()
             assertEquals(PhotoMark.PICKED.name, runBlocking { runtime.database.photos().find(photos[0].id)!!.mark })
+        } finally { cleanup() }
+    }
+
+    @Test
+    fun densityGestureAndLayoutChangesPreserveDraft() {
+        try {
+            val photos=seed(30)
+            gallery()
+            val before=compose.onNodeWithTag("photo-${photos[0].id}").fetchSemanticsNode().boundsInRoot.width
+            compose.onNodeWithTag("gallery-grid").performTouchInput {
+                down(0,center-Offset(60f,0f));down(1,center+Offset(60f,0f))
+                moveTo(0,center-Offset(150f,0f));moveTo(1,center+Offset(150f,0f))
+                up(0);up(1)
+            }
+            compose.waitUntil(10000){compose.onNodeWithTag("photo-${photos[0].id}").fetchSemanticsNode().boundsInRoot.width>before*1.2f}
+            enterGallerySelection(compose)
+            checkbox(photos[0]).performClick()
+            compose.onNodeWithContentDescription("显示方式").performClick()
+            compose.onNodeWithText("大图",substring=false).performClick()
+            val position=runBlocking{runtime.database.photos().observe().first().filter{it.inLibrary}.indexOfFirst{it.id==photos[0].id}}
+            compose.onNodeWithTag("gallery-grid").performScrollToIndex(position)
+            checkbox(photos[0]).assertIsOn()
+            finishGallerySelection(compose)
+            compose.onNodeWithText("本次已选 1 张",substring=false).assertIsDisplayed()
+            compose.onNodeWithTag("tab-camera").performClick()
+            compose.onNodeWithTag("tab-gallery").performClick()
+            compose.onNodeWithText("本次已选 1 张",substring=false).performClick()
+            compose.onNodeWithTag("gallery-grid").performScrollToIndex(position)
+            checkbox(photos[0]).assertIsOn()
         } finally { cleanup() }
     }
 
@@ -70,19 +106,19 @@ class GalleryInteractionAcceptanceTest {
             val secondRow = point(photos[5])
             down(start)
             move(secondRow)
-            compose.onNodeWithText("已选 6").assertIsDisplayed()
+            assertEquals(6,selectedCount())
             move(point(photos[2]))
             up()
-            compose.onNodeWithText("已选 3").assertIsDisplayed()
+            assertEquals(3,selectedCount())
             for (photo in photos.take(3)) checkbox(photo).assertIsOn()
             for (photo in photos.subList(3, 6)) checkbox(photo).assertIsOff()
             down(point(photos[0]))
             move(point(photos[2]))
             up()
-            compose.onNodeWithContentDescription("清空本次选择").assertDoesNotExist()
+            compose.onNodeWithContentDescription("清空本次选择").assertIsNotEnabled()
             compose.onNodeWithTag("photo-viewer-image").assertDoesNotExist()
             compose.onNodeWithTag("gallery-grid").performTouchInput { swipeUp(durationMillis = 200) }
-            compose.onNodeWithContentDescription("清空本次选择").assertDoesNotExist()
+            compose.onNodeWithContentDescription("清空本次选择").assertIsNotEnabled()
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(0)
 
             // 保持手指停在下边缘，时钟驱动滚动；抬手后不再继续选择
@@ -97,8 +133,8 @@ class GalleryInteractionAcceptanceTest {
             assertTrue("边缘滚动应继续选择屏外照片，实际$count", count > 9)
             compose.mainClock.advanceTimeBy(300)
             assertEquals(count, selectedCount())
-            compose.onNodeWithContentDescription("清空本次选择").performClick()
-            compose.onNodeWithContentDescription("清空本次选择").assertDoesNotExist()
+            clearGallerySelection(compose)
+            compose.onNodeWithContentDescription("清空本次选择").assertIsNotEnabled()
         } finally { if (touching) inject(android.view.MotionEvent.ACTION_CANCEL, lastTouch); compose.mainClock.autoAdvance = true; cleanup() }
     }
 
@@ -108,16 +144,19 @@ class GalleryInteractionAcceptanceTest {
             val photos = seed(4)
             runBlocking { runtime.database.photos().saveAll(photos.take(2).map { it.copy(burstKey = "qa-burst") }) }
             gallery()
-            compose.onNodeWithText("连拍分组", substring = false).performClick()
+            compose.onNodeWithContentDescription("显示方式").performClick()
+            compose.onNodeWithContentDescription("连拍分组").performClick()
+            compose.onNodeWithContentDescription("关闭").performClick()
+            enterGallerySelection(compose)
             checkbox(photos[0]).performClick()
-            compose.onNodeWithText("已选 2").assertIsDisplayed()
+            assertEquals(2,selectedCount())
             checkbox(photos[0]).assertIsOn()
             checkbox(photos[0]).performClick()
-            compose.onNodeWithContentDescription("清空本次选择").assertDoesNotExist()
+            compose.onNodeWithContentDescription("清空本次选择").assertIsNotEnabled()
             down(point(photos[0]))
             move(point(photos[2]))
             up()
-            compose.onNodeWithText("已选 3").assertIsDisplayed()
+            assertEquals(3,selectedCount())
         } finally { cleanup() }
     }
 
@@ -145,9 +184,10 @@ class GalleryInteractionAcceptanceTest {
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(rows.size)
             compose.onNodeWithText("已加载全部").assertIsDisplayed()
             compose.onNodeWithText("加载更多").assertDoesNotExist()
+            enterGallerySelection(compose)
             compose.onNodeWithText("全选", substring = false).performClick()
-            compose.onNodeWithText("已选 ${rows.size}").assertIsDisplayed()
-            compose.onNodeWithContentDescription("清空本次选择").performClick()
+            assertEquals(rows.size,selectedCount())
+            clearGallerySelection(compose)
             assertEquals(rows.size, runtime.currentCameraIds.value.size)
         } finally { runtime.disconnect() }
     }
@@ -167,6 +207,11 @@ class GalleryInteractionAcceptanceTest {
             compose.waitUntil(30000) { runBlocking { runtime.database.photos().find(target.id)!!.imported } }
             val imported = runBlocking { runtime.database.photos().find(target.id)!! }
             val original = File(imported.files().first { it.originalPath.isNotBlank() }.originalPath)
+            enterGallerySelection(compose)
+            compose.onNodeWithTag("gallery-grid").performScrollToIndex(before.indexOfFirst { it.id == target.id })
+            checkbox(target).performClick()
+            finishGallerySelection(compose)
+            compose.onNodeWithText("本次已选 1 张",substring=false).assertIsDisplayed()
             val request = URI("http://127.0.0.1:16023/drop").toURL().openConnection() as HttpURLConnection
             try { request.requestMethod = "POST"; request.connectTimeout = 3000; request.readTimeout = 3000; assertEquals(204, request.responseCode) }
             finally { request.disconnect() }
@@ -174,6 +219,7 @@ class GalleryInteractionAcceptanceTest {
             assertTrue(runtime.currentCameraIds.value.isEmpty())
             compose.onNodeWithText("相机已断开", substring = false).assertIsDisplayed()
             compose.onNodeWithTag("gallery-grid").assertDoesNotExist()
+            compose.onNodeWithText(" · 待核对",substring=false).assertIsDisplayed()
             acceptanceScreenshot(compose.activity, "gallery-camera-disconnected")
             assertTrue(original.isFile)
             assertEquals(before.size, runBlocking { runtime.database.photos().byIds(before.map { it.id }).size })
@@ -181,13 +227,20 @@ class GalleryInteractionAcceptanceTest {
             val local = runBlocking { runtime.database.photos().observe().first().filter { it.inLibrary } }
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(local.indexOfFirst { it.id == imported.id })
             compose.onNodeWithTag("photo-${imported.id}").performClick()
-            compose.onNodeWithText("已导入原片").assertIsDisplayed()
+            compose.onNodeWithText("已导入原片",substring=true).assertIsDisplayed()
             compose.onNodeWithContentDescription("关闭照片").performClick()
             runtime.connect(ConnectionConfig(host = "127.0.0.1"))
             compose.waitUntil(30000) { runtime.camera.value.info != null }
             compose.onNodeWithText("相机内").performClick()
             compose.waitUntil(30000) { runtime.currentCameraIds.value.isNotEmpty() }
             compose.onNodeWithTag("gallery-grid").assertIsDisplayed()
+            enterGallerySelection(compose)
+            compose.onNodeWithText("核对选片",substring=false).assertIsDisplayed().performClick()
+            compose.waitUntil(30000) { compose.onAllNodesWithText("导入 1 张",substring=false).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("导入 1 张",substring=false).assertIsEnabled()
+            val refreshed = runBlocking { runtime.database.photos().byIds(runtime.currentCameraIds.value.toList()) }.sortedByDescending { it.capturedAt }
+            compose.onNodeWithTag("gallery-grid").performScrollToIndex(refreshed.indexOfFirst { it.id == target.id })
+            checkbox(target).assertIsOn()
         } finally { runtime.disconnect() }
     }
 
@@ -246,8 +299,8 @@ class GalleryInteractionAcceptanceTest {
     }
 
     private fun selectedCount(): Int {
-        val texts = compose.onNodeWithContentDescription("清空本次选择").fetchSemanticsNode().config[SemanticsProperties.Text]
-        return texts.first { it.text.startsWith("已选 ") }.text.substringAfter(' ').toInt()
+        val text=compose.onNodeWithTag("gallery-selection-count").fetchSemanticsNode().config[SemanticsProperties.Text].joinToString{it.text}
+        return Regex("本次已选 ([0-9]+) 张").find(text)!!.groupValues[1].toInt()
     }
 
     private fun cleanup() = runBlocking {

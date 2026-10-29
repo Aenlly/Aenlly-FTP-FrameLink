@@ -11,7 +11,7 @@ import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-version='0.1.12'
+version='0.1.13'
 ios_version='0.1.6'
 checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-instrument-ui','android-instrument-gallery','android-instrument-usability','android-instrument-live','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark','ios','ios-core','ios-ui','ios-device']
 checks.append('android-instrument-live-flow')
@@ -76,6 +76,12 @@ ui_evidence=artifacts/f'camera-ui-{version}-evidence.json'
 if ui_evidence.exists():
     ui=json.loads(ui_evidence.read_text())
     if ui.get('apkSha256')==result['apkSha256']: result['cameraUiEvidence']=ui
+gallery_evidence=artifacts/f'gallery-ui-{version}-evidence.json'
+if gallery_evidence.exists():
+    gallery=json.loads(gallery_evidence.read_text())
+    if not gallery.get('passed') or gallery.get('apkSha256')!=result['apkSha256'] or gallery.get('diagnosticSha256')!=result['diagnosticApk']['sha256']:
+        raise SystemExit('图库连续操作证据未通过或不属于当前主包、诊断组件')
+    result['galleryUiEvidence']=gallery
 alias=artifacts/f'FrameLink-{version}-glass-{datetime.datetime.now().strftime("%Y%m%d-%H%M")}-debug.apk'
 shutil.copyfile(apk,alias)
 result['timestampedApk']=alias.name

@@ -78,15 +78,17 @@ class VisualAcceptanceTest {
         screenshot("home")
         compose.onNodeWithTag("tab-gallery").performClick()
         compose.onNodeWithText("已导入").performClick()
-        compose.onNodeWithText("收藏").performClick()
+        filterGallery(compose,"收藏")
         compose.onNodeWithTag("gallery-grid").performScrollToIndex(0)
-        compose.onNodeWithText(images[0].name).assertIsDisplayed()
+        compose.onNodeWithTag("photo-${ids[0]}").assertIsDisplayed()
         screenshot("gallery")
+        enterGallerySelection(compose)
         compose.onNodeWithContentDescription("选择 ${images[0].name}").performClick()
         compose.onNodeWithContentDescription("选择 ${images[1].name}").performClick()
-        compose.onNodeWithText("已选 2").assertIsDisplayed()
+        compose.onNodeWithText("本次已选 2 张",substring=true).assertIsDisplayed()
         screenshot("selection")
-        compose.onNodeWithText("移除").performClick()
+        compose.onNodeWithContentDescription("更多选片操作").performClick()
+        compose.onNodeWithText("移除所选照片").performClick()
         compose.waitUntil(10000) { !compose.onNodeWithText("确认移除").fetchSemanticsNode().config.contains(SemanticsProperties.Disabled) }
         compose.onNodeWithText("仅从图库移除").assertIsDisplayed()
         compose.onNodeWithText("删除本机文件并移除").assertIsDisplayed()
@@ -98,27 +100,30 @@ class VisualAcceptanceTest {
         compose.onNodeWithContentDescription("关闭对比").performClick()
         compose.onNodeWithContentDescription("选择 ${images[0].name}").performClick()
         compose.onNodeWithContentDescription("选择 ${images[1].name}").performClick()
+        finishGallerySelection(compose)
         for (index in listOf(0, 1, 3)) {
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(index)
-            compose.onNodeWithText(images[index].name).performClick()
-            compose.onNodeWithText("已导入原片").assertIsDisplayed()
-            compose.onNodeWithText("分享").assertIsDisplayed()
-            compose.onNodeWithText("修图").assertIsDisplayed()
+            compose.onNodeWithTag("photo-${ids[index]}").performClick()
+            compose.onNodeWithText("已导入原片",substring=true).assertIsDisplayed()
+            compose.onNodeWithContentDescription("分享照片").assertIsDisplayed()
+            compose.onNodeWithContentDescription("照片更多操作").performClick()
+            compose.onNodeWithText("系统修图（创建副本）").assertIsDisplayed()
+            InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
             val fitted = screenshot("detail-$index-fit")
             if (index != 1) {
                 compose.onNodeWithTag("photo-viewer-image").performTouchInput { doubleClick() }
                 compose.waitUntil(10000) {
-                    compose.onAllNodesWithText("3.0×").fetchSemanticsNodes().isNotEmpty()
+                    compose.onAllNodesWithText("还原").fetchSemanticsNodes().isNotEmpty()
                 }
-                val zoomed = screenshot("detail-$index-zoom")
+                val zoomed = screenshot("detail-$index-zoom",differentFrom=fitted)
                 assertNotEquals("缩放状态变化后，照片区域的实际像素应发生变化", fitted, zoomed)
             }
             compose.onNodeWithContentDescription("关闭照片").performClick()
         }
         compose.onNodeWithTag("gallery-grid").performScrollToIndex(5)
-        compose.onNodeWithText(images.last().name).assertIsDisplayed()
+        compose.onNodeWithTag("photo-${ids.last()}").assertIsDisplayed()
         val photoBottom =
-            compose.onNodeWithText(images.last().name).fetchSemanticsNode().boundsInRoot.bottom
+            compose.onNodeWithTag("photo-${ids.last()}").fetchSemanticsNode().boundsInRoot.bottom
         val navigationTop =
             compose.onNodeWithTag("tab-camera").fetchSemanticsNode().boundsInRoot.top
         assertTrue("最后一张照片被底部导航遮挡", photoBottom < navigationTop)
@@ -139,7 +144,7 @@ class VisualAcceptanceTest {
         }
     }
 
-    private fun screenshot(name: String): String {
+    private fun screenshot(name: String,differentFrom:String?=null): String {
         compose.waitUntil(15000) {
             compose
                 .onAllNodes(
@@ -160,21 +165,28 @@ class VisualAcceptanceTest {
                 .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "照片已显示"))
         compose.waitForIdle()
         InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(500, 5000)
-        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()!!
-        val pixels = java.security.MessageDigest.getInstance("SHA-256")
-        for (y in bitmap.height / 4 until bitmap.height * 3 / 4 step 12) {
-            for (x in bitmap.width / 5 until bitmap.width * 4 / 5 step 12) {
-                val color = bitmap.getPixel(x, y)
-                pixels.update(
-                    byteArrayOf((color shr 16).toByte(), (color shr 8).toByte(), color.toByte())
-                )
+        var captured:Bitmap?=null
+        var signature=""
+        compose.waitUntil(10000){
+            captured?.recycle()
+            val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()!!
+            captured=bitmap
+            val pixels=java.security.MessageDigest.getInstance("SHA-256")
+            for(y in bitmap.height/4 until bitmap.height*3/4 step 12){
+                for(x in bitmap.width/5 until bitmap.width*4/5 step 12){
+                    val color=bitmap.getPixel(x,y)
+                    pixels.update(byteArrayOf((color shr 16).toByte(),(color shr 8).toByte(),color.toByte()))
+                }
             }
+            signature=pixels.digest().joinToString(""){"%02x".format(it)}
+            differentFrom==null||signature!=differentFrom
         }
+        val bitmap=checkNotNull(captured)
         val file =
             File(compose.activity.getExternalFilesDir(null), "qa-shots/visual-$variant-$name.png")
                 .apply { parentFile!!.mkdirs() }
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         bitmap.recycle()
-        return pixels.digest().joinToString("") { "%02x".format(it) }
+        return signature
     }
 }

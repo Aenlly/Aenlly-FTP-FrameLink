@@ -293,12 +293,11 @@ class FtpClientAcceptanceTest {
             compose.onNodeWithText("图库", useUnmergedTree = true).performClick()
             compose.onNodeWithText("已导入").performClick()
             compose.waitUntil(10000) {
-                compose.onAllNodesWithText(photoName).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithContentDescription("查看 $photoName").fetchSemanticsNodes().isNotEmpty()
             }
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(0)
-            compose.onNodeWithContentDescription("选择 $photoName").assertIsDisplayed()
-            compose.onNodeWithText(photoName).performClick()
-            compose.onNodeWithText("已导入原片").assertIsDisplayed()
+            compose.onNodeWithContentDescription("查看 $photoName").assertIsDisplayed().performClick()
+            compose.onNodeWithText("已导入原片",substring=true).assertIsDisplayed()
             screenshot("android-photo-glass")
             compose.onNodeWithContentDescription("关闭照片").performClick()
             runtime.ftpClient.disconnect()

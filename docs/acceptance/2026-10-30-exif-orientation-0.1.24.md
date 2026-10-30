@@ -23,6 +23,8 @@
 
 对应日志为`android-instrument-gallery.log`、`android-instrument-exif.log`、`android-instrument-live-direction.log`、`android-instrument-live.log`以及`tablet-cache-11-delivery.log`／`tablet-cache-14-delivery.log`。回归中修正了模拟相机导入夹具的重复使用与清理，限制在模拟器运行，不重置真实设备照片。
 
+本机独立归档位于`artifacts/FrameLink-0.1.24-evidence/`，保存六份日志、58项JUnit原始XML、代表截图和组件映射。两份大屏日志内嵌最终两包摘要；手机规格日志未内嵌逐项摘要，归档中明确执行链依据与这一限制。较早候选组件2caa4184…单独保留，不凭文件名绑定最终16项运行。冻结APK、源码ZIP及Release附件未改写。
+
 ## 真机边界
 
 用户连接的小米平板型号为2410CRP4CC、Android API36。本轮中间候选包已通过真实A7C II的ISO触点打开检查，读到29个可调ISO候选；机身M模式下的曝光补偿为只读。测试没有拍照或提交参数值。中间候选包结果不冒充最终冻结包验收。

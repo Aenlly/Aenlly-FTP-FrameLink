@@ -290,14 +290,18 @@ struct ConnectCameraView: View {
           Section { Text(model.connectionFailure).font(.footnote).foregroundStyle(.red) }
         }
         Section("相机地址") {
-          TextField("例如 192.168.1.20", text: $config.host).textInputAutocapitalization(.never)
+          TextField("例如 192.168.1.20", text: Binding(get: { config.host }, set: { editEndpoint(host: $0, port: config.port) })).textInputAutocapitalization(.never)
             .autocorrectionDisabled().keyboardType(.URL)
-          TextField("端口", value: $config.port, format: .number).keyboardType(.numberPad)
+          TextField("端口", value: Binding(get: { config.port }, set: { editEndpoint(host: config.host, port: $0) }), format: .number).keyboardType(.numberPad)
         }
         Section {
           Toggle("相机要求访问认证", isOn: $secure)
           if secure {
-            TextField("相机用户名", text: $config.user).textInputAutocapitalization(.never)
+            TextField("相机用户名", text: Binding(get: { config.user }, set: { user in
+              guard config.user != user else { return }
+              config = ConnectionFormEditing.cameraAccount(config, user: user)
+              selectedProfile = ""; rememberCredentials = false
+            })).textInputAutocapitalization(.never)
               .autocorrectionDisabled()
             PasswordField(title: "相机密码", text: $config.password)
           }
@@ -343,16 +347,13 @@ struct ConnectCameraView: View {
         selectedProfile = profiles.first { $0.config.host == config.host && $0.config.port == config.port && $0.config.fingerprint == config.fingerprint && $0.config.user == config.user && $0.config.password == config.password }?.id ?? ""
         rememberCredentials = !selectedProfile.isEmpty
         secure = !config.user.isEmpty || config.host.isEmpty || model.cameraRequiresCredentials()
-      }.onChange(of: config.host) { _, _ in resetEndpointIfChanged() }
-        .onChange(of: config.port) { _, _ in resetEndpointIfChanged() }
-        .onChange(of: config.user) { _, _ in
-          if let record = profiles.first(where: { $0.id == selectedProfile }), record.config.user != config.user { selectedProfile = ""; rememberCredentials = false; config.password = "" }
       }
     }
   }
-  private func resetEndpointIfChanged() {
-    guard let record = profiles.first(where: { $0.id == selectedProfile }), record.config.host != config.host || record.config.port != config.port else { return }
-    selectedProfile = ""; rememberCredentials = false; config.user = ""; config.password = ""; config.fingerprint = ""
+  private func editEndpoint(host: String, port: Int) {
+    guard config.host != host || config.port != port else { return }
+    config = ConnectionFormEditing.cameraEndpoint(config, host: host, port: port)
+    selectedProfile = ""; rememberCredentials = false
   }
 }
 

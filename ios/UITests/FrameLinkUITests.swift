@@ -1,6 +1,43 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  private func assertEmpty(_ field: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+    XCTAssertTrue(["", field.placeholderValue ?? ""].contains(field.value as? String ?? ""), file: file, line: line)
+  }
+  func testCameraUnsavedEndpointAndAccountEditsClearCredentialsButSelectingBPreservesThem() throws {
+    continueAfterFailure = false
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-foundations"]; app.launch()
+    app.buttons["相机连接设置"].tap(); app.buttons["qa-a.local:15740 · qa-user-a"].tap()
+    app.switches["保存此连接的账号和密码"].tap()
+    app.textFields["例如 192.168.1.20"].tap(); app.textFields["例如 192.168.1.20"].typeText("b")
+    assertEmpty(app.textFields["相机用户名"]); assertEmpty(app.secureTextFields["相机密码"])
+    app.buttons["收起键盘"].tap(); app.buttons["qa-b.local:15740 · qa-user-b"].tap()
+    XCTAssertEqual(app.textFields["相机用户名"].value as? String, "qa-user-b")
+    app.buttons["显示密码"].tap(); XCTAssertEqual(app.textFields["相机密码"].value as? String, "qa-password-b")
+    app.switches["保存此连接的账号和密码"].tap()
+    app.textFields["相机用户名"].tap(); app.textFields["相机用户名"].typeText("changed")
+    assertEmpty(app.textFields["相机密码"])
+    app.textFields["相机密码"].tap(); app.textFields["相机密码"].typeText("manual-secret")
+    app.textFields["例如 192.168.1.20"].tap(); app.textFields["例如 192.168.1.20"].typeText("c")
+    assertEmpty(app.textFields["相机用户名"]); assertEmpty(app.textFields["相机密码"])
+  }
+  func testFTPUnsavedEndpointAndAccountEditsClearCredentialsButSelectingBPreservesThem() throws {
+    continueAfterFailure = false
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-foundations"]; app.launch()
+    app.buttons["FTP 客户端"].tap(); app.buttons["ftp-qa-a.local:21 · qa-user-a"].tap()
+    app.switches["保存此连接的账号和密码"].tap()
+    app.textFields["服务器地址"].tap(); app.textFields["服务器地址"].typeText("b")
+    assertEmpty(app.textFields["用户名"]); assertEmpty(app.secureTextFields["密码"])
+    app.buttons["ftp-qa-b.local:21 · qa-user-b"].tap()
+    XCTAssertEqual(app.textFields["用户名"].value as? String, "qa-user-b")
+    app.buttons["显示密码"].tap(); XCTAssertEqual(app.textFields["密码"].value as? String, "qa-password-b")
+    app.switches["保存此连接的账号和密码"].tap()
+    app.textFields["用户名"].tap(); app.textFields["用户名"].typeText("changed")
+    assertEmpty(app.textFields["密码"])
+    app.textFields["密码"].tap(); app.textFields["密码"].typeText("manual-secret")
+    app.switches["使用显式FTPS"].tap()
+    assertEmpty(app.textFields["用户名"]); assertEmpty(app.textFields["密码"])
+  }
   func testSavedConnectionsForgetIndependentlyAndUnsavedInputDoesNotReturn() throws {
     continueAfterFailure = false
     let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-foundations"]; app.launch()

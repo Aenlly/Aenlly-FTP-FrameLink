@@ -222,13 +222,17 @@ struct FTPClientView: View {
               Button { do { try model.forgetFTP(record.id); profiles = try model.connections.ftpProfiles(); if selectedProfile == record.id { selectedProfile = ""; profile.user = ""; profile.password = ""; rememberCredentials = false } } catch { model.notice = error.localizedDescription } } label: { Image(systemName: "xmark.circle").accessibilityLabel("忘记FTP连接 " + record.config.host) }
             }
           }.disabled(model.ftpBusy)
-          TextField("服务器地址", text: $profile.host).textInputAutocapitalization(.never)
+          TextField("服务器地址", text: Binding(get: { profile.host }, set: { editEndpoint(host: $0, port: profile.port, tls: profile.tls) })).textInputAutocapitalization(.never)
             .autocorrectionDisabled()
-          TextField("端口", value: $profile.port, format: .number).keyboardType(.numberPad)
-          TextField("用户名", text: $profile.user).textInputAutocapitalization(.never)
+          TextField("端口", value: Binding(get: { profile.port }, set: { editEndpoint(host: profile.host, port: $0, tls: profile.tls) }), format: .number).keyboardType(.numberPad)
+          TextField("用户名", text: Binding(get: { profile.user }, set: { user in
+            guard profile.user != user else { return }
+            profile = ConnectionFormEditing.ftpAccount(profile, user: user)
+            selectedProfile = ""; rememberCredentials = false
+          })).textInputAutocapitalization(.never)
             .autocorrectionDisabled()
           PasswordField(title: "密码", text: $profile.password)
-          Toggle("使用显式FTPS", isOn: $profile.tls)
+          Toggle("使用显式FTPS", isOn: Binding(get: { profile.tls }, set: { editEndpoint(host: profile.host, port: profile.port, tls: $0) }))
           Toggle("保存此连接的账号和密码", isOn: Binding(get: { rememberCredentials }, set: { value in
             if !value && !selectedProfile.isEmpty { do { try model.forgetFTP(selectedProfile); profiles = try model.connections.ftpProfiles(); selectedProfile = "" } catch { model.notice = error.localizedDescription; return } }; rememberCredentials = value
           })).disabled(model.ftpBusy)
@@ -330,15 +334,10 @@ struct FTPClientView: View {
         rememberCredentials = !selectedProfile.isEmpty
         settings = !model.ftpConnected
       }
-      .onChange(of: profile.host) { _, _ in resetEndpointIfChanged() }
-      .onChange(of: profile.port) { _, _ in resetEndpointIfChanged() }
-      .onChange(of: profile.tls) { _, _ in resetEndpointIfChanged() }
-      .onChange(of: profile.user) { _, _ in
-        if let record = profiles.first(where: { $0.id == selectedProfile }), record.config.user != profile.user { selectedProfile = ""; rememberCredentials = false; profile.password = "" }
-      }
   }
-  private func resetEndpointIfChanged() {
-    guard let record = profiles.first(where: { $0.id == selectedProfile }), record.config.host != profile.host || record.config.port != profile.port || record.config.tls != profile.tls else { return }
-    selectedProfile = ""; rememberCredentials = false; profile.user = ""; profile.password = ""
+  private func editEndpoint(host: String, port: Int, tls: Bool) {
+    guard profile.host != host || profile.port != port || profile.tls != tls else { return }
+    profile = ConnectionFormEditing.ftpEndpoint(profile, host: host, port: port, tls: tls)
+    selectedProfile = ""; rememberCredentials = false
   }
 }

@@ -109,6 +109,8 @@ final class AppModel: ObservableObject {
           for suffix in ["a", "b"] {
             var config = CameraConfig(); config.host = "qa-\(suffix).local"; config.user = "qa-user-\(suffix)"; config.password = "qa-password-\(suffix)"; config.fingerprint = "fp-\(suffix)"
             try connections.completeCamera(config, identity: config.fingerprint, remember: true)
+            var ftp = FTPProfile(); ftp.host = "ftp-qa-\(suffix).local"; ftp.user = "qa-user-\(suffix)"; ftp.password = "qa-password-\(suffix)"
+            try connections.completeFTP(ftp, remember: true)
           }
           if let photo = library.photos.first {
             var complete = TransferTask(title: "QA 已完成任务", kind: "camera-download", photoIds: [photo.id]); complete.state = .complete; try library.upsertTask(complete)

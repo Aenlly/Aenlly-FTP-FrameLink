@@ -2,7 +2,7 @@
 
 FrameLink最低需要iOS17。提供两种不同产物：
 
-- `FrameLink-0.1.7-ios-unsigned.ipa`：本轮iPhone设备包，供重新签名；不能直接点开安装
+- `FrameLink-0.1.8-ios-unsigned.ipa`：本轮iPhone设备候选包，供重新签名；不能直接点开安装。0.1.7历史包保留
 - `FrameLink-0.1.6-ios-simulator.zip`：保留的历史模拟器包，只供Mac上Xcode模拟器使用，不能装到iPhone；不包含0.1.7改动
 
 ## 普通Apple账户：自签试用

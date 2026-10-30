@@ -1,7 +1,7 @@
 import XCTest
 @testable import FrameLinkCore
 
-private final class MemoryCredentials: CredentialStorage {
+final class MemoryCredentials: CredentialStorage {
   var values: [String: Data] = [:]
   func read<T: Decodable>(_ name: String, as type: T.Type) throws -> T? { try values[name].map { try JSONDecoder().decode(type, from: $0) } }
   func write<T: Encodable>(_ value: T, name: String) throws { values[name] = try JSONEncoder().encode(value) }

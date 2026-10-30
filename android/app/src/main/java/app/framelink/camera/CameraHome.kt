@@ -101,7 +101,6 @@ Surface(color=Color.White,shape=RoundedCornerShape(22.dp)){
                     }
                 }
             }
-            item{Text("照片留在相机，需要时再导入。FTP接收、蓝牙快门与Wi-Fi取景按设备能力分别使用。",fontSize=11.sp,color=Muted)}
         }
     }
 }

@@ -4,6 +4,7 @@ import android.os.Build
 import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.foundation.layout.Box
@@ -28,10 +29,9 @@ internal fun FullScreenScene(onClose: () -> Unit, content: @Composable () -> Uni
         DisposableEffect(view, configuration.orientation, configuration.screenWidthDp, configuration.screenHeightDp) {
             val window = (view.parent as? DialogWindowProvider)?.window
             val announce = Runnable {
-                if (view.isAttachedToWindow) {
-                    val event = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
-                    event.contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE
-                    view.sendAccessibilityEventUnchecked(event)
+                val accessibility=view.context.getSystemService(AccessibilityManager::class.java)
+                if (view.isAttachedToWindow && accessibility?.isEnabled==true) {
+                    view.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
                 }
             }
             val resize = Runnable { window?.let {

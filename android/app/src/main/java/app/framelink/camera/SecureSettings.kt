@@ -11,7 +11,15 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** 相机认证和云端会话使用Android Keystore加密，禁用系统备份 */
-class SecureSettings(context: Context) {
+interface SecureValueStore{
+    fun put(name:String,value:String)
+    fun get(name:String):String
+    fun remove(name:String)
+    fun contains(name:String):Boolean
+    fun names():Set<String> = emptySet()
+}
+
+class SecureSettings(context: Context):SecureValueStore {
     private val preferences =
         context.getSharedPreferences("framelink.settings", Context.MODE_PRIVATE)
     private val key: SecretKey by lazy {
@@ -32,7 +40,7 @@ class SecureSettings(context: Context) {
                 .generateKey()
     }
 
-    fun put(name: String, value: String) {
+    override fun put(name: String, value: String) {
         val cipher =
             Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key) }
         preferences
@@ -47,7 +55,7 @@ class SecureSettings(context: Context) {
             .apply()
     }
 
-    fun get(name: String): String =
+    override fun get(name: String): String =
         runCatching {
                 val raw = preferences.getString(name, null) ?: return ""
                 val bytes = Base64.decode(raw, Base64.NO_WRAP)
@@ -65,7 +73,9 @@ class SecureSettings(context: Context) {
             }
             .getOrDefault("")
 
-    fun remove(name: String) {
+    override fun contains(name:String)=preferences.contains(name)
+    override fun names():Set<String> = preferences.all.keys
+    override fun remove(name: String) {
         preferences.edit().remove(name).apply()
     }
 }

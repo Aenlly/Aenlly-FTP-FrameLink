@@ -6,10 +6,11 @@ SwiftUI原生应用，最低iOS17，适配iPhone与iPad。四个入口为相机�
 
 ## 当前范围
 
-- 索尼PTP/IP＋SSH连接、首次指纹确认与Keychain记忆，卡内分页、预览、原片下载、取景与中文参数
+- 索尼PTP/IP＋SSH连接、首次指纹确认、可选Keychain多设备账号保存，卡内分页、预览、原片下载、取景与中文参数
 - 本地文件导入、网格／列表与大图共享选择，小中大缩略图、独立格式与导入状态、长按拖选、收藏、命名批次和图文单
 - 客户独立选择、留言、姓名／手机号记录、改名、完成重开和删除记录
 - FTP接收、FTP／显式FTPS客户端、目录、上传下载、新建文件夹和持久化任务
+- 新连接默认不保存账号密码；已保存连接可切换、更新和忘记。传输记录可单条删除或清除已结束项，保留文件、文件入口和待恢复任务
 - 仅移出列表与删除App内副本；不操作相机卡删除
 
 蓝牙快门、云端账号与交付、双图比较和连拍合组尚未接入iOS。App界面目前为中文。
@@ -24,7 +25,7 @@ sh scripts/build-ios.sh
 open ios/FrameLink.xcodeproj
 ```
 
-脚本生成`ios/Frameworks/Camera.xcframework`并构建iOS Simulator App，输出`artifacts/FrameLink-0.1.6-ios-simulator.zip`。相机协议与FTP直接调用Go桥，原片以文件路径传递，不把整张RAW搬过Swift桥。
+脚本生成`ios/Frameworks/Camera.xcframework`并构建iOS Simulator App，完成后打印App路径。相机协议与FTP直接调用Go桥，原片以文件路径传递，不把整张RAW搬过Swift桥。
 
 模拟器使用本机临时签名，以便Keychain正常保存连接信息，不需要开发者账号。相机框架为静态库，只链接、不重复嵌入。实体iPhone仍需配置自己的开发团队与签名。
 
@@ -47,6 +48,6 @@ iOS后台会挂起局域网服务。切到后台会停止取景和FTP接收，�
 
 FTP客户端使用被动模式与二进制传输；显式FTPS验证证书、主机名和TLS1.2以上。兼容MLSD及常见UNIX／DOS LIST，单目录超过一万项会提示进入子目录。上传先保存临时文件，再检查同名并改名；标准FTP无法保证跨客户端的原子“禁止覆盖”，并发写入仍需服务器侧权限策略。
 
-受信任的相机指纹、账号密码存入Keychain；库中只保存本地相对路径。生成的图文单不复制原片EXIF定位信息。测试截图与照片不上传到Git。
+受信任的相机指纹保留在Keychain；账号密码只有勾选保存才持久化，未保存时仅用于当前会话。库中只保存本地相对路径。生成的图文单不复制原片EXIF定位信息。测试截图与照片不上传到Git。
 
 [本轮验证与未验收项](../docs/IMPLEMENTATION.md) · [相机选片与取景](../docs/SELECTION_AND_PREVIEW.md)

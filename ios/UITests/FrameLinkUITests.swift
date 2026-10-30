@@ -1,6 +1,38 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  func testSavedConnectionsForgetIndependentlyAndUnsavedInputDoesNotReturn() throws {
+    continueAfterFailure = false
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-foundations"]; app.launch()
+    app.buttons["相机连接设置"].tap()
+    app.buttons["qa-a.local:15740 · qa-user-a"].tap()
+    XCTAssertEqual(app.textFields["相机用户名"].value as? String, "qa-user-a")
+    app.buttons["显示密码"].tap(); XCTAssertEqual(app.textFields["相机密码"].value as? String, "qa-password-a")
+    app.buttons["忘记连接 qa-a.local"].tap()
+    XCTAssertFalse(app.buttons["qa-a.local:15740 · qa-user-a"].exists)
+    XCTAssertTrue(app.buttons["qa-b.local:15740 · qa-user-b"].exists)
+    app.buttons["qa-b.local:15740 · qa-user-b"].tap()
+    let host = app.textFields["例如 192.168.1.20"]; host.tap(); host.press(forDuration: 1)
+    if app.menuItems["全选"].exists { app.menuItems["全选"].tap() } else if app.menuItems["Select All"].exists { app.menuItems["Select All"].tap() }
+    host.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 80) + "qa-unsaved.local")
+    app.buttons["收起键盘"].tap()
+    XCTAssertEqual(String(describing: app.switches["保存此连接的账号和密码"].value ?? ""), "0")
+    app.buttons["完成"].tap(); app.buttons["相机连接设置"].tap()
+    XCTAssertNotEqual(app.textFields["例如 192.168.1.20"].value as? String, "qa-unsaved.local")
+    let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "credentials-saved-and-forgotten"; attachment.lifetime = .keepAlways; add(attachment)
+  }
+  func testClearEndedHistoryKeepsPendingTaskAndSavedFileAccess() throws {
+    continueAfterFailure = false
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-foundations"]; app.launch()
+    app.buttons["传输"].tap(); XCTAssertTrue(app.staticTexts["QA 已完成任务"].waitForExistence(timeout: 5))
+    app.buttons["传输更多操作"].tap(); app.buttons["清除已结束记录"].tap()
+    XCTAssertTrue(app.staticTexts["QA 已完成任务"].exists)
+    app.buttons["清除记录"].tap()
+    XCTAssertFalse(app.staticTexts["QA 已完成任务"].exists); XCTAssertTrue(app.staticTexts["QA 待恢复任务"].exists)
+    app.buttons["传输更多操作"].tap(); app.buttons["已保存文件"].tap()
+    XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "QA_")).firstMatch.waitForExistence(timeout: 5))
+    let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "history-retained-file"; attachment.lifetime = .keepAlways; add(attachment)
+  }
   func testGalleryLayoutsPreservePairedFormatInformation() throws {
     continueAfterFailure = false
     XCUIDevice.shared.orientation = .portrait

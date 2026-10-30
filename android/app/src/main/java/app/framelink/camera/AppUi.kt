@@ -5,6 +5,8 @@
 
 package app.framelink.camera
 
+import androidx.compose.ui.platform.LocalConfiguration
+
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -217,6 +219,7 @@ fun FrameLink(runtime: CameraRuntime) {
         if (status.info != null) { onReady(); return }
         val saved = runtime.savedConnection()
         afterReconnect = onReady
+        if(runtime.cameraRequiresCredentials()){connectionSettings(keepIntent=true);return}
         if (!saved.canReconnectDirectly()) { connectionSettings(keepIntent = true); return }
         val attempt = ++reconnectAttempt
         scope.launch {
@@ -1317,11 +1320,19 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
     var protocol by rememberSaveable { mutableStateOf(saved.protocol) }
     var port by rememberSaveable { mutableStateOf(saved.port.toString()) }
     var host by rememberSaveable { mutableStateOf(saved.host) }
-    var user by rememberSaveable { mutableStateOf(saved.user) }
-    var password by remember { mutableStateOf(saved.password) }
+    var profiles by remember{mutableStateOf(runCatching{runtime.connections.entries()}.getOrDefault(emptyList()))}
+    var selectedProfile by rememberSaveable{mutableStateOf(profiles.firstOrNull{it.config==saved}?.id.orEmpty())}
+    val selected=profiles.firstOrNull{it.id==selectedProfile&&it.config.host==host&&it.config.port.toString()==port&&it.config.protocol==protocol}?.config
+    var user by remember { mutableStateOf(selected?.user.orEmpty()) }
+    var password by remember { mutableStateOf(selected?.password.orEmpty()) }
     var showPassword by remember { mutableStateOf(false) }
     var showPreparation by rememberSaveable { mutableStateOf(false) }
-    var authenticate by rememberSaveable { mutableStateOf(saved.host.isBlank() || saved.user.isNotBlank()) }
+    var authenticate by rememberSaveable { mutableStateOf(saved.host.isBlank() || saved.user.isNotBlank()||runtime.cameraRequiresCredentials()) }
+    var rememberCredentials by rememberSaveable{mutableStateOf(selected!=null)}
+    var fingerprint by rememberSaveable{mutableStateOf(selected?.fingerprint.orEmpty())}
+    val credentialReset by runtime.cameraCredentialReset.collectAsStateWithLifecycle()
+    LaunchedEffect(credentialReset){if(credentialReset>0){user="";password="";rememberCredentials=false;selectedProfile="";fingerprint="";runtime.cameraCredentialReset.value=0}}
+    fun endpointChanged(){selectedProfile="";user="";password="";fingerprint="";rememberCredentials=false}
     var submitted by remember { mutableStateOf(false) }
     val status by runtime.camera.collectAsStateWithLifecycle()
     val identityPrompt by runtime.cameraIdentityPrompt.collectAsStateWithLifecycle()
@@ -1352,7 +1363,7 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
                 onClick = {
                     keyboard?.hide()
                     submitted = true
-                    runtime.connect(ConnectionConfig(host = host.trim(), port=if(protocol==CameraProtocols.USB)0 else port.toIntOrNull()?:0, user = if (protocol!=CameraProtocols.USB&&authenticate) user.trim() else "", password = if (protocol!=CameraProtocols.USB&&authenticate) password else "",protocol=protocol))
+                    runtime.connect(ConnectionConfig(host = host.trim(), port=if(protocol==CameraProtocols.USB)0 else port.toIntOrNull()?:0, user = if (protocol!=CameraProtocols.USB&&authenticate) user.trim() else "", password = if (protocol!=CameraProtocols.USB&&authenticate) password else "",protocol=protocol,fingerprint=fingerprint),rememberCredentials=rememberCredentials)
                 },
                 enabled = (if(protocol==CameraProtocols.USB)usbDevices.any{it.key==host}else host.isNotBlank() && (port.toIntOrNull()?:0) in 1..65535 && (!authenticate || (user.isNotBlank() && password.isNotBlank()))) && !status.connecting && identityPrompt == null,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("camera-connect-action"),
@@ -1366,6 +1377,15 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
             }
         }
     }) {
+        if(profiles.isNotEmpty())Panel{
+            Text("已保存的连接",fontSize=13.sp)
+            profiles.forEach{record->Row(verticalAlignment=Alignment.CenterVertically){
+                TextButton(enabled=!status.connecting&&identityPrompt==null,onClick={val value=record.config;protocol=value.protocol;host=value.host;port=value.port.toString();user=value.user;password=value.password;fingerprint=value.fingerprint;authenticate=value.user.isNotBlank();selectedProfile=record.id;rememberCredentials=true},modifier=Modifier.weight(1f)){
+                    Text(record.config.host+":"+record.config.port+" · "+record.config.user, maxLines=1,overflow=TextOverflow.Ellipsis)
+                }
+                IconButton(enabled=!status.connecting&&identityPrompt==null,onClick={runtime.connections.forget(record.id);profiles=runtime.connections.entries();if(selectedProfile==record.id){selectedProfile="";user="";password="";fingerprint="";rememberCredentials=false}}){Icon(Icons.Outlined.Close,"忘记连接 "+record.config.host)}
+            }}
+        }
         FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
             listOf(CameraProtocols.SONY to "Sony 网络",CameraProtocols.CANON to "佳能 CCAPI",CameraProtocols.USB to "USB读卡").forEach{(value,title)->
                 FilterChip(selected=protocol==value,onClick={
@@ -1373,9 +1393,8 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
                         protocol=value
                         port=if(value==saved.protocol)saved.port.toString()else if(value==CameraProtocols.CANON)"8080"else"15740"
                         host=if(value==saved.protocol)saved.host else""
-                        user=if(value==saved.protocol)saved.user else""
-                        password=if(value==saved.protocol)saved.password else""
-                        authenticate=value!=CameraProtocols.USB&&if(value==saved.protocol)(saved.host.isBlank()||saved.user.isNotBlank())else value==CameraProtocols.SONY
+                        user="";password="";fingerprint="";selectedProfile="";rememberCredentials=false
+                        authenticate=value==CameraProtocols.SONY
                         found=emptyList()
                     }
                 },label={Text(title)},enabled=!status.connecting&&identityPrompt==null)
@@ -1432,11 +1451,11 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
             }
         }
         if(protocol==CameraProtocols.SONY)found.forEach { address ->
-            AssistChip(onClick = { host = address }, label = { Text(address) })
+            AssistChip(onClick = { endpointChanged();host = address }, label = { Text(address) })
         }
         OutlinedTextField(
             host,
-            { host = it },
+            { endpointChanged();host = it },
             enabled = !status.connecting && identityPrompt == null,
             label = { Text("相机IP地址") },
             placeholder = { Text("例如 192.168.122.1") },
@@ -1445,7 +1464,7 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
             keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(port,{port=it.filter(Char::isDigit).take(5)},label={Text("相机端口")},singleLine=true,
+        OutlinedTextField(port,{endpointChanged();port=it.filter(Char::isDigit).take(5)},label={Text("相机端口")},singleLine=true,
             enabled=!status.connecting&&identityPrompt==null,
             keyboardOptions=KeyboardOptions(keyboardType=androidx.compose.ui.text.input.KeyboardType.Number),modifier=Modifier.fillMaxWidth())
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1458,9 +1477,10 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
             )
         }
         if (authenticate) {
+            CompositionLocalProvider(androidx.compose.runtime.saveable.LocalSaveableStateRegistry provides null){
             OutlinedTextField(
                 user,
-                { user = it },
+                { if(user!=it&&password.isNotBlank())password="";if(selectedProfile.isNotBlank()){selectedProfile="";rememberCredentials=false};user = it },
                 label = { Text("访问认证账号") },
                 enabled = !status.connecting && identityPrompt == null,
                 singleLine = true,
@@ -1482,8 +1502,13 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            }
         }
-        Info(if(protocol==CameraProtocols.CANON)"地址、端口和认证信息在成功连接后保存在本机。CCAPI使用机身HTTP认证，无需填写Sony的SSH指纹。"else if (authenticate) "指纹自动读取，首次确认即可。认证信息加密保存在本机，下次无需重复输入。" else "仅在机身已关闭访问身份验证时使用此方式；首次连接可能需要在相机上配对。")
+        CredentialSaveToggle(rememberCredentials,{checked->
+            rememberCredentials=checked
+            if(!checked&&selectedProfile.isNotBlank()){runtime.connections.forget(selectedProfile);selectedProfile="";profiles=runtime.connections.entries()}
+        },enabled=!status.connecting&&identityPrompt==null)
+        Info(if(rememberCredentials)"成功连接后加密保存在本机，可从已保存连接切换或忘记。"else"账号密码仅用于本次连接，不保存在本机。")
         }
     }
     identityPrompt?.let { prompt ->
@@ -1644,11 +1669,18 @@ private fun TransferScreen(
     val running=active.firstOrNull{it.state==TransferState.RUNNING.name}
     var more by remember{mutableStateOf(false)}
     var details by remember{mutableStateOf<TransferTask?>(null)}
+    var clearingHistory by remember{mutableStateOf<List<String>>(emptyList())}
+    var savedFilesOpen by remember{mutableStateOf(false)}
+    val savedFiles by remember(runtime){runtime.database.tasks().savedFiles()}.collectAsStateWithLifecycle(emptyList())
     Column(Modifier.fillMaxSize().testTag("transfer-workspace")){
         WorkspaceHeader("传输",active.size.toString()+" 个待处理 · "+done+" 个已完成"){
             Box{
                 IconButton(onClick={more=true}){Icon(Icons.Outlined.MoreHoriz,"传输更多操作",tint=Ink)}
-                DropdownMenu(more,{more=false}){DropdownMenuItem(text={Text("设置与空间")},onClick={more=false;onSettings()})}
+                DropdownMenu(more,{more=false}){
+                    DropdownMenuItem(text={Text("已保存文件")},onClick={more=false;savedFilesOpen=true})
+                    DropdownMenuItem(text={Text("清除已结束记录")},enabled=tasks.any(TransferHistory::removable),onClick={more=false;clearingHistory=tasks.filter(TransferHistory::removable).map{it.id}})
+                    DropdownMenuItem(text={Text("设置与空间")},onClick={more=false;onSettings()})
+                }
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal=16.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -1792,7 +1824,34 @@ private fun TransferScreen(
         Text(formatBytes(task.done)+" / "+formatBytes(task.total))
         photoMap[task.photoId]?.files()?.forEach{file->Text(file.name+" · "+formatBytes(file.size)+(if(file.savedUri.isNotBlank())" · 已保存"else" · 未保存"),fontSize=12.sp)}
         if(task.error.isNotBlank())Text(task.error,color=MaterialTheme.colorScheme.error)
+        if(TransferHistory.removable(task))TextButton(onClick={details=null;clearingHistory=listOf(task.id)}){Text("删除这条记录",color=MaterialTheme.colorScheme.error)}
     }},confirmButton={TextButton(onClick={details=null}){Text("完成")}})}
+    if(clearingHistory.isNotEmpty())AlertDialog(onDismissRequest={clearingHistory=emptyList()},title={Text("清除 ${clearingHistory.size} 条已结束记录？")},text={Text("仅清除已完成和已取消的历史。照片、缓存、选片和待处理任务保留；文件仍可在“已保存文件”查看。")},confirmButton={TextButton(onClick={
+        val ids=clearingHistory;clearingHistory=emptyList();scope.launch{runCatching{TransferHistory.clear(runtime,ids)}.onSuccess{runtime.notice.value="已清除 $it 条记录"}.onFailure{runtime.notice.value="记录未能清除，请重试"}}
+    }){Text("清除记录")}},dismissButton={TextButton(onClick={clearingHistory=emptyList()}){Text("取消")}})
+    if(savedFilesOpen)ModalSheet("已保存文件",{savedFilesOpen=false}){
+        if(savedFiles.isEmpty())Info("清除传输记录后，已保存文件的入口会保留在这里。")
+        LazyColumn(Modifier.heightIn(max=LocalConfiguration.current.screenHeightDp.dp*.65f)){
+        items(savedFiles,key={it.id}){record->
+            val task=TransferTask(record.id,record.kind,title=record.name,payload=JSONObject().put("path",record.path).put("name",record.name).put("ready",true).toString(),state=TransferState.COMPLETE.name)
+            val choices=FtpStorage.taskFiles(context,task)
+            Column(Modifier.fillMaxWidth().padding(vertical=8.dp)){
+                Text(record.name,fontSize=14.sp)
+                if(record.uri.isNotBlank())Row{
+                    fun openStoredUri(share:Boolean){runCatching{
+                        val uri=Uri.parse(record.uri)
+                        val intent=if(share)Intent(Intent.ACTION_SEND).setType(MediaFiles.mime(record.name)).putExtra(Intent.EXTRA_STREAM,uri)else Intent(Intent.ACTION_VIEW).setDataAndType(uri,MediaFiles.mime(record.name))
+                        context.startActivity(Intent.createChooser(intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),if(share)"分享或另存副本"else"打开副本"))
+                    }.onFailure{runtime.notice.value="副本暂不可访问，请检查保存位置与权限"}}
+                    TextButton(onClick={openStoredUri(false)}){Text("打开")}
+                    TextButton(onClick={openStoredUri(true)}){Text("分享或另存")}
+                }
+                else if(choices.isEmpty())Text("文件已不在本机",fontSize=12.sp,color=Muted)
+                else Row{TextButton(onClick={useFile(task,choices.first(),TaskFileAction.OPEN)}){Text("打开")};TextButton(onClick={useFile(task,choices.first(),TaskFileAction.SHARE)}){Text("分享")};TextButton(onClick={useFile(task,choices.first(),TaskFileAction.SAVE)}){Text("另存")}}
+            }
+        }
+        }
+    }
 }
 
 private fun transferRoute(value:String)=when(TransferKind.valueOf(value)){

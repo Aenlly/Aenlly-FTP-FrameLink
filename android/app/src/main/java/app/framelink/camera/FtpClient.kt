@@ -209,16 +209,20 @@ class FtpClientController(private val runtime: CameraRuntime) {
     private val transfers = ConcurrentHashMap<String, FtpConnection>()
     private val browserGeneration = java.util.concurrent.atomic.AtomicLong()
     @Volatile private var browser: FtpConnection? = null
+    private val sessionProfiles=ConcurrentHashMap<String,FtpProfile>()
 
     fun profiles(): List<FtpProfile> =
-        runCatching { Json.list<String>(runtime.settings.get("ftp.client.ids")) }
+        (runCatching { Json.list<String>(runtime.settings.get("ftp.client.ids")) }
             .getOrDefault(emptyList())
-            .mapNotNull { profile(it) }
+            +runtime.settings.names().filter{it.startsWith("ftp.client.")&&it.removePrefix("ftp.client.").matches(Regex("[0-9a-f]{64}"))}.map{it.removePrefix("ftp.client.")})
+            .distinct().mapNotNull { profile(it) }
 
     private fun profile(id: String): FtpProfile? =
-        runCatching { Json.decode<FtpProfile>(runtime.settings.get("ftp.client.$id")) }.getOrNull()
+        sessionProfiles[id]?:runCatching { Json.decode<FtpProfile>(runtime.settings.get("ftp.client.$id")) }.getOrNull()?.takeIf{it.id==id}
 
     fun forget(id: String) {
+        sessionProfiles.remove(id)
+        if(state.value.profile?.id==id)disconnect()
         runtime.settings.remove("ftp.client.$id")
         runtime.settings.put(
             "ftp.client.ids",
@@ -226,7 +230,9 @@ class FtpClientController(private val runtime: CameraRuntime) {
         )
     }
 
-    fun connect(input: FtpProfile) {
+    fun connect(input: FtpProfile,rememberCredentials:Boolean=false) {
+        if(!rememberCredentials)forget(input.id)
+        sessionProfiles[input.id]=input
         val generation = browserGeneration.incrementAndGet()
         browser?.close()
         state.value = FtpBrowserState(profile = input, busy = true)
@@ -244,13 +250,14 @@ class FtpClientController(private val runtime: CameraRuntime) {
                         connection.close()
                         return@withLock
                     }
-                    runtime.settings.put("ftp.client.${input.id}", Json.encode(input))
+                    if(rememberCredentials){runtime.settings.put("ftp.client.${input.id}", Json.encode(input))
                     runtime.settings.put(
                         "ftp.client.ids",
                         Json.encode(
-                            (listOf(input.id) + profiles().map { it.id }).distinct().take(10)
+                            (listOf(input.id) + profiles().map { it.id }).distinct()
                         ),
                     )
+                    }
                     state.value =
                         FtpBrowserState(
                             profile = input,
@@ -308,7 +315,7 @@ class FtpClientController(private val runtime: CameraRuntime) {
         browserGeneration.incrementAndGet()
         browser?.close()
         browser = null
-        state.value = FtpBrowserState(profile = state.value.profile)
+        state.value = FtpBrowserState(profile = state.value.profile?.copy(username="",password=""))
     }
 
     fun enqueueDownloads(entries: List<FtpEntry>) =

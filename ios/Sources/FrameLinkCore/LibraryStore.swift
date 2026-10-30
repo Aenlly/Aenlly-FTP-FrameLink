@@ -21,6 +21,8 @@ public final class LibraryStore: ObservableObject {
   @Published public private(set) var batches: [SelectionBatch] = []
   @Published public private(set) var reviews: [CustomerReview] = []
   @Published public private(set) var tasks: [TransferTask] = []
+  @Published public private(set) var savedFiles: [SavedTransferFile] = []
+  private var clearedTaskIDs: Set<String> = []
   @Published public var selection: Set<String> = []
   @Published public var persistenceError: String?
   public let root: URL
@@ -32,6 +34,8 @@ public final class LibraryStore: ObservableObject {
     var batches: [SelectionBatch]
     var reviews: [CustomerReview]
     var tasks: [TransferTask]
+    var savedFiles: [SavedTransferFile]?
+    var clearedTaskIDs: Set<String>?
   }
 
   public init(root: URL) {
@@ -45,6 +49,8 @@ public final class LibraryStore: ObservableObject {
         photos = value.photos
         batches = value.batches
         reviews = value.reviews
+        savedFiles = value.savedFiles ?? []
+        clearedTaskIDs = value.clearedTaskIDs ?? []
         tasks = value.tasks.map { task in
           var next = task
           if next.state == .running {
@@ -65,7 +71,7 @@ public final class LibraryStore: ObservableObject {
   public func save() throws {
     guard canSave else { throw LibraryError.corruptedIndex }
     let data = try JSONEncoder().encode(
-      Snapshot(photos: photos, batches: batches, reviews: reviews, tasks: tasks))
+      Snapshot(photos: photos, batches: batches, reviews: reviews, tasks: tasks, savedFiles: savedFiles, clearedTaskIDs: clearedTaskIDs))
     try data.write(to: index, options: .atomic)
     #if os(iOS)
       try FileManager.default.setAttributes(
@@ -271,12 +277,40 @@ public final class LibraryStore: ObservableObject {
     try save()
   }
   public func upsertTask(_ task: TransferTask) throws {
+    guard !clearedTaskIDs.contains(task.id) else { return }
     if let i = tasks.firstIndex(where: { $0.id == task.id }) {
       tasks[i] = task
     } else {
       tasks.insert(task, at: 0)
     }
     try save()
+  }
+  /// Rechecks terminal states on the main actor; file indexes and receipt tombstones survive history removal.
+  @discardableResult public func clearTaskHistory(_ ids: Set<String>) throws -> Int {
+    guard canSave else { throw LibraryError.corruptedIndex }
+    let ended = tasks.filter { ids.contains($0.id) && $0.state.canClearHistory }
+    let previousTasks = tasks, previousFiles = savedFiles, previousCleared = clearedTaskIDs
+    for task in ended {
+      var paths = photos.filter { task.photoIds.contains($0.id) }.flatMap { $0.files.compactMap(\.localPath) }
+      if task.kind == "ftp-download", let name = task.payload["name"] {
+        paths.append("media/ftp-client/\(task.id)/\(name)")
+      }
+      for key in ["path", "source"] {
+        if let value = task.payload[key] {
+          if value.hasPrefix(root.path + "/"), let relative = try? relativePath(URL(fileURLWithPath: value)) { paths.append(relative) }
+          else if value.hasPrefix("media/") { paths.append(value) }
+        }
+      }
+      for path in Set(paths) {
+        guard let url = try? fileURL(path), (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+        let id = SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
+        if !savedFiles.contains(where: { $0.id == id }) { savedFiles.append(SavedTransferFile(id: id, name: url.lastPathComponent, path: path, savedAt: task.createdAt)) }
+      }
+      clearedTaskIDs.insert(task.id)
+    }
+    tasks.removeAll { clearedTaskIDs.contains($0.id) }
+    do { try save() } catch { tasks = previousTasks; savedFiles = previousFiles; clearedTaskIDs = previousCleared; throw error }
+    return ended.count
   }
   public func remove(_ ids: Set<String>, deleteFiles: Bool) throws {
     guard canSave else { throw LibraryError.corruptedIndex }

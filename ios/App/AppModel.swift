@@ -7,7 +7,13 @@ import UIKit
 @MainActor
 final class AppModel: ObservableObject {
   let library: LibraryStore
-  let vault = CredentialVault()
+  let vault: CredentialVault
+  lazy var connections = ConnectionProfiles(vault: vault)
+  private var sessionFTP: [String: FTPProfile] = [:]
+  private var currentFTP: FTPProfile?
+  private var pendingRememberCredentials = false
+  private var pendingBorrowedCredentials = false
+  private var credentialResetConfig: CameraConfig?
   let camera = NativeTransport()
   @Published var cameraInfo: CameraInfo?
   @Published var cameraIDs: Set<String> = []
@@ -26,6 +32,7 @@ final class AppModel: ObservableObject {
   @Published var liveSize = ""
   @Published var liveRunning = false
   @Published var receiverRunning = false
+  @Published private(set) var receiverSession: ReceiverSettings?
   @Published var receiverAddress = ""
   @Published var ftpEntries: [FTPEntry] = []
   @Published var ftpPath = "/"
@@ -48,6 +55,11 @@ final class AppModel: ObservableObject {
   private var activeFTP: FLBridgeFTPClient?
 
   init() {
+    #if DEBUG
+      vault = CredentialVault(service: ProcessInfo.processInfo.arguments.contains("--ui-acceptance") ? "app.framelink.qa.credentials" : "app.framelink.credentials")
+    #else
+      vault = CredentialVault()
+    #endif
     let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     #if DEBUG
       let acceptance = ProcessInfo.processInfo.arguments.contains("--ui-acceptance")
@@ -59,6 +71,7 @@ final class AppModel: ObservableObject {
     #if DEBUG
       if acceptance && ProcessInfo.processInfo.arguments.contains("--reset-ui-fixtures") {
         try? FileManager.default.removeItem(at: directory)
+        for key in ["camera", "ftp", "receiver", "connection-profiles-v1"] { try? vault.erase(key) }
       }
     #endif
     library = LibraryStore(root: directory)
@@ -91,15 +104,29 @@ final class AppModel: ObservableObject {
         photo.files.append(CameraFile(fileId: 2, name: "QA_6.ARW", size: 30_000_000))
         try? library.update(photo)
       }
+      if acceptance && ProcessInfo.processInfo.arguments.contains("--ui-foundations") {
+        do {
+          for suffix in ["a", "b"] {
+            var config = CameraConfig(); config.host = "qa-\(suffix).local"; config.user = "qa-user-\(suffix)"; config.password = "qa-password-\(suffix)"; config.fingerprint = "fp-\(suffix)"
+            try connections.completeCamera(config, identity: config.fingerprint, remember: true)
+          }
+          if let photo = library.photos.first {
+            var complete = TransferTask(title: "QA 已完成任务", kind: "camera-download", photoIds: [photo.id]); complete.state = .complete; try library.upsertTask(complete)
+            var pending = TransferTask(title: "QA 待恢复任务", kind: "camera-download"); pending.state = .interrupted; try library.upsertTask(pending)
+          }
+        } catch { notice = error.localizedDescription }
+      }
     #endif
   }
   func savedCamera() -> CameraConfig {
-    (try? vault.read("camera", as: CameraConfig.self)) ?? CameraConfig()
+    credentialResetConfig ?? ((try? connections.lastCamera()) ?? CameraConfig())
   }
-  func savedFTP() -> FTPProfile { (try? vault.read("ftp", as: FTPProfile.self)) ?? FTPProfile() }
+  func cameraRequiresCredentials() -> Bool { credentialResetConfig != nil || ((try? connections.cameraRequiresCredentials()) ?? true) }
+  func savedFTP() -> FTPProfile { (try? connections.lastFTP()) ?? FTPProfile() }
   @discardableResult func reconnectSaved(onReady: @escaping () -> Void = {}) -> Bool {
     if connecting { return true }
     guard cameraInfo == nil else { return false }
+    guard !cameraRequiresCredentials() else { return false }
     let saved = savedCamera()
     guard
       !saved.host.isEmpty
@@ -109,8 +136,11 @@ final class AppModel: ObservableObject {
     return true
   }
   func connect(
-    _ config: CameraConfig, openSettingsOnFailure: Bool = false, onReady: (() -> Void)? = nil
+    _ config: CameraConfig, openSettingsOnFailure: Bool = false, onReady: (() -> Void)? = nil, rememberCredentials: Bool? = nil
   ) {
+    let remember = rememberCredentials ?? ((try? connections.isSaved(config)) ?? false)
+    let borrowed = !config.fingerprint.isEmpty || ((try? connections.isSaved(config)) ?? false)
+    credentialResetConfig = nil
     disconnect()
     afterConnect = onReady
     openSettingsAfterFailure = openSettingsOnFailure
@@ -124,10 +154,11 @@ final class AppModel: ObservableObject {
         if !config.user.isEmpty {
           let identity = try await camera.identity(config.host)
           guard token == generation else { return }
-          let stored =
-            (try? vault.read("trust:\(config.host)", as: String.self)) ?? config.fingerprint
+          let stored = !config.fingerprint.isEmpty ? config.fingerprint : ((try? vault.read("trust:\(config.host)", as: String.self)) ?? "")
           if stored != identity.fingerprint {
             pendingConfig = config
+            pendingRememberCredentials = remember
+            pendingBorrowedCredentials = borrowed
             previousFingerprint = stored
             identityPrompt = identity
             connecting = false
@@ -138,7 +169,7 @@ final class AppModel: ObservableObject {
         }
         let info = try await camera.connect(verified)
         guard token == generation else { return }
-        try vault.write(verified, name: "camera")
+        try connections.completeCamera(verified, identity: verified.fingerprint.isEmpty ? info.id : verified.fingerprint, remember: remember)
         let values = try await camera.properties()
         guard token == generation else { return }
         properties = values
@@ -179,7 +210,13 @@ final class AppModel: ObservableObject {
       config.fingerprint = identity.fingerprint
       identityPrompt = nil
       pendingConfig = nil
-      connect(config, openSettingsOnFailure: openSettingsAfterFailure, onReady: afterConnect)
+      if pendingBorrowedCredentials {
+        config.user = ""; config.password = ""; credentialResetConfig = config
+        cameraMessage = "相机身份已更换，请重新填写访问账号和密码"
+        connectionFailure = cameraMessage; needsConnectionSettings = true
+      } else {
+        connect(config, openSettingsOnFailure: openSettingsAfterFailure, onReady: afterConnect, rememberCredentials: pendingRememberCredentials)
+      }
     } catch { notice = error.localizedDescription }
   }
   func disconnect() {
@@ -426,7 +463,7 @@ final class AppModel: ObservableObject {
               }
             }
           } else if task.kind == "ftp-download" {
-            let profile = savedFTP()
+            let profile = try ftpProfile(for: task)
             let client = FLBridgeNewFTPClient()!
             activeFTP = client
             defer {
@@ -457,7 +494,7 @@ final class AppModel: ObservableObject {
               client.close()
               activeFTP = nil
             }
-            let profile = savedFTP()
+            let profile = try ftpProfile(for: task)
             try await background { try client.connect(NativeTransport.json(profile)) }
             try await background {
               try client.upload(
@@ -487,13 +524,24 @@ final class AppModel: ObservableObject {
     camera.cancelTransfer()
     activeFTP?.close()
   }
-  func connectFTP(_ profile: FTPProfile) {
+  private func ftpProfile(for task: TransferTask) throws -> FTPProfile {
+    try connections.resolveFTP(task.payload["connection"], session: sessionFTP)
+  }
+  func forgetFTP(_ id: String) throws {
+    try connections.forgetFTP(id); sessionFTP.removeValue(forKey: id)
+    if currentFTP?.connectionID == id { ftp.close(); currentFTP = nil; ftpConnected = false; ftpEntries = [] }
+  }
+  func connectFTP(_ profile: FTPProfile, rememberCredentials: Bool = false) {
     ftpBusy = true
+    ftpConnected = false; currentFTP = nil
+    do { if !rememberCredentials { try connections.forgetFTP(profile.connectionID) } } catch { notice = error.localizedDescription; ftpBusy = false; return }
+    sessionFTP[profile.connectionID] = profile
     Task {
       do {
         ftp.close()
         try await background { try self.ftp.connect(NativeTransport.json(profile)) }
-        try vault.write(profile, name: "ftp")
+        try connections.completeFTP(profile, remember: rememberCredentials)
+        currentFTP = profile
         ftpConnected = true
         await browseFTP("/")
       } catch { notice = error.localizedDescription }
@@ -521,11 +569,12 @@ final class AppModel: ObservableObject {
     }
   }
   func ftpDownload(_ entries: [FTPEntry]) {
+    guard let profile = currentFTP else { notice = "请先连接原服务器"; return }
     do {
       for entry in entries where !entry.directory {
         var task = TransferTask(
           title: "FTP下载 · \(entry.name)", kind: "ftp-download",
-          payload: ["remote": entry.path, "name": entry.name])
+          payload: ["remote": entry.path, "name": entry.name, "connection": profile.connectionID])
         task.total = entry.size
         try library.upsertTask(task)
       }
@@ -533,6 +582,7 @@ final class AppModel: ObservableObject {
     } catch { notice = error.localizedDescription }
   }
   func ftpUpload(_ urls: [URL]) {
+    guard let profile = currentFTP else { notice = "请先连接原服务器"; return }
     do {
       for url in urls {
         let access = url.startAccessingSecurityScopedResource()
@@ -548,6 +598,7 @@ final class AppModel: ObservableObject {
             payload: [
               "remote": (ftpPath as NSString).appendingPathComponent(url.lastPathComponent),
               "source": copy.path,
+              "connection": profile.connectionID,
             ]))
       }
       runQueue()
@@ -560,13 +611,14 @@ final class AppModel: ObservableObject {
         Task { @MainActor in
           do {
             let receipt = try NativeTransport.decode(raw, as: ReceiveReceipt.self)
-            try self.library.receive(receipt)
+            try self.recordFTPReceipt(receipt, restoreHidden: true)
           } catch { self.notice = error.localizedDescription }
         }
       }
       try receiver.start(
         "0.0.0.0:\(port)", user: user, password: password, root: root.path, events: receiverEvents)
       receiverRunning = true
+      receiverSession = ReceiverSettings(port: port, user: user, password: password)
       receiverAddress = receiver.address()
       UIApplication.shared.isIdleTimerDisabled = true
     } catch { notice = error.localizedDescription }
@@ -574,6 +626,7 @@ final class AppModel: ObservableObject {
   func stopReceiver() {
     receiver.stop()
     receiverRunning = false
+    receiverSession = nil
     UIApplication.shared.isIdleTimerDisabled = liveRunning
   }
   private func recoverFTPReceipts() {
@@ -585,9 +638,16 @@ final class AppModel: ObservableObject {
       if let data = try? Data(contentsOf: file),
         let receipt = try? JSONDecoder().decode(ReceiveReceipt.self, from: data)
       {
-        try? library.receive(receipt, restoreHidden: false)
+        try? recordFTPReceipt(receipt, restoreHidden: false)
       }
     }
+  }
+  private func recordFTPReceipt(_ receipt: ReceiveReceipt, restoreHidden: Bool) throws {
+    try library.receive(receipt, restoreHidden: restoreHidden)
+    var task = TransferTask(title: "FTP接收 · \(receipt.name)", kind: "ftp-receive", photoIds: ["ftp:" + receipt.sha256])
+    task.id = "ftp-receive:" + receipt.id; task.state = .complete
+    task.total = receipt.size; task.done = receipt.size; task.createdAt = Date(timeIntervalSince1970: Double(receipt.receivedAt) / 1000)
+    try library.upsertTask(task)
   }
   private func background<T>(_ work: @escaping () throws -> T) async throws -> T {
     try await withCheckedThrowingContinuation { continuation in

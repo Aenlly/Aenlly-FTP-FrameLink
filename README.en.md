@@ -4,7 +4,7 @@
 
 Connect a camera, review photos, and import the ones you want. FrameLink builds on Aenlly-FTP, keeping FTP transfers while adding wireless live view, local client selections, and optional cloud delivery.
 
-**Development preview: Android 0.1.24 / iOS 0.1.6** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
+**Development preview: Android 0.1.25 / iOS 0.1.7** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
 
 ## Preview
 | Camera | Gallery | Viewer |
@@ -22,6 +22,7 @@ Android emulator screenshots use licensed sample photos. [Credits and visual che
 - **Photo info (Android)**: read EXIF ISO, shutter speed, aperture, focal length, lens, camera, capture time, and recorded GPS. Missing values stay explicit; current camera settings and phone location are not substituted.
 - **Client review**: records named by client, phone number, or session; separate client choices and comments, renaming, deletion, completion, and reopening.
 - **FTP**: receive camera uploads; browse, upload, download, and create folders with FTP or explicit FTPS.
+- **Connections and history**: optionally save encrypted credentials for multiple devices, switch accounts, or forget a connection. Clear completed and cancelled transfer records while keeping files and pending tasks.
 - **Local files**: import from the phone or card reader; remove list entries or App-owned copies without deleting camera-card originals.
 - **Delivery**: Android and the web interface can use a self-hosted cloud service for access-code selections and finished-photo downloads.
 

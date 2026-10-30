@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct TransfersView: View {
   @EnvironmentObject var library: LibraryStore
   @EnvironmentObject var model: AppModel
+  @State private var clearing: Set<String> = []
   var body: some View {
     List {
       Section {
@@ -52,15 +53,27 @@ struct TransfersView: View {
               }
             }
           }.padding(.vertical, 6)
+            .swipeActions { if task.state.canClearHistory { Button("删除记录", role: .destructive) { clearing = [task.id] } } }
         }
       }
     }.navigationTitle("传输").navigationBarTitleDisplayMode(.inline).toolbar {
+      Menu {
+        NavigationLink("已保存文件") { SavedTransferFilesView() }
+        Button("清除已结束记录") { clearing = Set(library.tasks.filter { $0.state.canClearHistory }.map(\.id)) }
+          .disabled(!library.tasks.contains(where: { $0.state.canClearHistory }))
+      } label: { Image(systemName: "ellipsis.circle").accessibilityLabel("传输更多操作") }
       if model.queueBusy {
         Button("取消当前任务") { model.cancelQueue() }
       } else if library.tasks.contains(where: { $0.state == .queued }) {
         Button("继续队列") { model.runQueue() }
       }
-    }
+    }.confirmationDialog("清除 \(clearing.count) 条已结束记录？", isPresented: Binding(get: { !clearing.isEmpty }, set: { if !$0 { clearing = [] } }), titleVisibility: .visible) {
+      Button("清除记录", role: .destructive) {
+        do { let count = try library.clearTaskHistory(clearing); model.notice = "已清除 \(count) 条记录" } catch { model.notice = error.localizedDescription }
+        clearing = []
+      }
+      Button("取消", role: .cancel) { clearing = [] }
+    } message: { Text("仅清除已完成和已取消的历史。照片、缓存、选片和待处理任务保留，文件仍可从已保存文件访问。") }
   }
   private func stateName(_ state: TransferState) -> String {
     switch state {
@@ -74,12 +87,29 @@ struct TransfersView: View {
   }
 }
 
+private struct SavedTransferFilesView: View {
+  @EnvironmentObject var library: LibraryStore
+  var body: some View {
+    List {
+      if library.savedFiles.isEmpty { Text("清除传输记录后，文件入口会保留在这里。").foregroundStyle(.secondary) }
+      ForEach(library.savedFiles) { file in
+        if let url = try? library.fileURL(file.path), (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+          ShareLink(item: url) { Label(file.name, systemImage: "doc") }
+        } else { Label(file.name + " · 文件已不在本机", systemImage: "doc.badge.ellipsis") }
+      }
+    }.navigationTitle("已保存文件")
+  }
+}
+
 struct FTPReceiveView: View {
   @EnvironmentObject var model: AppModel
   @State private var port = 2121
   @State private var user = "camera"
   @State private var password = ""
   @State private var addresses: [String] = []
+  @State private var profiles: [SavedConnection<ReceiverSettings>] = []
+  @State private var selectedProfile = ""
+  @State private var rememberCredentials = false
   var body: some View {
     Form {
       Section {
@@ -90,9 +120,19 @@ struct FTPReceiveView: View {
         Text("让相机向手机发送照片，适用于支持FTP上传的机型。手机和相机需在同一网络。").font(.subheadline)
       }
       Section("接收设置") {
+        ForEach(profiles) { record in
+          HStack {
+            Button(record.config.user + " · " + String(record.config.port)) { port = record.config.port; user = record.config.user; password = record.config.password; selectedProfile = record.id; rememberCredentials = true }
+            Spacer()
+            Button { do { try model.connections.forgetReceiver(record.id); profiles = try model.connections.receiverProfiles(); if selectedProfile == record.id { selectedProfile = ""; user = "camera"; password = ""; rememberCredentials = false } } catch { model.notice = error.localizedDescription } } label: { Image(systemName: "xmark.circle").accessibilityLabel("忘记接收配置 " + record.config.user) }
+          }
+        }
         TextField("账号", text: $user).textInputAutocapitalization(.never).autocorrectionDisabled()
         PasswordField(title: "至少8位密码", text: $password)
         TextField("端口", value: $port, format: .number).keyboardType(.numberPad)
+        Toggle("保存此连接的账号和密码", isOn: Binding(get: { rememberCredentials }, set: { value in
+          if !value && !selectedProfile.isEmpty { do { try model.connections.forgetReceiver(selectedProfile); profiles = try model.connections.receiverProfiles(); selectedProfile = "" } catch { model.notice = error.localizedDescription; return } }; rememberCredentials = value
+        }))
       }.disabled(model.receiverRunning)
       if model.receiverRunning {
         Section("填写到相机的FTP设置") {
@@ -114,8 +154,7 @@ struct FTPReceiveView: View {
           } else {
             addresses = localIPv4()
             do {
-              try model.vault.write(
-                ReceiverSettings(port: port, user: user, password: password), name: "receiver")
+              try model.connections.completeReceiver(ReceiverSettings(port: port, user: user, password: password), remember: rememberCredentials)
               model.startReceiver(port: port, user: user, password: password)
             } catch { model.notice = error.localizedDescription }
           }
@@ -126,19 +165,17 @@ struct FTPReceiveView: View {
         Text("保持App在前台。切到后台后iOS会暂停接收，返回后请重新启动。此接收通道使用局域网FTP，服务器和相机之间不提供TLS加密。")
       }
     }.navigationTitle("FTP 接收").navigationBarTitleDisplayMode(.inline).onAppear {
-      if let saved = try? model.vault.read("receiver", as: ReceiverSettings.self) {
+      if let saved = model.receiverSession ?? (try? model.connections.lastReceiver()) {
         port = saved.port
         user = saved.user
         password = saved.password
       }
+      profiles = (try? model.connections.receiverProfiles()) ?? []
+      selectedProfile = profiles.first { $0.config.port == port && $0.config.user == user && $0.config.password == password }?.id ?? ""
+      rememberCredentials = !selectedProfile.isEmpty
       addresses = localIPv4()
     }
   }
-}
-private struct ReceiverSettings: Codable {
-  let port: Int
-  let user: String
-  let password: String
 }
 
 private func localIPv4() -> [String] {
@@ -171,10 +208,20 @@ struct FTPClientView: View {
   @State private var importing = false
   @State private var folder = false
   @State private var folderName = ""
+  @State private var profiles: [SavedConnection<FTPProfile>] = []
+  @State private var selectedProfile = ""
+  @State private var rememberCredentials = false
   var body: some View {
     List {
       Section {
         DisclosureGroup("连接设置", isExpanded: $settings) {
+          ForEach(profiles) { record in
+            HStack {
+              Button(record.config.host + ":" + String(record.config.port) + " · " + record.config.user) { profile = record.config; selectedProfile = record.id; rememberCredentials = true }
+              Spacer()
+              Button { do { try model.forgetFTP(record.id); profiles = try model.connections.ftpProfiles(); if selectedProfile == record.id { selectedProfile = ""; profile.user = ""; profile.password = ""; rememberCredentials = false } } catch { model.notice = error.localizedDescription } } label: { Image(systemName: "xmark.circle").accessibilityLabel("忘记FTP连接 " + record.config.host) }
+            }
+          }.disabled(model.ftpBusy)
           TextField("服务器地址", text: $profile.host).textInputAutocapitalization(.never)
             .autocorrectionDisabled()
           TextField("端口", value: $profile.port, format: .number).keyboardType(.numberPad)
@@ -182,9 +229,12 @@ struct FTPClientView: View {
             .autocorrectionDisabled()
           PasswordField(title: "密码", text: $profile.password)
           Toggle("使用显式FTPS", isOn: $profile.tls)
+          Toggle("保存此连接的账号和密码", isOn: Binding(get: { rememberCredentials }, set: { value in
+            if !value && !selectedProfile.isEmpty { do { try model.forgetFTP(selectedProfile); profiles = try model.connections.ftpProfiles(); selectedProfile = "" } catch { model.notice = error.localizedDescription; return } }; rememberCredentials = value
+          })).disabled(model.ftpBusy)
           Text("FTPS会验证服务器证书与主机名。不支持SFTP或隐式FTPS。").font(.caption).foregroundStyle(.secondary)
           Button(model.ftpBusy ? "连接中" : "连接服务器") {
-            model.connectFTP(profile)
+            model.connectFTP(profile, rememberCredentials: rememberCredentials)
             settings = false
           }.disabled(profile.host.isEmpty || model.ftpBusy)
         }
@@ -275,7 +325,20 @@ struct FTPClientView: View {
       }
       .onAppear {
         profile = model.savedFTP()
+        profiles = (try? model.connections.ftpProfiles()) ?? []
+        selectedProfile = profiles.first { $0.id == profile.connectionID }?.id ?? ""
+        rememberCredentials = !selectedProfile.isEmpty
         settings = !model.ftpConnected
       }
+      .onChange(of: profile.host) { _, _ in resetEndpointIfChanged() }
+      .onChange(of: profile.port) { _, _ in resetEndpointIfChanged() }
+      .onChange(of: profile.tls) { _, _ in resetEndpointIfChanged() }
+      .onChange(of: profile.user) { _, _ in
+        if let record = profiles.first(where: { $0.id == selectedProfile }), record.config.user != profile.user { selectedProfile = ""; rememberCredentials = false; profile.password = "" }
+      }
+  }
+  private func resetEndpointIfChanged() {
+    guard let record = profiles.first(where: { $0.id == selectedProfile }), record.config.host != profile.host || record.config.port != profile.port || record.config.tls != profile.tls else { return }
+    selectedProfile = ""; rememberCredentials = false; profile.user = ""; profile.password = ""
   }
 }

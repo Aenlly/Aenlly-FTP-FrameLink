@@ -268,9 +268,23 @@ struct ConnectCameraView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var config = CameraConfig()
   @State private var secure = true
+  @State private var profiles: [SavedConnection<CameraConfig>] = []
+  @State private var selectedProfile = ""
+  @State private var rememberCredentials = false
   var body: some View {
     NavigationStack {
       Form {
+        if !profiles.isEmpty {
+          Section("已保存的连接") {
+            ForEach(profiles) { record in
+              HStack {
+                Button(record.config.host + ":" + String(record.config.port) + " · " + record.config.user) { config = record.config; selectedProfile = record.id; rememberCredentials = true; secure = !config.user.isEmpty }
+                Spacer()
+                Button { do { try model.connections.forgetCamera(record.id); profiles = try model.connections.cameras(); if selectedProfile == record.id { selectedProfile = ""; config.user = ""; config.password = ""; rememberCredentials = false } } catch { model.notice = error.localizedDescription } } label: { Image(systemName: "xmark.circle").accessibilityLabel("忘记连接 " + record.config.host) }
+              }
+            }
+          }.disabled(model.connecting || model.identityPrompt != nil)
+        }
         Section { Text("手机和相机接入同一个Wi-Fi，在相机开启电脑遥控或相应的无线控制功能。").font(.subheadline) }
         if !model.connectionFailure.isEmpty {
           Section { Text(model.connectionFailure).font(.footnote).foregroundStyle(.red) }
@@ -288,15 +302,19 @@ struct ConnectCameraView: View {
             PasswordField(title: "相机密码", text: $config.password)
           }
         } footer: {
-          Text("较新的索尼机型需要认证；首次读取相机身份后确认一次，之后会保存连接信息。")
+          Text("首次读取相机身份后确认。未勾选保存时，账号密码仅用于本次连接。")
         }
+        Toggle("保存此连接的账号和密码", isOn: Binding(get: { rememberCredentials }, set: { value in
+          if !value && !selectedProfile.isEmpty { do { try model.connections.forgetCamera(selectedProfile); profiles = try model.connections.cameras(); selectedProfile = "" } catch { model.notice = error.localizedDescription; return } }
+          rememberCredentials = value
+        })).disabled(model.connecting || model.identityPrompt != nil)
         Section {
           Button("连接相机") {
             if !secure {
               config.user = ""
               config.password = ""
             }
-            model.connect(config)
+            model.connect(config, rememberCredentials: rememberCredentials)
             dismiss()
           }.disabled(
             config.host.trimmingCharacters(in: .whitespaces).isEmpty
@@ -321,9 +339,20 @@ struct ConnectCameraView: View {
         }
       }.onAppear {
         config = model.savedCamera()
-        secure = !config.user.isEmpty || config.host.isEmpty
+        profiles = (try? model.connections.cameras()) ?? []
+        selectedProfile = profiles.first { $0.config.host == config.host && $0.config.port == config.port && $0.config.fingerprint == config.fingerprint && $0.config.user == config.user && $0.config.password == config.password }?.id ?? ""
+        rememberCredentials = !selectedProfile.isEmpty
+        secure = !config.user.isEmpty || config.host.isEmpty || model.cameraRequiresCredentials()
+      }.onChange(of: config.host) { _, _ in resetEndpointIfChanged() }
+        .onChange(of: config.port) { _, _ in resetEndpointIfChanged() }
+        .onChange(of: config.user) { _, _ in
+          if let record = profiles.first(where: { $0.id == selectedProfile }), record.config.user != config.user { selectedProfile = ""; rememberCredentials = false; config.password = "" }
       }
     }
+  }
+  private func resetEndpointIfChanged() {
+    guard let record = profiles.first(where: { $0.id == selectedProfile }), record.config.host != config.host || record.config.port != config.port else { return }
+    selectedProfile = ""; rememberCredentials = false; config.user = ""; config.password = ""; config.fingerprint = ""
   }
 }
 
@@ -331,7 +360,7 @@ struct SettingsView: View {
   var body: some View {
     List {
       Section("FrameLink") {
-        LabeledContent("版本", value: "0.1.6")
+        LabeledContent("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "未知")
         Text("本地拍摄与选片无需登录。原片保存在App文件目录，卸载前请先导出。").font(.footnote)
       }
       Section("连接能力") {

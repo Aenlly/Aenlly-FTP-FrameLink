@@ -1,7 +1,13 @@
 import Foundation
 import Security
 
-public final class CredentialVault {
+public protocol CredentialStorage {
+  func read<T: Decodable>(_ name: String, as type: T.Type) throws -> T?
+  func write<T: Encodable>(_ value: T, name: String) throws
+  func erase(_ name: String) throws
+}
+
+public final class CredentialVault: CredentialStorage {
   private let service: String
   public init(service: String = "app.framelink.credentials") { self.service = service }
   public func read<T: Decodable>(_ name: String, as type: T.Type) throws -> T? {
@@ -39,10 +45,14 @@ public final class CredentialVault {
     }
   }
   public func remove(_ name: String) {
-    SecItemDelete(
+    try? erase(name)
+  }
+  public func erase(_ name: String) throws {
+    let status = SecItemDelete(
       [
         kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
         kSecAttrAccount as String: name,
       ] as CFDictionary)
+    guard status == errSecSuccess || status == errSecItemNotFound else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
   }
 }

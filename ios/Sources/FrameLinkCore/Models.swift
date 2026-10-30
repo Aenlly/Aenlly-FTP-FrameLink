@@ -129,6 +129,13 @@ public struct CustomerReview: Codable, Identifiable, Sendable {
 
 public enum TransferState: String, Codable, Sendable {
   case queued, running, complete, failed, interrupted, cancelled
+  public var canClearHistory: Bool { self == .complete || self == .cancelled }
+}
+public struct SavedTransferFile: Codable, Identifiable, Sendable {
+  public var id: String
+  public var name: String
+  public var path: String
+  public var savedAt: Date
 }
 public struct TransferTask: Codable, Identifiable, Sendable {
   public var id = UUID().uuidString

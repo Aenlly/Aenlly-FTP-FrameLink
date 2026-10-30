@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -55,9 +56,22 @@ interface TaskDao {
     @Query("SELECT * FROM tasks WHERE photoId=:photo AND kind=:kind AND state NOT IN (:terminal)")
     suspend fun active(photo: String, kind: String, terminal: List<String>): List<TransferTask>
 
-    @Upsert suspend fun save(task: TransferTask)
+    @Upsert suspend fun write(task: TransferTask)
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun start(task: TransferTask)
+    @Transaction suspend fun save(task:TransferTask){if(!historyCleared(task.id))write(task)}
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insert(task: TransferTask)
+    @Transaction suspend fun start(task:TransferTask){if(!historyCleared(task.id))insert(task)}
+
+    @Query("SELECT EXISTS(SELECT 1 FROM cleared_transfer_tasks WHERE id=:id)") suspend fun historyCleared(id:String):Boolean
+    @Insert(onConflict=OnConflictStrategy.IGNORE) suspend fun markCleared(task:ClearedTransferTask)
+    @Query("DELETE FROM tasks WHERE id=:id AND state IN (:states)") suspend fun deleteEnded(id:String,states:List<String>):Int
+    @Query("SELECT * FROM tasks WHERE id IN (:ids) AND state IN (:states)") suspend fun endedByIds(ids:List<String>,states:List<String>):List<TransferTask>
+    @Query("DELETE FROM tasks WHERE id IN (:ids) AND state IN (:states)") suspend fun deleteEndedIds(ids:List<String>,states:List<String>):Int
+    @Insert(onConflict=OnConflictStrategy.IGNORE) suspend fun markClearedAll(tasks:List<ClearedTransferTask>)
+    @Upsert suspend fun saveFile(file:SavedTransferFile)
+    @Upsert suspend fun saveFiles(files:List<SavedTransferFile>)
+    @Query("SELECT * FROM saved_transfer_files ORDER BY savedAt DESC,id") fun savedFiles():Flow<List<SavedTransferFile>>
 
     @Query(
         "UPDATE tasks SET done=:done,total=:total,updatedAt=:updated WHERE id=:id AND state=:running"
@@ -73,8 +87,8 @@ interface TaskDao {
 }
 
 @Database(
-    entities = [Photo::class, TransferTask::class, LocalReview::class, SelectionBatch::class],
-    version = 4,
+    entities = [Photo::class, TransferTask::class, LocalReview::class, SelectionBatch::class,SavedTransferFile::class,ClearedTransferTask::class],
+    version = 6,
     exportSchema = false,
 )
 abstract class LocalDatabase : RoomDatabase() {
@@ -86,6 +100,15 @@ abstract class LocalDatabase : RoomDatabase() {
     abstract fun batches(): SelectionBatchDao
 
     companion object {
+        val MIGRATION_5_6=object:androidx.room.migration.Migration(5,6){
+            override fun migrate(db:androidx.sqlite.db.SupportSQLiteDatabase){db.execSQL("ALTER TABLE saved_transfer_files ADD COLUMN uri TEXT NOT NULL DEFAULT ''")}
+        }
+        val MIGRATION_4_5=object:androidx.room.migration.Migration(4,5){
+            override fun migrate(db:androidx.sqlite.db.SupportSQLiteDatabase){
+                db.execSQL("CREATE TABLE IF NOT EXISTS saved_transfer_files (id TEXT NOT NULL PRIMARY KEY,name TEXT NOT NULL,path TEXT NOT NULL,kind TEXT NOT NULL,savedAt INTEGER NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS cleared_transfer_tasks (id TEXT NOT NULL PRIMARY KEY)")
+            }
+        }
         val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS selection_batches (id TEXT NOT NULL PRIMARY KEY,title TEXT NOT NULL,photoIdsJson TEXT NOT NULL,photosJson TEXT NOT NULL,createdAt INTEGER NOT NULL,updatedAt INTEGER NOT NULL)")

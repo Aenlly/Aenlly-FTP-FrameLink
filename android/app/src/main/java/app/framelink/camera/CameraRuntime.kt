@@ -60,6 +60,8 @@ class CameraRuntime(
     val reviews = LocalReviewRepository(context, database)
     val batches = SelectionBatchRepository(context, database)
     val photoRemoval = PhotoRemovalRepository(context, database)
+    val connections=ConnectionBook(settings)
+    val cameraCredentialReset=MutableStateFlow(0)
     private val originalPreviews=OriginalPreviewCache(context.cacheDir)
     val photos = database.photos().observe().map { rows ->
         if(rows.any { it.capturedAt<=0&&it.files().any { file->file.fileModifiedAt>0||file.fileCreatedAt>0 } })
@@ -89,6 +91,7 @@ class CameraRuntime(
     val liveMetadata = MutableStateFlow("")
     val ftpStatus = MutableStateFlow("未启动接收")
     val ftpRunning = MutableStateFlow(false)
+    val ftpSession=MutableStateFlow<ConnectionConfig?>(null)
     val ftpClient = FtpClientController(this)
     val bluetooth = BluetoothRemote(context, scope, settings) { notice.value = it }
     private val queue = Mutex()
@@ -109,6 +112,8 @@ class CameraRuntime(
         val generation: Long,
         val config: ConnectionConfig,
         val identity: CameraIdentity,
+        val rememberCredentials:Boolean,
+        val borrowedCredentials:Boolean,
     )
     private val previewLocks = ConcurrentHashMap<String, Mutex>()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
@@ -206,12 +211,15 @@ class CameraRuntime(
     }
 
     fun savedConnection(): ConnectionConfig =
-        runCatching { Json.decode<ConnectionConfig>(settings.get("camera.config")) }
+        runCatching { connections.last() }
             .getOrDefault(ConnectionConfig())
+    fun cameraRequiresCredentials():Boolean=runCatching{connections.requiresCredentials()}.getOrDefault(true)
 
     /** 只读检查可跳过机身拍摄保存策略同步，普通连接保持原有同步行为 */
     @Synchronized
-    fun connect(input: ConnectionConfig, synchronizeCaptureStorage:Boolean=true): Job {
+    fun connect(input: ConnectionConfig, synchronizeCaptureStorage:Boolean=true,rememberCredentials:Boolean?=null): Job {
+        val remember=rememberCredentials?:runCatching{connections.saved(input)}.getOrDefault(false)
+        val borrowed=input.fingerprint.isNotBlank()||runCatching{connections.saved(input)}.getOrDefault(false)
         connectionMonitor?.cancel()
         val generation = connectionGeneration.incrementAndGet()
         pendingCameraConnection = null
@@ -236,10 +244,10 @@ class CameraRuntime(
                         settings.get("camera.trust.${MediaFiles.key(config.host)}").ifBlank {
                             savedConnection().takeIf { it.host == config.host }?.fingerprint.orEmpty()
                         }
-                    val expected = trusted.ifBlank { config.fingerprint }
+                    val expected = config.fingerprint.ifBlank { trusted }
                     if (!sameCameraFingerprint(expected, identity.fingerprint)) {
                         val id = UUID.randomUUID().toString()
-                        pendingCameraConnection = PendingCameraConnection(id, generation, config, identity)
+                        pendingCameraConnection = PendingCameraConnection(id, generation, config, identity,remember,borrowed)
                         cameraIdentityPrompt.value = CameraIdentityPrompt(id, identity, expected)
                         mutableCamera.value = CameraStatus(message = "请确认相机身份后继续连接")
                         return@launch
@@ -255,7 +263,7 @@ class CameraRuntime(
                 val dates = runCatching { native.dates(1) }.getOrDefault(emptyList())
                 synchronized(this@CameraRuntime) {
                     if (connectionGeneration.get() != generation) return@launch
-                    if (!config.experimentalFuji) settings.put("camera.config", Json.encode(config))
+                    if (!config.experimentalFuji) connections.completed(config,config.fingerprint.ifBlank{info.id},remember)
                     currentCameraIds.value = emptySet()
                     galleryHasMore.value = false
                     galleryTotalCount.value = null
@@ -293,7 +301,10 @@ class CameraRuntime(
         val pending = pendingCameraConnection ?: return
         if (pending.id != id || pending.generation != connectionGeneration.get()) return
         settings.put("camera.trust.${MediaFiles.key(pending.config.host)}", pending.identity.fingerprint)
-        connect(pending.config.copy(fingerprint = pending.identity.fingerprint))
+        if(pending.borrowedCredentials){
+            pendingCameraConnection=null;cameraIdentityPrompt.value=null;cameraCredentialReset.value++
+            mutableCamera.value=CameraStatus(message="相机身份已更换，请重新填写访问账号和密码")
+        }else connect(pending.config.copy(fingerprint = pending.identity.fingerprint),rememberCredentials=pending.rememberCredentials)
     }
 
     @Synchronized
@@ -1417,11 +1428,13 @@ class CameraRuntime(
                         scope.launch { runTasks() }
                     }
                 ftp!!.start(address, port, user, password)
+                ftpSession.value=ConnectionConfig(host=address,port=port,user=user,password=password,protocol="ftp-receiver")
                 ftpRunning.value = true
             } catch (error: Exception) {
                 ftp?.stop()
                 ftp = null
                 ftpRunning.value = false
+                ftpSession.value=null
                 ftpStatus.value = "启动失败"
                 notice.value = error.message.orEmpty()
             }
@@ -1431,6 +1444,7 @@ class CameraRuntime(
         ftp?.stop()
         ftp = null
         ftpRunning.value = false
+        ftpSession.value=null
         ftpStatus.value = "接收已停止，已保存照片不受影响"
     }
 

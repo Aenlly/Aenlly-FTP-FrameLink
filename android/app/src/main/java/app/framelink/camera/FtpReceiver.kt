@@ -48,14 +48,14 @@ class FtpReceiver(
                     passwordEncryptor = Md5PasswordEncryptor()
                 }
                 .createUserManager()
-        users.save(
+        try{users.save(
             BaseUser().apply {
                 name = username
                 setPassword(password)
                 homeDirectory = root.absolutePath
                 authorities = listOf(WritePermission())
             }
-        )
+        )}finally{usersFile.delete()}
         factory.userManager = users
         val data =
             DataConnectionConfigurationFactory().apply {

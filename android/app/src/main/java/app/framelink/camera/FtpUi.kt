@@ -309,7 +309,9 @@ private fun FtpConnectionForm(
     modifier: Modifier,
 ) {
     val saved = remember { mutableStateOf(runtime.ftpClient.profiles()) }
-    val initial = state.profile ?: saved.value.firstOrNull() ?: FtpProfile()
+    val initial = state.profile?.let{current->if(saved.value.any{it.id==current.id})current else current.copy(username="",password="")} ?: saved.value.firstOrNull() ?: FtpProfile()
+    var selectedId by remember{mutableStateOf(saved.value.firstOrNull{it.id==initial.id}?.id.orEmpty())}
+    var rememberCredentials by remember{mutableStateOf(selectedId.isNotBlank())}
     var host by remember { mutableStateOf(initial.host) }
     var port by remember { mutableStateOf(initial.port.toString()) }
     var user by remember { mutableStateOf(initial.username) }
@@ -320,6 +322,7 @@ private fun FtpConnectionForm(
     var error by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var showSaved by remember { mutableStateOf(false) }
+    fun endpointChanged(){selectedId="";user="";password="";rememberCredentials=false}
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -331,7 +334,7 @@ private fun FtpConnectionForm(
             if (showSaved)
                 saved.value.forEach { profile ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(
+                        TextButton(enabled=!state.busy,
                             onClick = {
                                 host = profile.host
                                 port = profile.port.toString()
@@ -340,6 +343,7 @@ private fun FtpConnectionForm(
                                 tls = profile.tls
                                 encoding = profile.encoding
                                 directory = profile.directory
+                                selectedId=profile.id;rememberCredentials=true
                             }
                         ) {
                             Text(
@@ -349,10 +353,11 @@ private fun FtpConnectionForm(
                                 modifier = Modifier.weight(1f, false),
                             )
                         }
-                        IconButton(
+                        IconButton(enabled=!state.busy,
                             onClick = {
                                 runtime.ftpClient.forget(profile.id)
                                 saved.value = runtime.ftpClient.profiles()
+                                if(selectedId==profile.id){selectedId="";user="";password="";rememberCredentials=false}
                             }
                         ) {
                             Icon(
@@ -366,7 +371,7 @@ private fun FtpConnectionForm(
         }
         OutlinedTextField(
             host,
-            { host = it },
+            { endpointChanged();host = it },
             label = { Text("服务器地址") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -374,20 +379,21 @@ private fun FtpConnectionForm(
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(
                 port,
-                { port = it },
+                { endpointChanged();port = it },
                 label = { Text("端口") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.weight(1f),
             )
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Switch(tls, { tls = it })
+                Switch(tls, { endpointChanged();tls = it })
                 Text("FTPS", fontSize = 12.sp)
             }
         }
+        CompositionLocalProvider(androidx.compose.runtime.saveable.LocalSaveableStateRegistry provides null){
         OutlinedTextField(
             user,
-            { user = it },
+            { if(user!=it&&password.isNotBlank())password="";if(selectedId.isNotBlank()){selectedId="";rememberCredentials=false};user = it },
             label = { Text("登录账号") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -411,6 +417,7 @@ private fun FtpConnectionForm(
             },
             modifier = Modifier.fillMaxWidth(),
         )
+        }
         OutlinedTextField(
             directory,
             { directory = it },
@@ -428,8 +435,9 @@ private fun FtpConnectionForm(
                 )
             }
         }
+        CredentialSaveToggle(rememberCredentials,{checked->rememberCredentials=checked;if(!checked&&selectedId.isNotBlank()){runtime.ftpClient.forget(selectedId);selectedId="";saved.value=runtime.ftpClient.profiles()}},enabled=!state.busy)
         Info(
-            if (tls) "使用显式FTPS，验证服务器证书。账号加密保存在本机。"
+            if (tls) "使用显式FTPS，验证服务器证书。仅勾选保存后才加密保留账号密码。"
             else "普通FTP不加密，请在可信网络使用；服务器支持时可开启FTPS。匿名登录请填写anonymous。"
         )
         if ((error + state.error).isNotBlank())
@@ -451,7 +459,7 @@ private fun FtpConnectionForm(
                             directory,
                         )
                     input.validate()
-                    runtime.ftpClient.connect(input)
+                    runtime.ftpClient.connect(input,rememberCredentials)
                 }
                 .onFailure { error = it.message.orEmpty() }
         }
@@ -462,6 +470,13 @@ private fun FtpConnectionForm(
 @Composable
 internal fun FtpReceiverOptions(runtime: CameraRuntime, onClose: () -> Unit, onPhotos: () -> Unit = {}) {
     val context = LocalContext.current
+    val book=remember{ConnectionBook(runtime.settings,"receiver.connections.v1",legacy={
+        runtime.settings.get("ftp.password").takeIf{it.isNotBlank()}?.let{ConnectionConfig(host="local",port=runtime.settings.get("ftp.port").toIntOrNull()?:2121,user=runtime.settings.get("ftp.user"),password=it,protocol="ftp-receiver")}
+    },clearLegacy={runtime.settings.remove("ftp.user");runtime.settings.remove("ftp.password")})}
+    val receiverSaved=remember{runtime.ftpSession.value?.copy(host="local")?:runCatching{book.last()}.getOrDefault(ConnectionConfig(host="local",port=2121,protocol="ftp-receiver"))}
+    var receiverProfiles by remember{mutableStateOf(runCatching{book.entries()}.getOrDefault(emptyList()))}
+    var selectedReceiver by remember{mutableStateOf(receiverProfiles.firstOrNull{it.config==receiverSaved}?.id.orEmpty())}
+    var rememberCredentials by remember{mutableStateOf(selectedReceiver.isNotBlank())}
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
     val status by runtime.ftpStatus.collectAsStateWithLifecycle()
@@ -472,28 +487,36 @@ internal fun FtpReceiverOptions(runtime: CameraRuntime, onClose: () -> Unit, onP
                 ?: addresses.firstOrNull().orEmpty()
         )
     }
-    var user by rememberSaveable {
-        mutableStateOf(runtime.settings.get("ftp.user").ifBlank { "camera" })
+    var user by remember {
+        mutableStateOf(receiverSaved.user.ifBlank { "camera" })
     }
     var password by remember {
         mutableStateOf(
-            runtime.settings.get("ftp.password").ifBlank {
+            receiverSaved.password.ifBlank {
                 java.util.UUID.randomUUID().toString().take(12)
             }
         )
     }
-    var port by rememberSaveable {
-        mutableStateOf(runtime.settings.get("ftp.port").ifBlank { "2121" })
+    var port by remember {
+        mutableStateOf(if(receiverSaved.host.isNotBlank())receiverSaved.port.toString()else "2121")
     }
     var advanced by rememberSaveable { mutableStateOf(false) }
     val running by runtime.ftpRunning.collectAsStateWithLifecycle()
+    val session by runtime.ftpSession.collectAsStateWithLifecycle()
+    LaunchedEffect(session){session?.let{active->
+        user=active.user;password=active.password;port=active.port.toString()
+        receiverProfiles=book.entries();selectedReceiver=receiverProfiles.firstOrNull{it.config.user==user&&it.config.password==password&&it.config.port==active.port}?.id.orEmpty()
+        rememberCredentials=selectedReceiver.isNotBlank()
+    }}
     ModalSheet("FTP 接收 · 边拍边传", onClose, footer = {
         if (!running) Primary("启动照片接收", address.isNotBlank() && user.isNotBlank() && password.length >= 8 && (port.toIntOrNull() ?: 0) in 1024..65535, Icons.Outlined.Wifi) {
             runtime.settings.put("ftp.address", address)
-            runtime.settings.put("ftp.user", user)
-            runtime.settings.put("ftp.password", password)
             runtime.settings.put("ftp.port", port)
-            runtime.startFtp(address, port.toInt(), user, password)
+            runCatching{book.completed(ConnectionConfig(host="local",port=port.toInt(),user=user,password=password,protocol="ftp-receiver"),user,rememberCredentials)}
+                .onSuccess{
+                    receiverProfiles=book.entries();selectedReceiver=receiverProfiles.firstOrNull{it.config.user==user&&it.config.password==password&&it.config.port==port.toInt()}?.id.orEmpty()
+                    runtime.startFtp(address, port.toInt(), user, password)
+                }.onFailure{runtime.notice.value="连接配置暂不可读取，已保留原配置"}
         } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(onClick = { runtime.stopFtp() }) { Text("停止接收") }
             Button(onClick = onPhotos, modifier = Modifier.weight(1f)) { Text("查看已接收照片") }
@@ -501,7 +524,12 @@ internal fun FtpReceiverOptions(runtime: CameraRuntime, onClose: () -> Unit, onP
     }) {
         Text(if (running) "接收服务在线" else "让相机把照片传到手机", fontSize = 17.sp, fontWeight = FontWeight.Medium)
         Text(status, color = Brand, fontSize = 12.sp)
-        Info("同一Wi-Fi或手机热点 → 启动接收 → 在相机中填写下方配置。下次会保留账号和端口。")
+        if(receiverProfiles.isNotEmpty())receiverProfiles.forEach{record->Row(verticalAlignment=Alignment.CenterVertically){
+            TextButton(enabled=!running,onClick={user=record.config.user;password=record.config.password;port=record.config.port.toString();selectedReceiver=record.id;rememberCredentials=true},modifier=Modifier.weight(1f)){Text("${record.config.user} · ${record.config.port}")}
+            IconButton(enabled=!running,onClick={book.forget(record.id);receiverProfiles=book.entries();if(selectedReceiver==record.id){selectedReceiver="";user="camera";password="";rememberCredentials=false}}){Icon(Icons.Outlined.Close,"忘记接收配置 "+record.config.user)}
+        }}
+        CredentialSaveToggle(rememberCredentials,{checked->rememberCredentials=checked;if(!checked&&selectedReceiver.isNotBlank()){book.forget(selectedReceiver);selectedReceiver="";receiverProfiles=book.entries()}},enabled=!running)
+        Info("同一Wi-Fi或手机热点 → 启动接收 → 在相机中填写下方配置。未勾选保存时，账号密码仅用于本次接收。")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(enabled = address.isNotBlank(), onClick = {
                 context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText("相机FTP配置", "服务器：$address\n端口：$port\n账号：$user\n远程目录：/\n传输模式：被动（PASV）"))
@@ -527,9 +555,10 @@ internal fun FtpReceiverOptions(runtime: CameraRuntime, onClose: () -> Unit, onP
             FilterChip(address == ip, { address = ip }, { Text(ip) }, enabled = !running)
         }
         if (addresses.isEmpty()) Info("未找到局域网地址，请先连接Wi-Fi或打开热点，再刷新地址。")
+        CompositionLocalProvider(androidx.compose.runtime.saveable.LocalSaveableStateRegistry provides null){
         OutlinedTextField(
             user,
-            { user = it },
+            { if(user!=it&&selectedReceiver.isNotBlank()){selectedReceiver="";password="";rememberCredentials=false};user = it },
             label = { Text("接收账号") },
             enabled = !running,
             singleLine = true,
@@ -547,9 +576,10 @@ internal fun FtpReceiverOptions(runtime: CameraRuntime, onClose: () -> Unit, onP
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
+        }
         OutlinedTextField(
             port,
-            { port = it },
+            { if(port!=it){selectedReceiver="";rememberCredentials=false};port = it },
             label = { Text("接收端口") },
             enabled = !running,
             singleLine = true,

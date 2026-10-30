@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -133,12 +134,47 @@ func TestFujiAutoSaveDiscoveryRegistrationImportAndOriginalRoundTrip(t *testing.
 	if settings["mediaScope"] != "AUTOSAVE_PENDING_BATCH" || settings["experimentalFuji"] != true {
 		t.Fatal(config)
 	}
+	// The optional Swift fixture decodes the real loopback IMPORT JSON and uses
+	// the same safe encoder as the iOS native adapter. No LAN discovery is used.
+	folder := t.TempDir()
+	fixture := os.Getenv("FRAMELINK_SWIFT_CONFIG_FIXTURE")
+	if fixture != "" {
+		if err = os.WriteFile(filepath.Join(folder, "invitation.json"), []byte(config), 0600); err != nil {
+			t.Fatal(err)
+		}
+		output, e := exec.Command(fixture, "--fuji-invitation", filepath.Join(folder, "invitation.json")).CombinedOutput()
+		if e != nil {
+			t.Fatalf("Swift invitation: %s %v", output, e)
+		}
+		config = strings.TrimSpace(string(output))
+		json.Unmarshal([]byte(config), &settings)
+		if settings["user"] != "" || settings["password"] != "" || settings["fingerprint"] != "" || settings["fujiDeviceName"] != "FUJIFILM-SYNTHETIC-0001" {
+			t.Fatal("Swift discovery config mismatch")
+		}
+	}
 	s := NewSession()
 	defer s.Close()
-	if _, err = s.Connect(config); err != nil {
+	info, err := s.Connect(config)
+	if err != nil {
 		t.Fatal(err)
 	}
 	rows := fujiList(t, s)
+	if fixture != "" {
+		page, e := s.ListNewestPage(1, "", 0)
+		if e != nil {
+			t.Fatal(e)
+		}
+		for name, raw := range map[string]string{"connection-info.json": info, "page.json": page} {
+			if e = os.WriteFile(filepath.Join(folder, name), []byte(raw), 0600); e != nil {
+				t.Fatal(e)
+			}
+		}
+		output, e := exec.Command(fixture, "--fuji-media", folder).CombinedOutput()
+		if e != nil || !strings.Contains(string(output), `"pendingBatchDecoded":true`) {
+			t.Fatalf("Swift pending media: %s %v", output, e)
+		}
+		t.Log("SWIFT_FUJI_LOOPBACK: REGISTER rejected as media; IMPORT -> Swift config -> Session.Connect -> Swift pending JPEG/RAF page; no thumbnail read")
+	}
 	targetFile := filepath.Join(t.TempDir(), "DSCF0001.RAF")
 	if _, err = s.Download(fujiRequest(t, rows[1], 1), targetFile, nil); err != nil {
 		t.Fatal(err)

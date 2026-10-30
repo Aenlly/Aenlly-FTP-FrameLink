@@ -1,6 +1,19 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  /// Does not start discovery or require camera hardware; runtime UI execution is a separate gate.
+  func testFujiAutoSaveEntryDefaultsOffWithoutStartingDiscovery() throws {
+    continueAfterFailure = false
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures"]; app.launch()
+    app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "富士 PC AutoSave")).firstMatch.tap()
+    let consent = app.switches["启用本次实验接收"]
+    XCTAssertTrue(consent.waitForExistence(timeout: 5)); XCTAssertEqual(String(describing: consent.value ?? ""), "0")
+    XCTAssertFalse(app.buttons["开始等待传输邀请"].isEnabled)
+    XCTAssertFalse(app.buttons["接收当前待传批次"].exists)
+    app.buttons["停止本次接收"].tap()
+    XCTAssertTrue(app.staticTexts["接收监听已关闭"].exists)
+    captureBoundaryEvidence(app, name: "fuji-autosave-default-off")
+  }
   /// Requires the isolated local PTP/IP simulator started with -creative-look; never select a physical camera.
   func testSyntheticSonyCreativeLookShowsChineseChoicesAndConfirmedFLST() throws {
     continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait

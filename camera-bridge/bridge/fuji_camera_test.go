@@ -23,17 +23,19 @@ import (
 )
 
 type fujiPeer struct {
-	listener    net.Listener
-	mu          sync.Mutex
-	connections map[net.Conn]bool
-	wg          sync.WaitGroup
-	files       map[uint32][]byte
-	unsafe      bool
-	drop        bool
-	wrongState  bool
-	changed     bool
-	reads       int
-	writes      []uint32
+	listener     net.Listener
+	mu           sync.Mutex
+	connections  map[net.Conn]bool
+	wg           sync.WaitGroup
+	files        map[uint32][]byte
+	unsafe       bool
+	drop         bool
+	wrongState   bool
+	changed      bool
+	noSerial     bool
+	noDeviceInfo bool
+	reads        int
+	writes       []uint32
 }
 
 func newFujiPeer(t *testing.T) *fujiPeer {
@@ -164,7 +166,15 @@ func (p *fujiPeer) serve(conn net.Conn) {
 				response = 0x201d
 			}
 		case 0x1001:
-			data = ptpip.EncodeDeviceInfo(&ptpip.DeviceInfo{Manufacturer: "Fujifilm", Model: "FUJI-SYNTHETIC", DeviceVersion: "fixture-only", SerialNumber: "SYNTHETIC-NOT-HARDWARE", Operations: []uint16{0x1008, 0x101b}})
+			if p.noDeviceInfo {
+				response = 0x2005
+				break
+			}
+			serial := "SYNTHETIC-NOT-HARDWARE"
+			if p.noSerial {
+				serial = ""
+			}
+			data = ptpip.EncodeDeviceInfo(&ptpip.DeviceInfo{Manufacturer: "Fujifilm", Model: "FUJI-SYNTHETIC", DeviceVersion: "fixture-only", SerialNumber: serial, Operations: []uint16{0x1008, 0x101b}})
 		case fujiGetProperty:
 			if param(0) == fujiEvents {
 				data = binary.LittleEndian.AppendUint16(nil, 2)

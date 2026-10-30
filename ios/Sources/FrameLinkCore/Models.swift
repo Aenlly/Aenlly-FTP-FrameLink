@@ -166,7 +166,7 @@ public struct TransferTask: Codable, Identifiable, Sendable {
 }
 
 public struct CameraInfo: Codable, Sendable {
-  public var displayName: String { model == "ILCE-7CM2" ? "Sony α7C II" : model }
+  public var displayName: String { model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未知相机" : model == "ILCE-7CM2" ? "Sony α7C II" : model }
   public let id: String
   public let model: String
   public let firmware: String
@@ -178,6 +178,7 @@ public struct CameraInfo: Codable, Sendable {
   public let mediaScope: String?
   public let manufacturer: String?
   public let dateSource: String?
+  public var identityScope: String? = nil
 }
 public struct RemotePhoto: Codable, Sendable {
   public let id: String
@@ -233,6 +234,8 @@ public struct CameraIdentity: Codable, Sendable {
 }
 public struct CameraConfig: Codable, Sendable {
   public var protocolID = CameraProtocol.sony
+  public var experimentalFuji = false
+  public var fujiDeviceName = ""
   public var host = ""
   public var port = 15740
   public var user = ""
@@ -240,10 +243,12 @@ public struct CameraConfig: Codable, Sendable {
   public var fingerprint = ""
   public var guid = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
   public init() {}
-  private enum CodingKeys: String, CodingKey { case protocolID = "protocol", host, port, user, password, fingerprint, guid }
+  private enum CodingKeys: String, CodingKey { case protocolID = "protocol", experimentalFuji, fujiDeviceName, host, port, user, password, fingerprint, guid }
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     protocolID = values.contains(.protocolID) ? try values.decode(String.self, forKey: .protocolID) : CameraProtocol.sony
+    experimentalFuji = try values.decodeIfPresent(Bool.self, forKey: .experimentalFuji) ?? false
+    fujiDeviceName = try values.decodeIfPresent(String.self, forKey: .fujiDeviceName) ?? ""
     host = try values.decodeIfPresent(String.self, forKey: .host) ?? ""
     port = try values.decodeIfPresent(Int.self, forKey: .port) ?? (protocolID == CameraProtocol.canon ? 8080 : 15740)
     user = try values.decodeIfPresent(String.self, forKey: .user) ?? ""

@@ -91,6 +91,7 @@ public enum ConnectionProfileError: LocalizedError {
   public func lastReceiver() throws -> ReceiverSettings { let value = try read(); return value.receivers.first { $0.id == value.receiverID }?.config ?? value.lastReceiver }
   public func isSaved(_ camera: CameraConfig) throws -> Bool { try read().cameras.contains { $0.config.protocolID == camera.protocolID && $0.config.host == camera.host && $0.config.port == camera.port && $0.config.fingerprint == camera.fingerprint && $0.config.user == camera.user && $0.config.password == camera.password } }
   public func completeCamera(_ original: CameraConfig, identity: String, remember: Bool) throws {
+    if original.protocolID == CameraProtocol.fuji { throw CameraConnectionError.invitationRequired }
     let config = try CameraConnectionPolicy.wireConfig(original)
     var value = try read(); let id = cameraKey(config, identity: identity)
     value.cameras.removeAll { $0.config.protocolID == config.protocolID && $0.identity.isEmpty && $0.config.host == config.host && $0.config.port == config.port && $0.config.user == config.user && $0.config.password == config.password }

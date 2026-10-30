@@ -5,6 +5,28 @@ import FrameLinkCore
 @main struct ConnectionFixture {
   @MainActor static func main() async {
     let values = Array(CommandLine.arguments.dropFirst())
+    if values.count == 2, values[0] == "--fuji-invitation" {
+      do {
+        let raw = try String(contentsOfFile: values[1], encoding: .utf8)
+        print(try CameraConnectionPolicy.encode(FujiAutoSaveController.decodeInvitation(raw)))
+      } catch { FileHandle.standardError.write(Data("Fuji IMPORT invitation rejected\n".utf8)); exit(6) }
+      return
+    }
+    if values.count == 2, values[0] == "--fuji-media" {
+      do {
+        let folder = URL(fileURLWithPath: values[1])
+        let info = try JSONDecoder().decode(CameraInfo.self, from: Data(contentsOf: folder.appendingPathComponent("connection-info.json")))
+        let config = try FujiAutoSaveController.decodeInvitation(String(contentsOf: folder.appendingPathComponent("invitation.json"), encoding: .utf8))
+        try CameraConnectionPolicy.validate(info: info, config: config)
+        let page = try JSONDecoder().decode(CameraPage.self, from: Data(contentsOf: folder.appendingPathComponent("page.json")))
+        guard page.mediaScope == "AUTOSAVE_PENDING_BATCH", page.items.count == 2, !info.canPreview, !info.canCapture, !info.canLiveView,
+          page.items.flatMap(\.files).contains(where: { $0.isRaw }), page.items.flatMap(\.files).contains(where: { $0.formatTitle == "JPEG" }) else { throw CameraConnectionError.incompleteIdentity }
+        let library = LibraryStore(root: folder.appendingPathComponent("swift-library")); try library.mergeCamera(page)
+        guard library.photos.allSatisfy({ $0.files.allSatisfy { $0.localPath == nil } }) else { throw CameraConnectionError.incompleteIdentity }
+        print("{\"pendingBatchDecoded\":true,\"rawAndJpegSeparated\":true,\"automaticPreview\":false}")
+      } catch { FileHandle.standardError.write(Data("Fuji media contract rejected\n".utf8)); exit(7) }
+      return
+    }
     if values.count == 4, values[0] == "--look-request", let target = Int64(values[2]) {
       do {
         let snapshot = try lookSnapshot(URL(fileURLWithPath: values[1]))

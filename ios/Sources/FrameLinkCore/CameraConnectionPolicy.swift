@@ -3,18 +3,21 @@ import Foundation
 public enum CameraProtocol {
   public static let sony = "sony-ptpip"
   public static let canon = "canon-ccapi"
-  public static func supported(_ value: String) -> Bool { value == sony || value == canon }
+  public static let fuji = "fuji-autosave"
+  public static func normalConnection(_ value: String) -> Bool { value == sony || value == canon }
+  public static func supported(_ value: String) -> Bool { normalConnection(value) || value == fuji }
   public static func title(_ value: String) -> String {
-    value == sony ? "Sony网络" : value == canon ? "Canon CCAPI（实验）" : "未识别协议"
+    value == sony ? "Sony网络" : value == canon ? "Canon CCAPI（实验）" : value == fuji ? "富士PC AutoSave（实验）" : "未识别协议"
   }
 }
 public enum CameraConnectionError: LocalizedError {
-  case unsupportedProtocol, invalidEndpoint, incompleteIdentity
+  case unsupportedProtocol, invalidEndpoint, incompleteIdentity, invitationRequired
   public var errorDescription: String? {
     switch self {
     case .unsupportedProtocol: return "此连接协议尚未接入，请重新选择连接通道"
     case .invalidEndpoint: return "请填写机身IP地址和有效端口"
     case .incompleteIdentity: return "机身未返回可验证的设备身份或日期来源，未恢复照片索引"
+    case .invitationRequired: return "请主动开启富士实验接收，并等待机身PC AutoSave传输邀请"
     }
   }
 }
@@ -35,11 +38,18 @@ public enum CameraConnectionPolicy {
     guard CameraProtocol.supported(original.protocolID) else { throw CameraConnectionError.unsupportedProtocol }
     guard !original.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !original.host.contains("://"), (1...65535).contains(original.port) else { throw CameraConnectionError.invalidEndpoint }
     var config = original
+    if config.protocolID == CameraProtocol.fuji {
+      guard config.experimentalFuji, !config.fujiDeviceName.isEmpty, config.fujiDeviceName.utf8.count <= 128,
+        config.fujiDeviceName == config.fujiDeviceName.trimmingCharacters(in: .whitespacesAndNewlines),
+        config.fujiDeviceName.rangeOfCharacter(from: .controlCharacters) == nil else { throw CameraConnectionError.invitationRequired }
+      config.user = ""; config.password = ""; config.fingerprint = ""; config.guid = ""
+    } else { config.experimentalFuji = false; config.fujiDeviceName = "" }
     if config.protocolID == CameraProtocol.canon { config.fingerprint = ""; config.guid = "" }
     return config
   }
   public static func requiresSSHIdentity(_ config: CameraConfig) -> Bool { config.protocolID == CameraProtocol.sony && !config.user.isEmpty }
   public static func canReconnect(_ config: CameraConfig) -> Bool {
+    guard CameraProtocol.normalConnection(config.protocolID) else { return false }
     guard (try? wireConfig(config)) != nil else { return false }
     if !config.user.isEmpty && config.password.isEmpty { return false }
     return !requiresSSHIdentity(config) || !config.fingerprint.isEmpty
@@ -50,11 +60,15 @@ public enum CameraConnectionPolicy {
       // Shared CCAPI backend rejects missing serial/GUID before producing this identity.
       guard info.manufacturer?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("canon") == true, info.dateSource == "FILE_MODIFIED" else { throw CameraConnectionError.incompleteIdentity }
     }
+    if config.protocolID == CameraProtocol.fuji {
+      guard info.manufacturer?.lowercased() == "fujifilm", info.mediaScope == "AUTOSAVE_PENDING_BATCH",
+        info.identityScope == "STABLE_DEVICE" || info.identityScope == "SESSION_BATCH" else { throw CameraConnectionError.incompleteIdentity }
+    }
   }
   public static func capabilities(info: CameraInfo?, protocolID: String) -> CameraClientCapabilities {
     guard CameraProtocol.supported(protocolID) else { return CameraClientCapabilities(canBrowse: false, canPreview: false, canDownload: false, canLiveView: false, canCapture: false, canSetProperties: false) }
     let controls = protocolID == CameraProtocol.sony
-    return CameraClientCapabilities(canBrowse: info?.canBrowse == true, canPreview: info?.canPreview == true, canDownload: info?.canDownload == true,
+    return CameraClientCapabilities(canBrowse: info?.canBrowse == true, canPreview: protocolID != CameraProtocol.fuji && info?.canPreview == true, canDownload: info?.canDownload == true,
       canLiveView: controls && info?.canLiveView == true, canCapture: controls && info?.canCapture == true, canSetProperties: controls && info != nil)
   }
 }

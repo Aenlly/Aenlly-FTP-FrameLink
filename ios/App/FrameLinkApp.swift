@@ -1,6 +1,56 @@
 import FrameLinkCore
 import SwiftUI
 
+struct FujiAutoSaveView: View {
+  @EnvironmentObject private var model: AppModel
+  @Environment(\.dismiss) private var dismiss
+  var onBrowse: () -> Void
+  @State private var addresses: [String] = []
+  @State private var localIPv4 = ""
+  @State private var importerName = "FrameLink"
+  @State private var experimental = false
+  private var active: Bool { model.fujiReceiverState.phase == .starting || model.fujiReceiverState.phase == .listening }
+  var body: some View {
+    Form {
+      Section {
+        Label("PC AutoSave · 实验接收", systemImage: "tray.and.arrow.down").font(.headline)
+        Text(model.fujiReceiverState.message).font(.subheadline).foregroundStyle(.secondary)
+        if model.fujiReceiverState.phase == .invited {
+          Button("接收当前待传批次") { model.acceptFujiInvitation { dismiss(); onBrowse() } }
+            .disabled(model.connecting)
+        }
+        if model.connecting { ProgressView("正在连接待传批次") }
+      }
+      Section {
+        Toggle("启用本次实验接收", isOn: $experimental).disabled(active)
+        Picker("本机局域网地址", selection: $localIPv4) {
+          Text("请选择").tag("")
+          ForEach(addresses, id: \.self) { Text($0).tag($0) }
+        }.disabled(active)
+        TextField("接收名称", text: $importerName).textInputAutocapitalization(.never).autocorrectionDisabled().disabled(active)
+        if addresses.isEmpty { Text("未找到有线或Wi-Fi局域网地址，请连接相机所在网络后重新进入。没有启动接收监听。").font(.caption).foregroundStyle(.secondary) }
+        Button("开始等待传输邀请") {
+          model.startFujiReceiver(localIPv4: localIPv4, importerName: importerName, experimental: experimental)
+        }.disabled(active || !experimental || localIPv4.isEmpty || importerName.isEmpty || model.connecting)
+        Button("停止本次接收", role: .destructive) { model.stopFujiReceiver(); experimental = false }
+      } header: { Text("本次接收") } footer: {
+        Text("在机身回放菜单启动PC AutoSave。注册完成后仍需机身发出IMPORT传输邀请；等待最长一分钟，超时或离开页面会关闭监听。")
+      }
+      Section("当前支持范围") {
+        Label("仅当前待传批次", systemImage: "square.stack")
+        Text("JPEG与RAF分别导入。卡内全量浏览、无线取景、遥控和恢复重传尚未验证；读取可能推进机身待传队列。JPEG原片预览仅在主动查看时临时读取，不自动下载RAF补缩略图。")
+          .font(.caption).foregroundStyle(.secondary)
+        DisclosureGroup("设备与权限") {
+          Text("机型、固件与富士真机兼容性待验。iPhone局域网权限和广播/组播授权签名尚未验收；当前工程未配置已获批准的组播授权。首次开启会参与AutoSave发现、注册及已知初始化/文件大小协商，不修改曝光、不拍照、不删除卡内文件。")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+      }
+    }.navigationTitle("富士 PC AutoSave").navigationBarTitleDisplayMode(.inline)
+      .task { addresses = NativeFujiReceiver.localAddresses(); if addresses.count == 1 { localIPv4 = addresses[0] } }
+      .onDisappear { model.stopFujiListening() }
+  }
+}
+
 @main
 struct FrameLinkApp: App {
   @StateObject private var model = AppModel()
@@ -14,6 +64,7 @@ struct FrameLinkApp: App {
           if value == .background {
             model.stopLive()
             model.stopReceiver()
+            model.stopFujiReceiver()
             model.cancelQueue()
             model.disconnect()
           }
@@ -183,6 +234,13 @@ struct CameraHomeView: View {
               Text("双向传输").foregroundStyle(.secondary)
               Image(systemName: "chevron.right").font(.caption)
             }
+            Divider()
+            NavigationLink { FujiAutoSaveView(onBrowse: goGallery) } label: {
+              Label("富士 PC AutoSave", systemImage: "tray.and.arrow.down")
+              Spacer()
+              Text("实验接收").foregroundStyle(.secondary)
+              Image(systemName: "chevron.right").font(.caption)
+            }
           }.font(.subheadline).foregroundStyle(Palette.ink)
         }
         HStack {
@@ -293,7 +351,7 @@ struct ConnectCameraView: View {
           })) {
             Text("Sony网络").tag(CameraProtocol.sony)
             Text("Canon CCAPI（实验）").tag(CameraProtocol.canon)
-            if !CameraProtocol.supported(config.protocolID) { Text("未识别协议，请重新选择").tag(config.protocolID) }
+            if !CameraProtocol.normalConnection(config.protocolID) { Text("请使用对应实验入口").tag(config.protocolID) }
           }.disabled(model.connecting || model.identityPrompt != nil)
           Text(config.protocolID == CameraProtocol.canon ? "在机身启用CCAPI，手机与相机加入同一网络。当前仅开放浏览、预览与原片导入，EOS850D实机仍待验。" : config.protocolID == CameraProtocol.sony ? "手机和相机接入同一个Wi-Fi，在相机开启电脑遥控或相应的无线控制功能。" : "此协议未接入，请重新选择；已有配置保留。").font(.subheadline)
         }
@@ -333,7 +391,7 @@ struct ConnectCameraView: View {
             dismiss()
           }.disabled(
             config.host.trimmingCharacters(in: .whitespaces).isEmpty
-              || !CameraProtocol.supported(config.protocolID)
+              || !CameraProtocol.normalConnection(config.protocolID)
               || !(1...65535).contains(config.port)
               || (secure
                 && (config.user.trimmingCharacters(in: .whitespaces).isEmpty

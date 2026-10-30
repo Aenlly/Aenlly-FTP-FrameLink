@@ -1,6 +1,52 @@
 import Camera
 import Foundation
 import FrameLinkCore
+import Darwin
+
+/// Closing uses a separate queue so a blocked invitation wait cannot retain listeners.
+final class NativeFujiReceiver: FujiReceiverInstance, @unchecked Sendable {
+  private let value = FLBridgeNewFujiAutoSaveReceiver()!
+  private let commands = DispatchQueue(label: "app.framelink.fuji.invitation")
+  func start(localIPv4: String, importerName: String) async throws {
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      commands.async {
+        do { try self.value.start(localIPv4, name: importerName, experimental: true); continuation.resume() }
+        catch { continuation.resume(throwing: error) }
+      }
+    }
+  }
+  func nextInvitation(timeoutMilliseconds: Int) async throws -> String {
+    try await withCheckedThrowingContinuation { continuation in
+      commands.async {
+        do { continuation.resume(returning: try NativeTransport.result { self.value.nextInvitation(timeoutMilliseconds, error: $0) }) }
+        catch { continuation.resume(throwing: error) }
+      }
+    }
+  }
+  func close() async {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .utility).async { self.value.close(); continuation.resume() }
+    }
+  }
+  static func localAddresses() -> [String] {
+    var list: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&list) == 0 else { return [] }
+    defer { freeifaddrs(list) }
+    var result = Set<String>(); var node = list
+    while let entry = node {
+      defer { node = entry.pointee.ifa_next }
+      guard String(cString: entry.pointee.ifa_name).hasPrefix("en"),
+        entry.pointee.ifa_flags & UInt32(IFF_UP) != 0,
+        let address = entry.pointee.ifa_addr, address.pointee.sa_family == UInt8(AF_INET) else { continue }
+      address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+        var ip = $0.pointee.sin_addr
+        var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        if inet_ntop(AF_INET, &ip, &buffer, socklen_t(buffer.count)) != nil { result.insert(String(cString: buffer)) }
+      }
+    }
+    return result.sorted()
+  }
+}
 
 final class NativeProgress: NSObject, FLBridgeProgressProtocol {
   let update: (Int64, Int64) -> Void

@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -147,10 +148,21 @@ func connectFujiAutoSave(parent context.Context, cfg connectionConfig, dial func
 	} else if err != fujiResponseError(0x2005) {
 		return fail(err)
 	}
-	sum := sha256.Sum256([]byte("fuji-autosave:" + cfg.FujiDeviceName + ":" + c.model + ":" + serial))
+	identitySource := "fuji-autosave:" + cfg.FujiDeviceName + ":" + c.model + ":" + serial
+	identityScope := "STABLE_DEVICE"
+	if strings.TrimSpace(serial) == "" {
+		// Discovery names cannot identify a camera across AutoSave sessions.
+		var nonce [16]byte
+		if _, err = rand.Read(nonce[:]); err != nil {
+			return fail(err)
+		}
+		identitySource += ":session:" + hex.EncodeToString(nonce[:])
+		identityScope = "SESSION_BATCH"
+	}
+	sum := sha256.Sum256([]byte(identitySource))
 	c.identity = hex.EncodeToString(sum[:12])
 	info, err := marshal(map[string]any{"id": c.identity, "model": c.model, "manufacturer": "Fujifilm", "firmware": firmware,
-		"protocol": protocolFujiAutoSave, "experimental": true, "hardwareVerified": false, "mediaScope": "AUTOSAVE_PENDING_BATCH",
+		"protocol": protocolFujiAutoSave, "experimental": true, "hardwareVerified": false, "mediaScope": "AUTOSAVE_PENDING_BATCH", "identityScope": identityScope,
 		"canBrowse": true, "canDownload": true, "canPreview": false, "canCapture": false, "canLiveView": false, "canFocus": false, "canAutoImport": false})
 	if err != nil {
 		return fail(err)

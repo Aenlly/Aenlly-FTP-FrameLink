@@ -4,7 +4,9 @@
 
 Connect a camera, review photos, and import the ones you want. FrameLink builds on Aenlly-FTP, keeping FTP transfers while adding wireless live view, local client selections, and optional cloud delivery.
 
-**Android 0.1.25 / iOS 0.1.14 source candidate (device package: 0.1.10)** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
+**Android 0.1.25 / iOS 0.1.15 source candidate (device package: 0.1.10)** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
+
+Fuji PC AutoSave is an opt-in pending-batch receiver in the source candidate. Hardware, iOS broadcast permission and signing remain unverified; no new IPA is available.
 
 ## Preview
 | Camera | Gallery | Viewer |

@@ -9,7 +9,7 @@
 <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
 <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
 <key>LSRequiresIPhoneOS</key><true/>
-<key>NSLocalNetworkUsageDescription</key><string>用于连接同一网络的相机、浏览和导入照片，以及通过FTP收发文件。</string>
+<key>NSLocalNetworkUsageDescription</key><string>用于连接同一网络的相机、浏览和导入照片、通过FTP收发文件，以及主动开启富士PC AutoSave实验接收。</string>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 <key>UILaunchScreen</key><dict/>

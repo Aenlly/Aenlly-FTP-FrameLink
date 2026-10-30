@@ -63,6 +63,9 @@ final class AppModel: ObservableObject {
   @Published var liveRunning = false
   @Published var receiverRunning = false
   @Published private(set) var receiverSession: ReceiverSettings?
+  @Published private(set) var fujiReceiverState = FujiReceiverState()
+  private var connectingFuji = false
+  private lazy var fujiReceiver = FujiAutoSaveController(make: { NativeFujiReceiver() }, changed: { [weak self] in self?.fujiReceiverState = $0 })
   @Published var receiverAddress = ""
   @Published var ftpEntries: [FTPEntry] = []
   @Published var ftpPath = "/"
@@ -194,7 +197,32 @@ final class AppModel: ObservableObject {
     connect(saved, openSettingsOnFailure: true, onReady: onReady)
     return true
   }
-  func connect(
+  func startFujiReceiver(localIPv4: String, importerName: String, experimental: Bool) {
+    if cameraProtocolID == CameraProtocol.fuji || connectingFuji { cancelQueue(); disconnect() }
+    fujiReceiver.start(localIPv4: localIPv4, importerName: importerName, experimental: experimental)
+  }
+  func stopFujiListening() { fujiReceiver.stop() }
+  func stopFujiReceiver() {
+    fujiReceiver.stop()
+    if cameraProtocolID == CameraProtocol.fuji || connectingFuji { cancelQueue(); disconnect() }
+  }
+  func acceptFujiInvitation(onReady: (() -> Void)? = nil) {
+    guard let config = fujiReceiver.takeInvitation() else { notice = "传输邀请已失效，请重新开启实验接收"; return }
+    connectCamera(config, onReady: { [weak self] in
+      guard let self else { return }
+      self.cameraDay = ""; self.cameraSlot = 1; self.library.selection = []; self.gallerySource = 1
+      onReady?()
+    }, rememberCredentials: false)
+  }
+  func connect(_ input: CameraConfig, openSettingsOnFailure: Bool = false, onReady: (() -> Void)? = nil, rememberCredentials: Bool? = nil) {
+    guard CameraProtocol.normalConnection(input.protocolID) else {
+      notice = (input.protocolID == CameraProtocol.fuji ? CameraConnectionError.invitationRequired : CameraConnectionError.unsupportedProtocol).localizedDescription
+      return
+    }
+    fujiReceiver.stop()
+    connectCamera(input, openSettingsOnFailure: openSettingsOnFailure, onReady: onReady, rememberCredentials: rememberCredentials)
+  }
+  private func connectCamera(
     _ input: CameraConfig, openSettingsOnFailure: Bool = false, onReady: (() -> Void)? = nil, rememberCredentials: Bool? = nil
   ) {
     let config: CameraConfig
@@ -203,6 +231,7 @@ final class AppModel: ObservableObject {
     let borrowed = !config.fingerprint.isEmpty || ((try? connections.isSaved(config)) ?? false)
     credentialResetConfig = nil
     disconnect()
+    connectingFuji = config.protocolID == CameraProtocol.fuji
     afterConnect = onReady
     openSettingsAfterFailure = openSettingsOnFailure
     connectionFailure = ""
@@ -231,15 +260,18 @@ final class AppModel: ObservableObject {
         let info = try await camera.connect(verified)
         guard token == generation else { return }
         try CameraConnectionPolicy.validate(info: info, config: verified)
-        try connections.completeCamera(verified, identity: verified.fingerprint.isEmpty ? info.id : verified.fingerprint, remember: remember)
+        if verified.protocolID != CameraProtocol.fuji {
+          try connections.completeCamera(verified, identity: verified.fingerprint.isEmpty ? info.id : verified.fingerprint, remember: remember)
+        }
         let values = verified.protocolID == CameraProtocol.sony ? try await camera.properties() : []
         guard token == generation else { return }
         properties = values
         cameraInfo = info
         cameraProtocolID = verified.protocolID
         creativeLookController.connect(protocolID: verified.protocolID, properties: values)
-        cameraMessage = "已连接 \(info.displayName)" + (verified.protocolID == CameraProtocol.canon ? " · CCAPI实验只读" : "")
+        cameraMessage = "已连接 \(info.displayName)" + (verified.protocolID == CameraProtocol.canon ? " · CCAPI实验只读" : verified.protocolID == CameraProtocol.fuji ? " · AutoSave实验待传批次" : "")
         connecting = false
+        connectingFuji = false
         let ready = afterConnect
         afterConnect = nil
         ready?()
@@ -256,8 +288,9 @@ final class AppModel: ObservableObject {
       } catch {
         guard token == generation else { return }
         connecting = false
+        connectingFuji = false
         camera.close()
-        cameraMessage = config.protocolID == CameraProtocol.canon ? "CCAPI连接未完成，请检查机身启用、地址、端口及HTTP认证" : "连接未完成，请检查相机地址、网络与遥控设置"
+        cameraMessage = config.protocolID == CameraProtocol.canon ? "CCAPI连接未完成，请检查机身启用、地址、端口及HTTP认证" : config.protocolID == CameraProtocol.fuji ? "AutoSave批次连接未完成，请在实验入口重新等待机身传输邀请" : "连接未完成，请检查相机地址、网络与遥控设置"
         if openSettingsOnFailure {
           connectionFailure = "未能直接重连，请检查保存的地址和相机设置"
           needsConnectionSettings = true
@@ -284,6 +317,7 @@ final class AppModel: ObservableObject {
     } catch { notice = error.localizedDescription }
   }
   func disconnect() {
+    fujiReceiver.stop(); connectingFuji = false
     originalPreviewTasks.values.forEach { $0.cancel() }
     afterConnect = nil
     if gallerySource == 1 { library.selection = [] }

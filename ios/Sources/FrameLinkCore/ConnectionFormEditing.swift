@@ -5,6 +5,7 @@ public enum ConnectionFormEditing {
   public static func cameraProtocol(_ original: CameraConfig, protocolID: String) -> CameraConfig {
     guard original.protocolID != protocolID else { return original }
     var value = original; value.protocolID = protocolID
+    value.experimentalFuji = false; value.fujiDeviceName = ""
     value.port = protocolID == CameraProtocol.canon ? 8080 : 15740
     value.user = ""; value.password = ""; value.fingerprint = ""
     value.guid = protocolID == CameraProtocol.sony ? CameraConfig().guid : ""

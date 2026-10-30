@@ -263,6 +263,72 @@ class PhysicalCoreUiAcceptanceTest {
         }
     }
 
+    /** 实机核对完整数量和JPEG临时预览；不导入、不操作机身拍摄设置 */
+    @Test fun galleryTotalAndOriginalZoomStayInDetailAcrossRotation(){
+        check(Build.MODEL=="25113PN0EC"){"本轮原片细节验收仅允许小米17"}
+        connect(synchronizeCaptureStorage=false)
+        try{
+            clickText("图库");clickText("相机内")
+            runtime.selectCameraDay("")
+            waitFor(90000){runtime.currentCameraIds.value.isNotEmpty()&&!runtime.camera.value.loadingPhotos&&!runtime.galleryHasMore.value}
+            val total=requireNotNull(runtime.galleryTotalCount.value)
+            assertEquals(total,runtime.currentCameraIds.value.size)
+            waitFor{hasText("共 $total 张")}
+            screenshot("physical-gallery-total")
+            val rows=runBlocking{runtime.database.photos().observe().first().filter{it.id in runtime.currentCameraIds.value}}
+            val photo=rows.take(6).first{!it.imported&&it.downloadFiles(DownloadFormat.JPEG).isNotEmpty()}
+            val pending=rows.count{it.hasUnimportedFiles()}
+            val beforeTasks=runBlocking{runtime.database.tasks().observe().first().map{it.id}.toSet()}
+            val preview=runBlocking{runtime.ensurePreview(photo,true)}
+            val previewBounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+            BitmapFactory.decodeFile(preview,previewBounds)
+            clickDescription("查看 ${photo.name}")
+            val selected=findDescription("选择当前照片")?.isChecked
+            if(!hasText("JPEG原片预览 · 未导入"))clickDescription("查看JPEG原片预览")
+            waitFor(120000){runtime.cachedOriginalPreview(photo)!=null}
+            waitFor{hasText("JPEG原片预览 · 未导入")}
+            val cached=requireNotNull(runtime.cachedOriginalPreview(photo))
+            assertEquals(photo.filesJson,runBlocking{runtime.database.photos().find(photo.id)!!.filesJson})
+            assertEquals(beforeTasks,runBlocking{runtime.database.tasks().observe().first().map{it.id}.toSet()})
+            assertEquals(pending,runBlocking{runtime.database.photos().observe().first().filter{it.id in runtime.currentCameraIds.value}.count{it.hasUnimportedFiles()}})
+            val originalBounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+            BitmapFactory.decodeFile(cached,originalBounds)
+            assertTrue(originalBounds.outWidth>previewBounds.outWidth&&originalBounds.outHeight>previewBounds.outHeight)
+            assertTrue("原片预览不能切换当前照片",nodes().any{it.text?.toString()?.endsWith(photo.displayTitle())==true})
+            val image=requireNotNull(nodes().filter{it.contentDescription?.toString()==photo.name}.maxByOrNull{
+                val area=Rect().also(it::getBoundsInScreen);area.width().toLong()*area.height()
+            })
+            val bounds=Rect().also(image::getBoundsInScreen)
+            touchWindowId=image.windowId
+            repeat(2){
+                val started=SystemClock.uptimeMillis()
+                for(action in listOf(MotionEvent.ACTION_DOWN,MotionEvent.ACTION_UP)){
+                    check(appRoot()?.packageName==app.packageName){"光屿不在前台，停止放大操作"}
+                    val event=MotionEvent.obtain(started,SystemClock.uptimeMillis(),action,bounds.exactCenterX(),bounds.exactCenterY(),0)
+                    event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
+                    try{assertTrue(dispatch(event))}finally{event.recycle()}
+                    SystemClock.sleep(40)
+                }
+                SystemClock.sleep(60)
+            }
+            waitFor(15000){findDescription("原片细节已显示")!=null}
+            assertTrue("放大不能切换照片",nodes().any{it.text?.toString()?.endsWith(photo.displayTitle())==true})
+            screenshot("physical-original-detail-portrait")
+            assertTrue(rotate(UiAutomation.ROTATION_FREEZE_90))
+            waitFor{app.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE&&findDescription("原片细节已显示")!=null}
+            screenshot("physical-original-detail-landscape")
+            assertTrue(rotate(UiAutomation.ROTATION_FREEZE_0))
+            waitFor{app.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_PORTRAIT&&findDescription("原片细节已显示")!=null}
+            assertEquals(selected,findDescription("选择当前照片")?.isChecked)
+            report("gallery-original-detail.json",JSONObject().put("total",total).put("file",photo.name)
+                .put("previewWidth",previewBounds.outWidth).put("previewHeight",previewBounds.outHeight)
+                .put("originalWidth",originalBounds.outWidth).put("originalHeight",originalBounds.outHeight)
+                .put("originalBytes",File(cached).length()).put("regionDisplayed",true).put("temporaryCacheOnly",true)
+                .put("pendingImportsUnchanged",true).put("importTaskCreated",false)
+                .put("rotationPreservedDetail",true).put("selectionUnchanged",true).put("shutterTriggered",false))
+        }finally{touchWindowId=null;rotate(UiAutomation.ROTATION_UNFREEZE);runtime.disconnect()}
+    }
+
     @Test
     fun liveLabelsAndFooterStayVisibleAndApertureRestoresExactly() {
         connect()

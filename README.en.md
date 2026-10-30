@@ -4,20 +4,21 @@
 
 Connect a camera, review photos, and import the ones you want. FrameLink builds on Aenlly-FTP, keeping FTP transfers while adding wireless live view, local client selections, and optional cloud delivery.
 
-**Development preview: Android 0.1.22 / iOS 0.1.6** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
+**Development preview: Android 0.1.23 / iOS 0.1.6** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
 
 ## Preview
 | Camera | Gallery | Viewer |
 |---|---|---|
-| ![Camera](docs/images/home.png) | ![Gallery](docs/images/gallery.png) | ![Viewer](docs/images/viewer.png) |
+| ![Camera](docs/images/home.png) | ![Gallery](docs/images/gallery-0.1.22.png) | ![Viewer](docs/images/viewer.png) |
 
 Android emulator screenshots use licensed sample photos. [Credits and visual checks](docs/VISUAL_QA.md).
 
-![Landscape viewfinder and parameter strip (simulated camera stream)](docs/images/live-landscape.png)
+![Landscape viewfinder (simulated camera stream)](docs/images/camera-v6/landscape-photo.png)
 
 ## Features
-- **Camera**: saved connections, identity checks appropriate to each transport, card browsing, original downloads, and supported live view and controls. On Android, tapping the preview triggers autofocus; post-shot import is off by default.
-- **Gallery**: grouped RAW+JPEG, drag selection, one shared selection in grid and viewer, favorites, comparison, named batches, and contact sheets. Capture and file timestamps remain distinct; browsing uses the available time and loads more as you scroll.
+- **Camera**: remembered connections, live view, remote shooting, and Creative Look where supported by the camera. On Android, tap to focus; automatic import after capture is optional and off by default.
+- **Gallery**: grouped RAW+JPEG, full counts for the current date range, background list loading, and thumbnails on demand. Choose small, medium, or large grids or a list; drag to select, with one shared selection in grid and viewer.
+- **Review**: swipe, zoom, favorite, compare, and save named selections or contact sheets. “查看原片” temporarily caches JPEG detail without marking it as imported. Import reuses a matching cache. The cache is capped at about 2GB and can be cleared without deleting saved photos or selections.
 - **Client review**: records named by client, phone number, or session; separate client choices and comments, renaming, deletion, completion, and reopening.
 - **FTP**: receive camera uploads; browse, upload, download, and create folders with FTP or explicit FTPS.
 - **Local files**: import from the phone or card reader; remove list entries or App-owned copies without deleting camera-card originals.
@@ -28,7 +29,7 @@ Local features need no account. Originals retain their bytes; previews and compr
 ## Connect
 **FTP reception is brand-independent**, provided the camera supports FTP uploads. Join the same Wi-Fi or phone hotspot, start “FTP 接收,” and enter the phone address, port, username, and password on the camera.
 
-- **Sony network**: enable PC Remote and required authentication, then enter the address and confirm the fingerprint. Capabilities depend on the body, firmware, and negotiation. Some historical A7C II checks exist; other targets still need hardware testing.
+- **Sony network**: enable PC Remote and required authentication, then enter the address and confirm the fingerprint. Capabilities depend on the body, firmware, and negotiation. A7C II hardware checks are recorded; other targets still need hardware testing.
 - **Canon CCAPI, experimental**: enable CCAPI and enter the HTTP address, port, and optional credentials. EOS 850D is a hardware-test target; current evidence comes from an independent service and Android integration tests.
 - **USB reader, experimental**: use phone OTG to browse and import from PTP/MTP devices. This is read-only media access, not remote shooting. X-T30 II hardware testing remains pending; Fujifilm wireless control is not implemented. Use local import for system-mounted storage.
 
@@ -48,7 +49,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android output: `artifacts/FrameLink-0.1.22-debug.apk`. iPhone IPA files require re-signing; see the [installation guide](ios/INSTALL.md). The simulator archive is separate. The app interface is currently Chinese. [Android](android/README.md) · [iOS](ios/README.md) · [Server](cloud/README.md) · [Web](web/README.md)
+Android output: `artifacts/FrameLink-0.1.23-debug.apk`. iPhone IPA files require re-signing; see the [installation guide](ios/INSTALL.md). The simulator archive is separate. The app interface is currently Chinese. [Android](android/README.md) · [iOS](ios/README.md) · [Server](cloud/README.md) · [Web](web/README.md)
 
 ## Contribute
 Camera reports, reproducible bugs, and usability feedback are welcome. Include phone OS, camera model and firmware, connection method, and steps. Keep passwords and private photos out of reports.

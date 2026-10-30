@@ -36,6 +36,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.json.JSONObject
 
 /** 真实相机状态、照片索引和可恢复任务；界面不直接调用协议 */
@@ -58,6 +60,7 @@ class CameraRuntime(
     val reviews = LocalReviewRepository(context, database)
     val batches = SelectionBatchRepository(context, database)
     val photoRemoval = PhotoRemovalRepository(context, database)
+    private val originalPreviews=OriginalPreviewCache(context.cacheDir)
     val photos = database.photos().observe().map { rows ->
         if(rows.any { it.capturedAt<=0&&it.files().any { file->file.fileModifiedAt>0||file.fileCreatedAt>0 } })
             rows.sortedWith(compareByDescending<Photo> { it.browsingTime }.thenBy { it.id })
@@ -510,6 +513,37 @@ class CameraRuntime(
                 } else error("请连接并重新浏览相机以核对照片，已有缓存仍可离线查看")
             }
 
+    fun cachedOriginalPreview(photo:Photo):String?=originalPreviews.cached(photo)?.absolutePath
+
+    /** 原片级预览仅进入可清理缓存，不发布到相册、不创建导入任务 */
+    suspend fun ensureOriginalPreview(photo:Photo,onProgress:(Long,Long)->Unit={_,_->}):String=withContext(Dispatchers.IO){
+        val generation=connectionGeneration.get()
+        queue.withLock{
+            originalPreviews.cached(photo)?.let{originalPreviews.touch(it);return@withLock it.absolutePath}
+            check(generation==connectionGeneration.get()&&photo.id in currentCameraIds.value&&
+                mutableCamera.value.info?.let{it.canDownload&&photo.sourceKey.startsWith(it.id)}==true){"请连接相机并重新核对照片"}
+            val latest=database.photos().find(photo.id)?:error("照片记录不存在")
+            check(latest.selectionResourceKey()==photo.selectionResourceKey()){ "照片资源已变化，请刷新后重试" }
+            val file=requireNotNull(originalPreviews.jpeg(photo)){"相机未提供JPEG原片"}
+            val target=originalPreviews.prepare(photo)
+            val request=currentCoroutineContext()[Job]
+            var complete=false
+            try{
+                val receipt=JSONObject(native.download(photo,file,target){done,total->
+                    if(request?.isActive==false)runCatching{native.cancelTransfer()}
+                    onProgress(done,total)
+                })
+                currentCoroutineContext().ensureActive()
+                check(generation==connectionGeneration.get()&&target.length()==file.size){"原片预览未完整读取，请重试"}
+                originalPreviews.complete(target,receipt.getString("sha256"))
+                complete=true
+                target.absolutePath
+            }finally{
+                if(!complete){target.delete();File(target.absolutePath+".part").delete();File(target.absolutePath+".sha256").delete()}
+            }
+        }
+    }
+
     fun mark(photo: Photo, mark: PhotoMark) =
         scope.launch { database.photos().mark(photo.id, mark.name) }
 
@@ -688,8 +722,13 @@ class CameraRuntime(
                 val isCloud =
                     task.kind in
                         setOf(TransferKind.CLOUD_PREVIEW.name, TransferKind.CLOUD_DELIVERY.name)
+                val downloadNeedsConnection=if(task.kind==TransferKind.DOWNLOAD.name&&mutableCamera.value.info==null){
+                    val photo=database.photos().find(task.photoId)
+                    val format=runCatching{DownloadFormat.valueOf(JSONObject(task.payload).getString("format"))}.getOrNull()
+                    photo==null||format==null||photo.downloadFiles(format).any{it.savedUri.isBlank()&&!originalPreviews.verifiedForImport(photo,it)}
+                }else false
                 if (
-                    task.kind == TransferKind.DOWNLOAD.name && mutableCamera.value.info == null ||
+                    downloadNeedsConnection ||
                         isCloud && !cloud.signedIn
                 ) {
                     database
@@ -786,7 +825,7 @@ class CameraRuntime(
                     "media/${MediaFiles.key(photo.id)}/${file.fileId}_${file.name.substringAfterLast('/')}",
                 )
             var last = 0L
-            native.download(photo, file, output) { done, total ->
+            val updateProgress:(Long,Long)->Unit={done,total->
                 if (System.currentTimeMillis() - last > 350 || done == total) {
                     last = System.currentTimeMillis()
                     val bytes = completed + done
@@ -795,6 +834,8 @@ class CameraRuntime(
                     }
                 }
             }
+            if(!originalPreviews.copyForImport(photo,file,output){done,total->checkTaskActive(task.id);updateProgress(done,total)})
+                native.download(photo,file,output,updateProgress)
             val uri =
                 runCatching { MediaFiles.publish(context, output, file.name).toString() }
                     .getOrElse { Uri.fromFile(output).toString() }
@@ -1395,9 +1436,12 @@ class CameraRuntime(
 
     fun cleanupPreviews() =
         scope.launch {
-            File(context.cacheDir, "previews").deleteRecursively()
-            database.photos().clearPreviews(context.cacheDir.absolutePath + "%")
-            notice.value = "预览缓存已清理，原片和选片结果保留"
+            queue.withLock{
+                File(context.cacheDir, "previews").deleteRecursively()
+                originalPreviews.directory.deleteRecursively()
+                database.photos().clearPreviews(context.cacheDir.absolutePath + "%")
+                notice.value = "预览缓存已清理，原片和选片结果保留"
+            }
         }
 
     fun stopAll() {

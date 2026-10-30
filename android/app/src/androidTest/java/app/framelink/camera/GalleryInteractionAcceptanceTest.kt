@@ -202,15 +202,33 @@ class GalleryInteractionAcceptanceTest {
             compose.waitUntil(30000){runtime.currentCameraIds.value.isNotEmpty()&&!runtime.galleryHasMore.value&&!runtime.camera.value.loadingPhotos}
             val rows=runBlocking{runtime.database.photos().observe().first().filter{it.id in runtime.currentCameraIds.value}}
             val photo=rows.first{!it.imported&&it.downloadFiles(DownloadFormat.JPEG).isNotEmpty()}
+            val beforeTasks=runBlocking{runtime.database.tasks().observe().first().map{it.id}.toSet()}
+            val pending=rows.count{it.hasUnimportedFiles()}
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(rows.indexOf(photo))
             compose.onNodeWithContentDescription("查看 ${photo.name}").performClick()
-            compose.onNodeWithContentDescription("查看原片，导入JPEG").performClick()
-            compose.waitUntil(30000){runBlocking{runtime.database.photos().find(photo.id)!!.imported}}
+            compose.onNodeWithContentDescription("查看JPEG原片预览").performClick()
+            compose.waitUntil(30000){runtime.cachedOriginalPreview(photo)!=null}
             compose.onNodeWithContentDescription("关闭照片").assertIsDisplayed()
-            compose.onNodeWithText("已导入原片",substring=true).assertIsDisplayed()
+            compose.onNodeWithText("JPEG原片预览 · 未导入",substring=false).assertIsDisplayed()
+            assertEquals(photo.filesJson,runBlocking{runtime.database.photos().find(photo.id)!!.filesJson})
+            assertEquals(beforeTasks,runBlocking{runtime.database.tasks().observe().first().map{it.id}.toSet()})
+            assertEquals(pending,runBlocking{runtime.database.photos().observe().first().filter{it.id in runtime.currentCameraIds.value}.count{it.hasUnimportedFiles()}})
             compose.onNodeWithTag("photo-viewer-pager").performTouchInput{doubleClick(center)}
             compose.waitUntil(10000){compose.onAllNodesWithContentDescription("原片细节已显示").fetchSemanticsNodes().isNotEmpty()}
             acceptanceScreenshot(compose.activity,"gallery-original-zoom")
+            compose.onNodeWithContentDescription("关闭照片").performClick()
+            val cached=requireNotNull(runtime.cachedOriginalPreview(photo))
+            val hash=MediaFiles.digest(File(cached).inputStream())
+            runtime.disconnect()
+            // 关闭相机连接后仍能正式导入，证明命中缓存时未再请求机身原片
+            runBlocking{runtime.enqueueDownload(listOf(photo.id),DownloadFormat.JPEG).join()}
+            val imported=runBlocking{runtime.database.photos().find(photo.id)!!}
+            val saved=File(imported.files().first{!it.raw&&it.originalPath.isNotBlank()}.originalPath)
+            assertEquals(hash,MediaFiles.digest(saved.inputStream()))
+            runBlocking{runtime.cleanupPreviews().join()}
+            assertNull(runtime.cachedOriginalPreview(photo))
+            assertTrue(saved.isFile)
+            assertEquals(hash,MediaFiles.digest(saved.inputStream()))
         }finally{runtime.disconnect()}
     }
 

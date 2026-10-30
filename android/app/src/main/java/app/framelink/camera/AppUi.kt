@@ -2341,10 +2341,9 @@ private fun SettingsSheet(runtime: CameraRuntime, onClose: () -> Unit, onCloud: 
                     .filter { it.isFile }
                     .sumOf { it.length() }
             val previews =
-                File(runtime.context.cacheDir, "previews")
-                    .walkTopDown()
-                    .filter { it.isFile }
-                    .sumOf { it.length() }
+                listOf("previews","original-previews").sumOf { directory ->
+                    File(runtime.context.cacheDir,directory).walkTopDown().filter{it.isFile}.sumOf{it.length()}
+                }
             storage = "App保存文件 ${formatBytes(originals)}\n预览缓存 ${formatBytes(previews)}"
         }
     }
@@ -2415,7 +2414,8 @@ private fun PhotoViewer(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val original = photo.files().firstOrNull { !it.raw && it.savedUri.isNotBlank() }
-    var model by remember(photo.selectionResourceKey(),original?.savedUri) { mutableStateOf(original?.savedUri ?: photo.displayUri) }
+    var fullPreviewPath by remember(photo.selectionResourceKey()){mutableStateOf(runtime.cachedOriginalPreview(photo).orEmpty())}
+    var model by remember(photo.selectionResourceKey(),original?.savedUri) { mutableStateOf(original?.savedUri ?: fullPreviewPath.ifBlank{photo.displayUri}) }
     var viewerLoading by remember(photo.id) { mutableStateOf(true) }
     var viewerFailure by remember(photo.id) { mutableStateOf("") }
     var filesInfo by remember { mutableStateOf(false) }
@@ -2438,6 +2438,7 @@ private fun PhotoViewer(
     var viewerMore by remember { mutableStateOf(false) }
     var importingCurrent by remember { mutableStateOf(false) }
     var loadingOriginal by remember(photo.id) { mutableStateOf(false) }
+    var originalProgress by remember(photo.id){mutableIntStateOf(0)}
     val pager=rememberPagerState(initialPage=neighbors.indexOfFirst{it.id==photo.id}.coerceAtLeast(0),pageCount={neighbors.size})
     val strip=rememberLazyListState()
     LaunchedEffect(pager.settledPage,neighbors.size,canLoadMore,loadingMore){
@@ -2502,10 +2503,10 @@ private fun PhotoViewer(
         }
     }
     LaunchedEffect(photo.selectionResourceKey(), retryKey) {
-        if (original == null)
+        if (original == null && fullPreviewPath.isBlank())
             withContext(Dispatchers.IO) {
                 runCatching { runtime.ensurePreview(photo, true) }
-                    .onSuccess { model = it }
+                    .onSuccess { if(fullPreviewPath.isBlank())model = it }
                     .onFailure {
                         viewerLoading = false
                         viewerFailure = if(model.isBlank())it.message ?: "预览加载失败，请重试" else ""
@@ -2571,8 +2572,8 @@ private fun PhotoViewer(
                                     onError={if(active){viewerLoading=false;viewerFailure=if(photo.imported)"此格式暂不能显示，原文件仍可在文件信息中查看。" else "预览暂不能显示，请检查连接后重试。"}})
                             }
                         }
-                    if(original!=null&&scale>1.15f&&!pager.isScrollInProgress)
-                        OriginalPhotoDetail(original.savedUri,scale,pan,imageViewport)
+                    if((original!=null||fullPreviewPath.isNotBlank())&&scale>1.15f&&!pager.isScrollInProgress)
+                        OriginalPhotoDetail(original?.savedUri?:fullPreviewPath,scale,pan,imageViewport)
                     if (viewerLoading)
                         CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                     if (viewerFailure.isNotBlank())
@@ -2597,16 +2598,23 @@ private fun PhotoViewer(
                         IconButton(onClick=onClose){Icon(Icons.Outlined.ArrowBack,"关闭照片",tint=Color.White)}
                         Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally){
                             Text(if(photo.browsingTime<=0)"日期未提供"else (if(photo.capturedAt<=0)"文件时间 · "else"")+SimpleDateFormat("M月d日 · HH:mm",Locale.CHINA).format(Date(photo.browsingTime)),color=Color.White,fontSize=14.sp,fontWeight=FontWeight.Medium)
-                            Text(if(original!=null)"已导入原片 · "+photo.formatTitle() else if(photo.imported)"已导入RAW · 当前为预览" else if(!cameraConnected&&photo.source==PhotoSource.CAMERA.name)"离线缓存 · 相机已断开" else if(!resourceConfirmed)"缓存预览 · 需重新核对相机" else "相机预览 · "+photo.formatTitle(),
+                            Text(if(original!=null)"已导入原片 · "+photo.formatTitle() else if(fullPreviewPath.isNotBlank())"JPEG原片预览 · 未导入" else if(photo.imported)"已导入RAW · 当前为预览" else if(!cameraConnected&&photo.source==PhotoSource.CAMERA.name)"离线缓存 · 相机已断开" else if(!resourceConfirmed)"缓存预览 · 需重新核对相机" else "相机预览 · "+photo.formatTitle(),
                                 fontSize=11.sp,color=Color.White.copy(alpha=.72f),maxLines=1,overflow=TextOverflow.Ellipsis)
                         }
-                        if(original==null&&photo.downloadFiles(DownloadFormat.JPEG).isNotEmpty()&&canDownload&&resourceConfirmed)
+                        if(original==null&&fullPreviewPath.isBlank()&&photo.files().any{it.formatTitle()=="JPEG"}&&canDownload&&resourceConfirmed)
                             TextButton(enabled=!loadingOriginal&&!pager.isScrollInProgress,onClick={
                                 loadingOriginal=true
-                                runtime.notice.value="正在导入当前JPEG原片，完成后自动显示"
-                                scope.launch{try{runtime.enqueueDownload(listOf(photo.id),DownloadFormat.JPEG).join()}finally{loadingOriginal=false}}
-                            },modifier=Modifier.semantics{contentDescription="查看原片，导入JPEG"}){
-                                Text(if(loadingOriginal)"原片加载中"else"查看原片",fontSize=11.sp,color=Color.White)
+                                originalProgress=0
+                                scope.launch{
+                                    try{
+                                        val path=runtime.ensureOriginalPreview(photo){done,total->originalProgress=if(total>0)(done*100/total).toInt()else 0}
+                                        fullPreviewPath=path;model=path
+                                    }catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}
+                                    catch(error:Exception){runtime.notice.value=error.message?:"原片预览加载失败，可重试"}
+                                    finally{loadingOriginal=false}
+                                }
+                            },modifier=Modifier.semantics{contentDescription="查看JPEG原片预览"}){
+                                Text(if(loadingOriginal)"$originalProgress%"else"查看原片",fontSize=11.sp,color=Color.White)
                             }
                         if(selectionReadOnly)Text(if(selected)"客户已选"else"客户未选",fontSize=11.sp,color=if(selected)LiveAccent else Color.White.copy(alpha=.7f),modifier=Modifier.padding(horizontal=8.dp))
                         else PhotoSelectionAction(selected,onSelect,enabled=!pager.isScrollInProgress)

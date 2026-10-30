@@ -249,7 +249,7 @@ class CameraRuntime(
                 val dates = runCatching { native.dates(1) }.getOrDefault(emptyList())
                 synchronized(this@CameraRuntime) {
                     if (connectionGeneration.get() != generation) return@launch
-                    settings.put("camera.config", Json.encode(config))
+                    if (!config.experimentalFuji) settings.put("camera.config", Json.encode(config))
                     currentCameraIds.value = emptySet()
                     galleryHasMore.value = false
                     galleryError.value = ""
@@ -464,7 +464,7 @@ class CameraRuntime(
                 if (
                     photo.source == PhotoSource.CAMERA.name &&
                         photo.id in currentCameraIds.value &&
-                        mutableCamera.value.info?.id?.let { photo.sourceKey.startsWith(it) } == true
+                        mutableCamera.value.info?.let { it.canPreview && photo.sourceKey.startsWith(it.id) } == true
                 ) {
                     val file =
                         photo.files().firstOrNull { !it.raw && it.image }
@@ -493,6 +493,9 @@ class CameraRuntime(
                         database.photos().save(it.copy(previewPath = file.absolutePath))
                     }
                     file.absolutePath
+                } else if (photo.source == PhotoSource.CAMERA.name &&
+                    mutableCamera.value.info?.let { !it.canPreview && photo.sourceKey.startsWith(it.id) } == true) {
+                    error("当前传输批次不提供预览，可按需导入原片后查看")
                 } else error("请连接并重新浏览相机以核对照片，已有缓存仍可离线查看")
             }
 

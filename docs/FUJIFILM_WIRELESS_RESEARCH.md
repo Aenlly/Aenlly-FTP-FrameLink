@@ -1,6 +1,6 @@
 # 富士无线通道与待采数据
 
-USB读卡、手机无线传图和PC AutoSave是三条不同的路线。当前App已实现USB读卡；尚未接入富士无线后端。下面记录可复用的协议资料与缺口，不将其他项目的成功记录作为本App兼容证明。
+USB读卡、手机无线传图和PC AutoSave是三条不同的路线。当前已实现USB读卡，并新增默认关闭的PC AutoSave实验后端。普通连接界面尚不提供这个实验入口；公开实现、协议模拟与富士机身实测分别记录。
 
 ## 已找到的实现
 
@@ -10,7 +10,23 @@ USB读卡、手机无线传图和PC AutoSave是三条不同的路线。当前App
 | petabyt/libpict | f1c94c68a1fa0671feccf371001b74a7275b3bd7，Apache-2.0 | 底层容器和传输；不能因上层使用MIT就忽略此依赖许可证 |
 | nyaadesu/fuji-autosave-to-immich | 195f7987a9379c10eb40c8d946ce2bdfd18eea5d | 作者报告X-T30 II、FW2.06通过PC AutoSave接收RAW＋JPEG；这是外部实测记录 |
 
-本轮未复制或链接这些C库。后续复用应同时保留各层许可证，隔离备份恢复、RAW转换和其他非媒体操作。
+本轮参考这些公开实现独立编写Go传输和接收器，未复制或链接C库，也未复制第三方接收器、Immich集成或同步／删除hook。MIT与Apache-2.0声明分别保存在[libfuji许可](protocol-sources/libfuji-LICENSE.txt)及[libpict许可](protocol-sources/libpict-LICENSE.txt)。
+
+外部接收器固定版本实际引用libfuji fork `22ad5a7dd5dd50b367da1002328ee12e26689cd4`和libpict fork `01d7352b399a403a49e36a90ba76c6a08e3d9227`。已核对其逐行解析带空格／引号的型号、限制字符串写入、关闭发现连接、连接超时关闭socket、释放运行时／属性链表的路径。本项目不引入这些C内存分配路径；对发现头、容器和数组分别限长，使用完整读取处理TCP分片，关闭接收器时关闭全部监听与活动连接。
+
+## 实验API与范围
+
+- `NewFujiAutoSaveReceiver()`默认不打开端口；`Start(localIPv4, importerName, true)`才开启接收。接收器实例关闭后需新建实例再启动
+- 注册与导入发现分开处理。仅在接受IMPORT回调后，`NextInvitation()`返回供`Session.Connect()`使用的连接配置；REGISTER不会返回媒体邀请
+- `Session.Connect()`仅在`protocol=fuji-autosave`、`experimentalFuji=true`且带发现所得DSCNAME时开放该路线；默认配置会在关闭已有连接之前拒绝实验协议
+- 仅开放设备信息、待传对象索引和指定JPEG／RAF原字节下载；`mediaScope=AUTOSAVE_PENDING_BATCH`，不表示整卡浏览。普通UI没有新增遥控或取景能力
+- 会话只允许已知AutoSave客户端模式、协议版本和正确文件大小协商；不写D228，不删除或修改卡内媒体。标准DeviceInfo不支持时使用初始化名称与发现所得DSCNAME识别设备，固件留空
+- 未核实安全缩略图之前，`canPreview=false`；浏览或生成预览不会偷偷下载整张RAF。导入后可从本地JPEG生成预览
+- 以1MiB为上限分块，核对前后对象元数据、实际长度及本地SHA256；取消／半包断线后结束会话，不复用失去同步的socket；不发布半成品，不覆盖已有原片，也不开放断点续传
+- 无时区的PTP拍摄时间暂按外部X-T30 II记录采用UTC解释，保留原始日期字符串用于身份核对；其他固件时区与EXIF关系仍需真机确认
+- Android实验连接不会替换用户保存的Sony配置；普通UI和自动重连不会悄悄启用这个实验协议
+
+生产代码位于`camera-bridge/bridge/fuji_discovery.go`、`fuji_wire.go`及`fuji_camera.go`。Go测试端点按公开布局构造响应，另以独立Kotlin TCP端点检查JNI和导入业务；两者均为合成数据，不是X-T30 II抓包，也不等于已运行外部vcam或富士机身。
 
 ## 不能套用通用PTP/IP的地方
 
@@ -21,7 +37,7 @@ USB读卡、手机无线传图和PC AutoSave是三条不同的路线。当前App
 - 上游默认禁用AutoSave缩略图读取；直接套用普通GetThumb可能阻塞。预览需独立核实，不能为显示缩略图默认导入整张RAF
 - 原片按最多1MiB的分段读取，需核对长度并处理取消、断线和未完成文件。已下载文件不能仅凭同名判定为同一资源
 
-因此，现有USB适配器和一个能打开55740端口的socket，都不足以宣布富士无线可用。PC AutoSave传图也不等于手机遥控、实时取景或胶片模拟控制。
+这些边界由实验后端分别处理；打开55740端口仍不足以宣布富士机身兼容。PC AutoSave传图不等于手机遥控、实时取景或胶片模拟控制。
 
 ## 最小采集与接入顺序
 
@@ -34,7 +50,7 @@ USB读卡、手机无线传图和PC AutoSave是三条不同的路线。当前App
 5. 验证分块取消、拔网、相机休眠及重连后资源身份，保留已有原片，丢弃未完成临时文件；未验证之前不开放断点续传
 6. 将脱敏载荷固定为回放夹具，通过独立Fuji后端接入现有媒体、图库、导入任务和选片记录；硬件与协议回放分别记录结果
 
-当前缺少本项目X-T30 II无线会话载荷、预览读取证据和资源身份／恢复记录。USB业务链路测试不会填补这些缺口；机身不在身边时不反复请求借机，也不把未知操作码写成可用能力。
+当前仍缺少本项目X-T30 II无线机身会话、预览读取证据及真实网络下的资源身份／恢复记录。这不阻塞上述有来源的软件实现，但软件模拟与USB测试均不能填补机身验收缺口；机身不在身边时不反复请求借机，也不把未知操作码写成可用能力。
 
 ## 来源
 

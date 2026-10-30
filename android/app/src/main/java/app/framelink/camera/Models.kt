@@ -180,6 +180,7 @@ data class CameraInfo(
     val dateSource: String = CameraTimeSource.CAPTURE,
     val canAutoImport: Boolean = true,
     val connectionKind: String = CameraConnectionKinds.NETWORK,
+    val mediaScope: String = "",
 )
 
 data class CameraPage(val items: List<RemotePhoto> = emptyList(), val nextCursor: Long = 0)
@@ -213,6 +214,8 @@ data class ConnectionConfig(
     val guid: String = "",
     val protocol: String = CameraProtocols.SONY,
     val usbIdentity: String = "",
+    val experimentalFuji: Boolean = false,
+    val fujiDeviceName: String = "",
 )
 
 data class CameraStatus(

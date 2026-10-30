@@ -20,6 +20,8 @@ classes['live-menu']=prefix+'LiveViewUsabilityAcceptanceTest#compactMenusKeepBod
 classes['canon']=prefix+'CanonProtocolAcceptanceTest'
 classes['usb']=prefix+'UsbConnectionUiAcceptanceTest'
 classes['usb-workflow']=prefix+'UsbWorkflowAcceptanceTest'
+classes['fuji-autosave']=prefix+'FujiAutoSaveAcceptanceTest'
+classes['protocol-targeted']=','.join(classes[key] for key in ['fuji-autosave','usb-workflow','native'])
 classes['all']+=','+classes['canon']+','+classes['usb']
 if mode not in classes: raise SystemExit('未知验收模式：'+mode)
 if mode in ['all', 'identity', 'gallery', 'ui']:

@@ -19,6 +19,7 @@ parser.add_argument('--focus-near', help='仅对焦验收：前景目标归一�
 parser.add_argument('--focus-far', help='仅对焦验收：后景目标归一化坐标x,y')
 parser.add_argument('--include-ftp', action='store_true', help='追加本机FTP客户端字节、中文文件名与取消校验')
 parser.add_argument('--include-capture', action='store_true', help='明确执行一次真实快门，保留机身照片并验证数量、状态和进入图库连接')
+parser.add_argument('--include-parameter-write', action='store_true', help='明确进行光圈写入与恢复；默认只读检查取景UI')
 args = parser.parse_args()
 if args.version and (not args.manual_install or not re.fullmatch(r'\d+\.\d+\.\d+', args.version)):
     parser.error('--version仅用于指定手动安装的冻结版本')
@@ -81,6 +82,7 @@ if args.include_ftp:
 instrument = ['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', test_class,
     '-e', 'allowPhysicalCameraRead', 'true', '-e', 'appTouch', str(args.app_touch).lower(),
     '-e', 'allowPhysicalCapture', str(args.include_capture).lower(),
+    '-e', 'allowPhysicalParameterWrite', str(args.include_parameter_write).lower(),
     'app.framelink.camera.test/androidx.test.runner.AndroidJUnitRunner']
 for key, point in [('focusNear', args.focus_near), ('focusFar', args.focus_far)]:
     if point: instrument[-1:-1] = ['-e', key, point]

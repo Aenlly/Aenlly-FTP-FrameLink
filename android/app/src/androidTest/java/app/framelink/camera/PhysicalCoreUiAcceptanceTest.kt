@@ -311,7 +311,7 @@ class PhysicalCoreUiAcceptanceTest {
             val landscapeBounds = waitForFullWindow()
             val screen = app.getSystemService(android.view.WindowManager::class.java).maximumWindowMetrics.bounds
             clickDescription("更多控制");clickDescription("沉浸取景")
-            waitFor { findDescription("显示取景控制")?.stateDescription == "取景画面已显示" }
+            waitFor { findDescription("取景画面，点按对焦")?.stateDescription == "取景画面已显示" }
             // 无障碍矩形可能向下取整，允许两个物理像素的边界舍入差
             assertTrue("横屏全屏窗口必须覆盖实际屏幕，屏幕=$screen，窗口=$landscapeBounds",
                 kotlin.math.abs(screen.left-landscapeBounds.left) <= 2 && kotlin.math.abs(screen.top-landscapeBounds.top) <= 2 &&
@@ -327,7 +327,8 @@ class PhysicalCoreUiAcceptanceTest {
             clickDescription("收起工具")
             assertTrue(rotate(UiAutomation.ROTATION_FREEZE_0))
             waitFor { app.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT && findDescription("更多控制") != null }
-            aperture = runtime.properties.value.firstOrNull { it.code == 0x5007 && it.writable }
+            val parameterWriteRequested=InstrumentationRegistry.getArguments().getString("allowPhysicalParameterWrite")=="true"
+            aperture = if(parameterWriteRequested)runtime.properties.value.firstOrNull { it.code == 0x5007 && it.writable } else null
             aperture?.let { property ->
                 property.choices.firstOrNull { it.value != property.value }?.let { next ->
                     check(appRoot()?.packageName == app.packageName) { "手机已切换应用，停止参数测试" }
@@ -340,7 +341,8 @@ class PhysicalCoreUiAcceptanceTest {
                 }
             }
             report("live-ui.json", JSONObject().put("frameWidth", options.outWidth).put("frameHeight", options.outHeight)
-                .put("shutterBottom", bounds.bottom).put("safeBottom", safeBottom).put("apertureRestored", changed))
+                .put("shutterBottom", bounds.bottom).put("safeBottom", safeBottom).put("apertureRestored", changed)
+                .put("parameterWriteRequested",parameterWriteRequested).put("parameterWritten",changed))
             clickDescription("返回相机")
         } finally {
             rotate(UiAutomation.ROTATION_UNFREEZE)
@@ -357,6 +359,9 @@ class PhysicalCoreUiAcceptanceTest {
             clickText("取景拍摄")
             waitFor(30000) { runtime.frame.value?.isNotEmpty() == true }
             var frames = 0
+            val dimensions=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+            val firstFrame=runtime.frame.value!!
+            BitmapFactory.decodeByteArray(firstFrame,0,firstFrame.size,dimensions)
             var bytes = 0L
             val started = SystemClock.elapsedRealtime()
             runBlocking {
@@ -368,6 +373,7 @@ class PhysicalCoreUiAcceptanceTest {
             val ping = android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("ping -c 5 -W 1 $host")).use { it.bufferedReader().readText() }
             val rtt = ping.lineSequence().firstOrNull { it.contains("min/avg/max") }.orEmpty().substringAfter("=", "").trim()
             report("preview-network.json", runtime.native.shootingState().put("receivedFrames", frames).put("sampleMs", elapsed)
+                .put("frameWidth",dimensions.outWidth).put("frameHeight",dimensions.outHeight)
                 .put("receivedFps", frames*1000.0/elapsed).put("jpegMbps", bytes*8.0/elapsed/1000)
                 .put("pingSummary", rtt).put("endToEndLatencyMeasured", false))
             clickDescription("返回相机")
@@ -504,7 +510,20 @@ class PhysicalCoreUiAcceptanceTest {
     }
     private fun waitFor(timeout: Long = 15000, predicate: () -> Boolean) {
         val end = SystemClock.elapsedRealtime() + timeout
-        while (!predicate()) { if (SystemClock.elapsedRealtime() >= end) throw AssertionError("等待手机界面或相机状态超时，步骤=$stage，前台=${appRoot()?.packageName}，可见操作=${nodes().mapNotNull { it.text?.toString() }.distinct()}"); SystemClock.sleep(100) }
+        while (!predicate()) {
+            if (SystemClock.elapsedRealtime() >= end) {
+                val current=nodes()
+                runCatching {
+                    report("wait-timeout.json",JSONObject().put("stage",stage).put("nodes",org.json.JSONArray(current.map { node ->
+                        JSONObject().put("text",node.text).put("description",node.contentDescription).put("state",node.stateDescription)
+                            .put("parentState",node.parent?.stateDescription).put("clickable",node.isClickable)
+                    })))
+                    screenshot("physical-wait-timeout")
+                }
+                throw AssertionError("等待手机界面或相机状态超时，步骤=$stage，前台=${appRoot()?.packageName}，可见操作=${current.mapNotNull { it.text?.toString() }.distinct()}")
+            }
+            SystemClock.sleep(100)
+        }
     }
     private fun dragBetween(first: AccessibilityNodeInfo, second: AccessibilityNodeInfo) {
         val a = Rect(); val b = Rect(); first.getBoundsInScreen(a); second.getBoundsInScreen(b)

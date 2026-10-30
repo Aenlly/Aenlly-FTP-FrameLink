@@ -27,6 +27,7 @@ type cameraBackend interface {
 
 const protocolSony = "sony-ptpip"
 const protocolCanon = "canon-ccapi"
+const protocolFujiAutoSave = "fuji-autosave"
 
 func (s *Session) alternate() cameraBackend {
 	s.mu.Lock()

@@ -51,13 +51,15 @@ type Session struct {
 }
 
 type connectionConfig struct {
-	Protocol    string `json:"protocol"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	User        string `json:"user"`
-	Password    string `json:"password"`
-	Fingerprint string `json:"fingerprint"`
-	GUID        string `json:"guid"`
+	Protocol         string `json:"protocol"`
+	Host             string `json:"host"`
+	Port             int    `json:"port"`
+	User             string `json:"user"`
+	Password         string `json:"password"`
+	Fingerprint      string `json:"fingerprint"`
+	GUID             string `json:"guid"`
+	ExperimentalFuji bool   `json:"experimentalFuji"`
+	FujiDeviceName   string `json:"fujiDeviceName"`
 }
 
 type downloadRequest struct {
@@ -84,12 +86,20 @@ func decodeConfig(raw string) (connectionConfig, error) {
 	if cfg.Protocol == "" {
 		cfg.Protocol = protocolSony
 	}
-	if cfg.Protocol != protocolSony && cfg.Protocol != protocolCanon {
+	if cfg.Protocol != protocolSony && cfg.Protocol != protocolCanon && cfg.Protocol != protocolFujiAutoSave {
 		return cfg, errors.New("当前连接协议尚未适配")
+	}
+	if cfg.Protocol == protocolFujiAutoSave && (!cfg.ExperimentalFuji || !validFujiDeviceName(cfg.FujiDeviceName)) {
+		return cfg, errors.New("Fuji AutoSave实验通道默认关闭，请先显式启用并完成接收器发现")
+	}
+	if cfg.Protocol == protocolFujiAutoSave && net.ParseIP(cfg.Host).To4() == nil {
+		return cfg, errors.New("Fuji AutoSave实验通道只接受当前局域网IPv4地址")
 	}
 	if cfg.Port == 0 {
 		if cfg.Protocol == protocolCanon {
 			cfg.Port = 8080
+		} else if cfg.Protocol == protocolFujiAutoSave {
+			cfg.Port = fujiCommandPort
 		} else {
 			cfg.Port = 15740
 		}
@@ -131,6 +141,22 @@ func (s *Session) Connect(raw string) (string, error) {
 		}
 	}
 	opts.DialContext = dialer.DialContext
+	if cfg.Protocol == protocolFujiAutoSave {
+		backend, info, err := connectFujiAutoSave(ctx, cfg, dialer.DialContext)
+		if err != nil {
+			cancel()
+			return "", err
+		}
+		s.mu.Lock()
+		if s.ctx != ctx || ctx.Err() != nil {
+			s.mu.Unlock()
+			backend.Close()
+			return "", errors.New("连接已取消")
+		}
+		s.backend, s.identity = backend, backend.identity
+		s.mu.Unlock()
+		return info, nil
+	}
 	if cfg.Protocol == protocolCanon {
 		backend, info, err := connectCanon(ctx, cfg, dialer.DialContext)
 		if err != nil {

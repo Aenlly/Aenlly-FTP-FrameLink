@@ -26,6 +26,8 @@ SwiftUI原生应用，最低iOS17，适配iPhone与iPad。四个入口为相机�
 
 0.1.11当前是源码候选：48项核心测试及基于真实Go生成头文件的Swift源码类型检查通过。随附旧框架不包含新版分页入口，需在环境恢复后运行构建脚本重新生成二进制框架，再验证App链接和UI；未提供0.1.11 IPA，现有设备包仍为0.1.10。[分页同步范围](../docs/acceptance/2026-10-31-ios-camera-index-0.1.11.md)
 
+0.1.12源码候选分开自动取页、用户重试及刷新意图，避免已排队的近尾动作在错误发布后自动重试。49项核心测试与源码类型检查通过，仍无新IPA或UI运行结果。[修正记录](../docs/acceptance/2026-10-31-ios-index-intent-0.1.12.md)
+
 ## 构建与运行
 
 准备完整Xcode、iOS SDK和Go工具链。`scripts/bootstrap.py`可准备固定的Go与Android命令行工具，iOS构建不需要安装Android平台SDK或NDK；构建脚本会补齐固定版本的gomobile。

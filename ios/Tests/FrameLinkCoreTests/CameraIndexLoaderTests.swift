@@ -34,6 +34,12 @@ import XCTest
 }
 
 @MainActor final class CameraIndexLoaderTests: XCTestCase {
+  @MainActor private final class QueuedAction {
+    let queued = XCTestExpectation(description: "automatic action queued before failure")
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait() async { await withCheckedContinuation { continuation = $0; queued.fulfill() } }
+    func release() { continuation?.resume(); continuation = nil }
+  }
   private func library() -> LibraryStore { LibraryStore(root: FileManager.default.temporaryDirectory.appendingPathComponent("index-" + UUID().uuidString)) }
   func testFirstHundredExposeTotalAndBackgroundFillsWithoutScrollingOrImageTransfers() async throws {
     let library = library(); defer { try? FileManager.default.removeItem(at: library.root) }
@@ -102,6 +108,28 @@ import XCTest
     XCTAssertEqual(loader.state.ids.count, 100); XCTAssertNil(loader.startBackground())
     service.badCursor = false; try await loader.fillAll(retry: true)
     XCTAssertEqual(service.calls.map(\.1), [0, 100, 100, 200]); XCTAssertEqual(loader.state.ids.count, 250)
+  }
+  func testQueuedAutomaticAppIntentCannotRetryFailurePublishedBeforeItsExecution() async throws {
+    let library = library(); defer { try? FileManager.default.removeItem(at: library.root) }
+    let service = MetadataPages(); service.pausedCursor = 100; service.failCursor = 100
+    let loader = CameraIndexLoader(library: library, fetch: service.fetch)
+    loader.reset(scope: CameraIndexScope(deviceID: "camera")); try await loader.requestNext(intent: .automatic)
+    let background = loader.startBackground(); await fulfillment(of: [service.started], timeout: 3)
+    // The same typed entry is called by AppModel; this action was scheduled while error was still nil.
+    let action = QueuedAction()
+    let automatic = Task { await action.wait(); try await loader.requestNext(intent: .automatic) }
+    await fulfillment(of: [action.queued], timeout: 3)
+    XCTAssertNil(loader.state.error)
+    service.resume(); await background?.value
+    let failure = try XCTUnwrap(loader.state.error)
+    XCTAssertEqual(service.calls.map(\.1), [0, 100])
+    action.release()
+    do { try await automatic.value; XCTFail("queued automatic action retried") } catch CameraIndexError.stopped {}
+    XCTAssertEqual(service.calls.map(\.1), [0, 100]); XCTAssertEqual(loader.state.error, failure)
+    XCTAssertNil(loader.state.totalCount); XCTAssertEqual(loader.state.ids.count, 100)
+    service.failCursor = nil
+    try await loader.requestNext(intent: .userRetry); await loader.startBackground()?.value
+    XCTAssertEqual(service.calls.map(\.1), [0, 100, 100, 200]); XCTAssertTrue(loader.state.complete)
   }
   func testFailureInvalidatesOldCountAndDisconnectDropsAllIndexState() async throws {
     let library = library(); defer { try? FileManager.default.removeItem(at: library.root) }

@@ -237,7 +237,7 @@ final class AppModel: ObservableObject {
             }
           }
         }
-        if gallerySource == 1 { await loadCamera(reset: false) }
+        if gallerySource == 1 { await loadCamera(intent: .automatic) }
       } catch {
         guard token == generation else { return }
         connecting = false
@@ -285,17 +285,18 @@ final class AppModel: ObservableObject {
     pendingConfig = nil
     cameraMessage = "相机已断开，手机原片已保留"
   }
-  func loadCamera(reset: Bool) async {
+  func loadCamera(intent: CameraIndexLoadIntent) async {
     guard gallerySource == 1, cameraInfo?.canBrowse == true else { return }
     let token = generation
-    configureCameraIndex(force: reset)
+    configureCameraIndex(force: intent == .refresh)
     do {
-      try await cameraIndex.loadNext(retry: true)
+      try await cameraIndex.requestNext(intent: intent)
       guard token == generation else { return }
       if gallerySource == 1 { cameraIndex.startBackground() }
     } catch is CancellationError {
     } catch {
       guard token == generation else { return }
+      guard intent != .automatic else { return }
       notice = error.localizedDescription
       if !camera.connected() { disconnect() }
     }

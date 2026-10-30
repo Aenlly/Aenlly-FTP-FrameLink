@@ -349,7 +349,7 @@ struct GalleryView: View {
         } else { Text("\(photos.count) 张") }
         Spacer()
         if source == 1 {
-          Button("刷新") { Task { await model.loadCamera(reset: true) } }.disabled(
+          Button("刷新") { Task { await model.loadCamera(intent: .refresh) } }.disabled(
             model.cameraInfo == nil)
         }
       }.font(.caption).foregroundStyle(.secondary).padding(16)
@@ -373,12 +373,12 @@ struct GalleryView: View {
           photos: photos, selection: $library.selection, style: layout,
           contextKey: "\(source):\(filter):\(layoutKey):\(model.cameraInfo?.id ?? ""):\(model.cameraIndexState.scope?.slot ?? 1):\(model.cameraIndexState.scope?.day ?? "")",
           onDragging: { dragging = $0 },
-          onNearEnd: { if source == 1 && model.cameraIndexState.error == nil && model.cameraHasMore { Task { await model.loadCamera(reset: false) } } }
+          onNearEnd: { if source == 1 && model.cameraIndexState.error == nil && model.cameraHasMore { Task { await model.loadCamera(intent: .automatic) } } }
         ) { viewer = $0 }
       }
       if source == 1 && model.cameraInfo != nil && model.cameraHasMore {
         if let error = model.cameraIndexState.error {
-          Button("读取中断，点此重试") { Task { await model.loadCamera(reset: false) } }.font(.footnote).help(error).padding(.bottom, 6)
+          Button("读取中断，点此重试") { Task { await model.loadCamera(intent: .userRetry) } }.font(.footnote).help(error).padding(.bottom, 6)
         } else { Text(model.cameraLoading ? "正在补齐索引" : "正在准备照片列表").font(.footnote).foregroundStyle(.secondary).padding(.bottom, 6) }
       }
     }

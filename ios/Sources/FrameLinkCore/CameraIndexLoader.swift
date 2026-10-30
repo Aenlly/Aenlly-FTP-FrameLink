@@ -47,6 +47,9 @@ public enum CameraIndexError: LocalizedError {
     }
   }
 }
+public enum CameraIndexLoadIntent: Equatable, Sendable {
+  case automatic, userRetry, refresh
+}
 
 /// Background filling, scrolling and select-all join the same metadata-only page flight.
 @MainActor public final class CameraIndexLoader {
@@ -67,6 +70,10 @@ public enum CameraIndexError: LocalizedError {
   public func invalidate() {
     generation = UUID(); background?.cancel(); background = nil; flight?.task.cancel(); flight = nil
     seenCursors = []; state = CameraIndexState(); publish()
+  }
+  /// Apply intent when execution reaches the loader, not when a UI callback schedules its Task.
+  public func requestNext(intent: CameraIndexLoadIntent) async throws {
+    try await loadNext(retry: intent != .automatic)
   }
   public func loadNext(retry: Bool = false) async throws {
     try Task.checkCancellation()

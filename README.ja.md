@@ -50,7 +50,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Androidの出力：`artifacts/FrameLink-0.1.24-debug.apk`。iPhone用IPAは再署名が必要です。[インストール手順](ios/INSTALL.md)。シミュレーター用ファイルは別です。アプリの表示言語は現在中国語です。[Android](android/README.md) · [iOS](ios/README.md) · [サーバー](cloud/README.md) · [Web](web/README.md)
+Androidをソースからビルドした出力：`android/app/build/outputs/apk/debug/app-debug.apk`。iPhone用IPAは再署名が必要です。[インストール手順](ios/INSTALL.md)。シミュレーター用ファイルは別です。アプリの表示言語は現在中国語です。[Android](android/README.md) · [iOS](ios/README.md) · [サーバー](cloud/README.md) · [Web](web/README.md)
 
 ## 開発に参加
 対応機種の報告、不具合の再現手順、使い勝手への意見を歓迎します。スマートフォンのOS、カメラの型番とファームウェア、接続方法を記載し、パスワードや個人の原本写真は送らないでください。

@@ -50,7 +50,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android 결과물: `artifacts/FrameLink-0.1.24-debug.apk`. iPhone용 IPA는 다시 서명해야 합니다. [설치 안내](ios/INSTALL.md). 시뮬레이터 파일은 별도로 제공됩니다. 현재 앱의 표시 언어는 중국어입니다. [Android](android/README.md) · [iOS](ios/README.md) · [서버](cloud/README.md) · [웹](web/README.md)
+Android 소스 빌드 결과물: `android/app/build/outputs/apk/debug/app-debug.apk`. iPhone용 IPA는 다시 서명해야 합니다. [설치 안내](ios/INSTALL.md). 시뮬레이터 파일은 별도로 제공됩니다. 현재 앱의 표시 언어는 중국어입니다. [Android](android/README.md) · [iOS](ios/README.md) · [서버](cloud/README.md) · [웹](web/README.md)
 
 ## 기여
 기종 호환성, 재현 가능한 오류, 사용성 의견을 환영합니다. 휴대전화 OS, 카메라 모델과 펌웨어, 연결 방식, 재현 단계를 적어 주세요. 비밀번호나 개인 원본 사진은 올리지 마세요.

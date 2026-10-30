@@ -8,7 +8,7 @@ export PATH="$TASK_ROOT/.tools/go/bin:$TASK_ROOT/.tools/go-tools/bin:$ANDROID_HO
 export GOPATH="$TASK_ROOT/.tools/go-tools"
 export GOBIN="$GOPATH/bin"
 SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-if [ ! -d "$ANDROID_HOME/platforms/android-36" ] || [ ! -d "$ANDROID_NDK_HOME" ]; then
+if [ ! -d "$ANDROID_HOME/platforms/android-37" ] || [ ! -d "$ANDROID_NDK_HOME" ]; then
   python3 "$TASK_ROOT/scripts/install-sdk.py"
 fi
 if [ ! -f "$GOBIN/gomobile" ]; then
@@ -26,5 +26,5 @@ mkdir -p "$GOPATH/pkg/gomobile"
 gomobile bind -target=android/arm64,android/amd64 -androidapi=26 -ldflags='-extldflags=-Wl,-z,max-page-size=16384' -javapkg=app.framelink.nativecamera -o "$TASK_ROOT/android/app/libs/camera.aar" ./bridge
 cd "$TASK_ROOT/android"
 ./gradlew --no-daemon testDebugUnitTest assembleDebug
-mkdir -p "$TASK_ROOT/artifacts"
-cp app/build/outputs/apk/debug/app-debug.apk "$TASK_ROOT/artifacts/FrameLink-0.1.21-debug.apk"
+# 冻结归档单独管理，普通构建只报告Gradle产物，不覆盖已保留的版本
+printf 'Android APK: %s\n' "$TASK_ROOT/android/app/build/outputs/apk/debug/app-debug.apk"

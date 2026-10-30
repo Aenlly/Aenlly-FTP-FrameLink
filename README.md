@@ -50,7 +50,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android输出：`artifacts/FrameLink-0.1.24-debug.apk`。iOS脚本构建模拟器App，iPhone可通过自签工具安装IPA，见[试装说明](ios/INSTALL.md)。[Android](android/README.md) · [iOS](ios/README.md) · [云服务](cloud/README.md) · [客户网页](web/README.md)
+Android源码构建输出：`android/app/build/outputs/apk/debug/app-debug.apk`。iOS脚本构建模拟器App，iPhone可通过自签工具安装IPA，见[试装说明](ios/INSTALL.md)。[Android](android/README.md) · [iOS](ios/README.md) · [云服务](cloud/README.md) · [客户网页](web/README.md)
 
 ## 一起开发
 欢迎报告机型兼容、传输问题和不好用的地方。请附手机系统、相机型号与固件、连接方式、复现步骤；不要上传密码或客户原片。

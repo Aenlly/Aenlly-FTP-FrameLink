@@ -50,7 +50,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android output: `artifacts/FrameLink-0.1.24-debug.apk`. iPhone IPA files require re-signing; see the [installation guide](ios/INSTALL.md). The simulator archive is separate. The app interface is currently Chinese. [Android](android/README.md) · [iOS](ios/README.md) · [Server](cloud/README.md) · [Web](web/README.md)
+Android source-build output: `android/app/build/outputs/apk/debug/app-debug.apk`. iPhone IPA files require re-signing; see the [installation guide](ios/INSTALL.md). The simulator archive is separate. The app interface is currently Chinese. [Android](android/README.md) · [iOS](ios/README.md) · [Server](cloud/README.md) · [Web](web/README.md)
 
 ## Contribute
 Camera reports, reproducible bugs, and usability feedback are welcome. Include phone OS, camera model and firmware, connection method, and steps. Keep passwords and private photos out of reports.

@@ -108,6 +108,8 @@ func main() {
 	go stream.Serve(streamListener)
 	defer stream.Close()
 	props := []ptpip.SonyProp{{Code: ptpip.SonyPropLiveViewURL, Type: 0xffff, Enabled: 1, Current: ptpip.SonyValue{Str: "http://localhost:16001/liveview"}},
+		// Read-only standard exposure mode exercises the status group, not a hardware claim.
+		{Code: 0x500E, Type: 4, Enabled: 1, Current: ptpip.SonyValue{Int: 1}, Form: 2, Settable: []ptpip.SonyValue{{Int: 1}}},
 		{Code: 0x5013, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 1}, Form: 2, Settable: []ptpip.SonyValue{{Int: 1}, {Int: 2}}},
 		{Code: ptpip.SonyPropStoreDestination, Type: 4, Enabled: 1, Writable: true, Form: 2,
 			Current: ptpip.SonyValue{Int: ptpip.SonyStoreCard}, Settable: []ptpip.SonyValue{{Int: ptpip.SonyStoreHost}, {Int: ptpip.SonyStoreCard}, {Int: ptpip.SonyStoreHostAndCard}}},

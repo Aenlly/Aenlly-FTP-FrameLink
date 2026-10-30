@@ -29,10 +29,12 @@ class LiveViewSurface(context: Context) : TextureView(context), GLSurfaceView.Re
     @Volatile var zebra = false
     @Volatile var peaking = false
     @Volatile var histogram: ((IntArray) -> Unit)? = null
+    @Volatile var headerBrightness: ((Float) -> Unit)? = null
     @Volatile var frameSize: ((Int, Int) -> Unit)? = null
     @Volatile var failure: ((String) -> Unit)? = null
     @Volatile var framePresented: (() -> Unit)? = null
     private var lastAnalysis = 0L
+    private var lastHeaderAnalysis = 0L
     private var worker: HandlerThread? = null
     @Volatile private var renderHandler: Handler? = null
     private val drawPending = AtomicBoolean(false)
@@ -207,6 +209,16 @@ class LiveViewSurface(context: Context) : TextureView(context), GLSurfaceView.Re
                 frameSize?.invoke(decoded.width, decoded.height)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
                 GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, decoded, 0)
+                if (headerBrightness != null && System.currentTimeMillis()-lastHeaderAnalysis>500) {
+                    lastHeaderAnalysis=System.currentTimeMillis()
+                    // 顶栏只取图像左上区域64个像素，不额外解码，也不依赖用户开启直方图
+                    var sum=0L
+                    for(y in 1..4)for(x in 1..16){
+                        val pixel=decoded.getPixel((decoded.width*x*.4f/17).toInt().coerceIn(0,decoded.width-1),(decoded.height*y*.16f/5).toInt().coerceIn(0,decoded.height-1))
+                        sum+=((pixel shr 16 and 255)*299+(pixel shr 8 and 255)*587+(pixel and 255)*114)
+                    }
+                    headerBrightness?.invoke(sum/(64f*255000f))
+                }
                 if (histogram != null && System.currentTimeMillis() - lastAnalysis > 500) {
                     lastAnalysis = System.currentTimeMillis()
                     val bins = IntArray(64)

@@ -6,6 +6,7 @@ import hashlib
 import json
 import pathlib
 import re
+import shutil
 import struct
 import subprocess
 
@@ -37,12 +38,16 @@ if args.variant=='large' and font_scale<1.3:raise SystemExit('大字证据必须
 if args.variant=='regular' and font_scale>1.05:raise SystemExit('普通字号证据配置不一致')
 directory=root/'artifacts'/('camera-ui-'+version+'-'+args.theme+('-large' if args.variant=='large' else ''))
 directory.mkdir(exist_ok=True)
+test_log=status.with_suffix('.log')
+if not test_log.exists() or 'OK (' not in test_log.read_text():raise SystemExit('缺少本轮完整通过日志')
+shutil.copyfile(test_log,directory/'test-run.log')
 states={'portrait-photo':'live-portrait-camera','portrait-pro':'live-portrait-professional',
         'portrait-ruler':'live-portrait-ruler','landscape-photo':'live-landscape-photo',
         'landscape-pro':'live-landscape-camera','landscape-ruler':'live-landscape-ruler',
         'portrait-menu':'live-menu-portrait-body','landscape-menu':'live-menu-landscape-body',
-        'portrait-assist-menu':'live-menu-portrait-assist','landscape-assist-menu':'live-menu-landscape-assist'}
-if args.variant=='large':states={key:value for key,value in states.items() if 'menu' in key}
+        'portrait-assist-menu':'live-menu-portrait-assist','landscape-assist-menu':'live-menu-landscape-assist',
+        'timer-3':'live-timer-3','timer-10':'live-timer-10'}
+if args.variant=='large':states={key:value for key,value in states.items() if 'menu' in key or 'timer' in key}
 images={}
 for state,source in states.items():
     target=directory/(state+'.png')
@@ -52,6 +57,7 @@ for state,source in states.items():
     images[state]={'file':target.name,'dimensions':struct.unpack('>II',data[16:24]),'sha256':hashlib.sha256(data).hexdigest()}
 receipt={'version':version,'packages':digests,'emulator':name,'api':sdk,'background':args.theme,
          'variant':args.variant,'fontScale':font_scale,'testStatus':str(status.relative_to(root)),
+         'testLog':{'file':'test-run.log','sha256':hashlib.sha256((directory/'test-run.log').read_bytes()).hexdigest()},
          'preview':'camera protocol simulator','physicalCameraVerified':False,
          'capturedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'images':images}
 (directory/'receipt.json').write_text(json.dumps(receipt,ensure_ascii=False,indent=2))

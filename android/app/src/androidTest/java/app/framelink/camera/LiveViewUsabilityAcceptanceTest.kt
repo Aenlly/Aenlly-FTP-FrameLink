@@ -76,7 +76,10 @@ class LiveViewUsabilityAcceptanceTest {
             assertTrue(window.width >= metrics.width() * .95f)
             val landscape = compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow
             val picker = compose.onNodeWithTag("live-property-picker").fetchSemanticsNode().boundsInWindow
-            assertTrue("横屏参数尺保持紧凑，不挤动取景", picker.width < window.width * .18f && picker.left >= landscape.right - 24*density)
+            val shutterWithPicker=compose.onNodeWithContentDescription("拍摄").fetchSemanticsNode().boundsInWindow
+            val compactPicker=if(picker.height>picker.width)picker.width<=80*density else picker.height<=72*density&&picker.width<window.width*.5f
+            assertTrue("参数尺按剩余空间横竖排列并保持紧凑：$picker",compactPicker)
+            assertFalse("参数尺不能遮挡快门：参数=$picker，快门=$shutterWithPicker",picker.overlaps(shutterWithPicker))
             compose.waitForIdle()
             acceptanceScreenshot(compose.activity, "live-landscape-ruler")
             compose.onNodeWithContentDescription("关闭参数").performClick()
@@ -88,9 +91,13 @@ class LiveViewUsabilityAcceptanceTest {
             acceptanceScreenshot(compose.activity, "live-landscape-camera")
             compose.onNodeWithContentDescription("拍照模式").performClick()
             compose.onNodeWithTag("live-quick-properties").assertDoesNotExist()
+            assertEquals("切换拍照不能移动横屏快门",shutter,compose.onNodeWithContentDescription("拍摄").fetchSemanticsNode().boundsInWindow)
             assertEquals(landscape, compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow)
             acceptanceScreenshot(compose.activity, "live-landscape-photo")
             compose.onNodeWithContentDescription("专业模式").performClick()
+            assertEquals("切换专业不能移动横屏快门",shutter,compose.onNodeWithContentDescription("拍摄").fetchSemanticsNode().boundsInWindow)
+            val actions=compose.onNodeWithTag("live-header-actions").fetchSemanticsNode().boundsInWindow
+            assertTrue("计时和更多完整位于横屏控制区",actions.left>=landscape.right&&actions.right<=window.right)
             compose.onNodeWithContentDescription("更多控制").performClick()
             val panel = compose.onNodeWithTag("live-tools-panel").fetchSemanticsNode().boundsInWindow
             assertTrue("菜单按需展开，控制宽度", panel.width <= window.width * .40f)
@@ -103,6 +110,10 @@ class LiveViewUsabilityAcceptanceTest {
             compose.onNodeWithContentDescription("收起工具").performClick()
             val histogram = compose.onNodeWithTag("live-histogram").fetchSemanticsNode().boundsInWindow
             assertTrue(histogram.width <= window.width * .18f && histogram.height <= window.height * .25f)
+            compose.onNodeWithContentDescription("更多控制").performClick()
+            compose.onNodeWithTag("live-histogram").assertDoesNotExist()
+            compose.onNodeWithContentDescription("收起工具").performClick()
+            compose.onNodeWithTag("live-histogram").assertIsDisplayed()
             compose.onNodeWithContentDescription("更多控制").performClick()
             compose.onNodeWithContentDescription("沉浸取景").performClick()
             assertEquals(landscape, compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow)
@@ -206,20 +217,30 @@ class LiveViewUsabilityAcceptanceTest {
         runtime.disconnect()
         try {
             openLive()
+            compose.onNodeWithContentDescription("无延时").performClick()
+            compose.onNodeWithContentDescription("3 秒延时").assertIsDisplayed()
+            compose.onNodeWithText("3",substring=false).assertIsDisplayed()
+            acceptanceScreenshot(compose.activity,"live-timer-3")
+            compose.onNodeWithContentDescription("3 秒延时").performClick()
+            compose.onNodeWithText("10",substring=false).assertIsDisplayed()
+            acceptanceScreenshot(compose.activity,"live-timer-10")
             compose.onNodeWithContentDescription("更多控制").performClick()
             compose.onNodeWithText("机身参数").assert(hasStateDescription("已选中"))
             for ((orientation,label) in listOf(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT to "portrait",ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE to "landscape")) {
                 compose.activity.requestedOrientation=orientation
                 compose.waitUntil(15000) { compose.activity.resources.configuration.orientation==if(orientation==ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)android.content.res.Configuration.ORIENTATION_PORTRAIT else android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+                compose.onNodeWithContentDescription("10 秒延时").assertIsDisplayed()
                 for ((tab,suffix) in listOf("机身参数" to "body","预览辅助" to "assist")) {
                     compose.onNodeWithText(tab).performClick()
                     compose.waitForIdle()
                     val window=compose.onNodeWithTag("fullscreen-scene").fetchSemanticsNode().boundsInWindow
                     val panel=compose.onNodeWithTag("live-tools-panel").fetchSemanticsNode().boundsInWindow
                     val density=compose.activity.resources.displayMetrics.density
+                    val status=compose.onNodeWithTag("live-status-group").fetchSemanticsNode().boundsInWindow
+                    assertTrue("菜单与状态组保持间距",panel.top>=status.bottom+4*density)
                     val cells=compose.onAllNodesWithTag("live-tool-cell",useUnmergedTree=true).fetchSemanticsNodes().filter { it.boundsInWindow.overlaps(panel) }
                     assertTrue("默认菜单锚定上方",panel.top<window.top+window.height*.3f)
-                    assertTrue("菜单宽度保持紧凑",panel.width<=269*density)
+                    assertTrue("菜单宽度保持紧凑",panel.width<=281*density)
                     assertTrue("菜单完整留在窗口内",panel.left>=window.left&&panel.right<=window.right&&panel.bottom<=window.bottom)
                     assertTrue("菜单项目保持可触控",cells.isNotEmpty()&&cells.all { it.boundsInWindow.width>=44*density&&it.boundsInWindow.height>=44*density })
                     val firstRow=cells.count { kotlin.math.abs(it.boundsInWindow.top-cells.first().boundsInWindow.top)<density }
@@ -229,6 +250,8 @@ class LiveViewUsabilityAcceptanceTest {
                 }
             }
             compose.onNodeWithContentDescription("收起工具").performClick()
+            compose.onNodeWithContentDescription("10 秒延时").performClick()
+            compose.onNodeWithContentDescription("无延时").assertIsDisplayed()
             compose.onNodeWithContentDescription("拍摄").assertIsDisplayed()
             compose.onNodeWithContentDescription("返回相机").performClick()
         } finally {

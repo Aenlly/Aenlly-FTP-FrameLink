@@ -4,7 +4,7 @@
 
 连接相机、看图选片、按需导入。FrameLink是从Aenlly-FTP继续开发的开源相机助手，保留FTP收发，也提供无线取景、客户现场选片和可选的云端交付。
 
-**Android 0.1.25／iOS 0.1.12源码候选（设备包0.1.10）** · Android 17适配（最低8.0） · iOS 17+工程 · GPL-3.0
+**Android 0.1.25／iOS 0.1.13源码候选（设备包0.1.10）** · Android 17适配（最低8.0） · iOS 17+工程 · GPL-3.0
 
 ## 看看界面
 | 相机 | 图库 | 大图 |
@@ -35,7 +35,7 @@
 - **佳能CCAPI（实验）**：启用机身CCAPI后填写HTTP地址、端口及可选认证。EOS850D是待测目标，当前通过独立服务与Android流程模拟，尚无对应机身结果。
 - **USB读卡（实验）**：手机通过OTG读取PTP/MTP设备，浏览并导入原片；不提供遥控。X-T30 II是待验目标，未据此支持富士无线遥控。系统已挂载的存储卡可使用“本机导入”。
 
-新增CCAPI和USB入口目前仅Android。[连接说明](android/README.md#连接相机) · [通道与验收表](docs/CAMERA_BACKENDS.md)
+CCAPI已有Android软件实现，iOS源码候选接入只读链路，尚无对应IPA；USB入口仍仅Android。[连接说明](android/README.md#连接相机) · [通道与验收表](docs/CAMERA_BACKENDS.md)
 
 普通FTP用于可信局域网；显式FTPS验证证书。iOS接收需要保持App前台。传输失败可重试，续传能力依通道而定，见连接说明。
 

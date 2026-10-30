@@ -1,6 +1,18 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  func testSelectingCanonProtocolClearsSonyCredentialsAndKeepsSaveOff() throws {
+    continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-foundations"]; app.launch()
+    app.buttons["相机连接设置"].tap(); app.buttons["qa-a.local:15740 · qa-user-a"].tap()
+    app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "连接协议")).firstMatch.tap()
+    app.buttons["Canon CCAPI（实验）"].tap()
+    app.switches["相机要求访问认证"].tap()
+    assertEmpty(app.textFields["相机用户名"]); assertEmpty(app.secureTextFields["相机密码"])
+    XCTAssertEqual(String(describing: app.switches["保存此连接的账号和密码"].value ?? ""), "0")
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "HTTP认证")).firstMatch.exists)
+    captureBoundaryEvidence(app, name: "canon-protocol-no-sony-credentials")
+  }
   func testCameraIndexShowsRangeTotalAndFillsWithoutScrollingBeforeSelectAll() throws {
     continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-camera-index-fixture"]; app.launch()

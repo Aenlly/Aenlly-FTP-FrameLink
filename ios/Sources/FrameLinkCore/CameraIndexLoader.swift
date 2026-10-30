@@ -6,8 +6,9 @@ public struct CameraIndexScope: Equatable, Sendable {
   public let slot: Int
   public let day: String
   public let mediaScope: String?
-  public init(deviceID: String, source: Int = 1, slot: Int = 1, day: String = "", mediaScope: String? = nil) {
-    self.deviceID = deviceID; self.source = source; self.slot = slot; self.day = day; self.mediaScope = mediaScope
+  public let dateSource: String?
+  public init(deviceID: String, source: Int = 1, slot: Int = 1, day: String = "", mediaScope: String? = nil, dateSource: String? = nil) {
+    self.deviceID = deviceID; self.source = source; self.slot = slot; self.day = day; self.mediaScope = mediaScope; self.dateSource = dateSource
   }
 }
 public struct CameraIndexState: Sendable {
@@ -25,7 +26,8 @@ public struct CameraIndexState: Sendable {
     if mediaScope == "AUTOSAVE_PENDING_BATCH" { return "待传批次" }
     guard mediaScope == nil || mediaScope?.isEmpty == true else { return "当前相机索引范围" }
     guard let scope else { return "相机索引范围" }
-    return "相机索引 · 卡\(scope.slot) · " + (scope.day.isEmpty ? "全部日期" : scope.day)
+    let modified = scope.dateSource == "FILE_MODIFIED"
+    return "相机索引 · 卡\(scope.slot) · " + (scope.day.isEmpty ? (modified ? "全部文件修改日期" : "全部日期") : (modified ? "文件修改日期 " : "") + scope.day)
   }
   public func countText(matched: Int, filtered: Bool) -> (title: String, detail: String) {
     guard scope != nil else { return ("相机未连接", "连接后显示当前范围数量") }

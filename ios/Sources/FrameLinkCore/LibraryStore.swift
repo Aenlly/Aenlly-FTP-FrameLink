@@ -66,7 +66,7 @@ public final class LibraryStore: ObservableObject {
     }
   }
   public var importedPhotos: [Photo] {
-    photos.filter(\.inLibrary).sorted { $0.capturedAt > $1.capturedAt }
+    photos.filter(\.inLibrary).sorted { $0.orderingDate > $1.orderingDate }
   }
   public func save() throws {
     guard canSave else { throw LibraryError.corruptedIndex }

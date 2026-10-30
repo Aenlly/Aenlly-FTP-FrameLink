@@ -405,7 +405,7 @@ struct LiveCameraView: View {
     } label: {
       Circle().fill(.white).padding(6).overlay(Circle().stroke(.white, lineWidth: 2)).frame(
         width: size, height: size)
-    }.accessibilityLabel("拍摄").disabled(model.cameraInfo?.canCapture != true)
+    }.accessibilityLabel("拍摄").disabled(!model.cameraClientCapabilities.canCapture)
   }
   private func rank(_ code: Int) -> Int {
     [0x5007: 0, 0xD20D: 1, 0x500D: 1, 0xD21E: 2, 0x500F: 2, 0x5010: 3][code] ?? 10 + code

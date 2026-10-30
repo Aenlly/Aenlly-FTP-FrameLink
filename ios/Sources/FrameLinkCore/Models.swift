@@ -9,9 +9,11 @@ public struct CameraFile: Codable, Hashable, Sendable {
   public var localPath: String?
   public var cameraPath: String?
   public var cameraDay: String?
+  public var fileModifiedAt: Int64?
+  public var fileDay: String?
   public init(
     fileId: Int = 0, name: String, size: Int64 = 0, localPath: String? = nil,
-    cameraPath: String? = nil, cameraDay: String? = nil
+    cameraPath: String? = nil, cameraDay: String? = nil, fileModifiedAt: Int64? = nil, fileDay: String? = nil
   ) {
     self.fileId = fileId
     self.name = name
@@ -19,6 +21,7 @@ public struct CameraFile: Codable, Hashable, Sendable {
     self.localPath = localPath
     self.cameraPath = cameraPath
     self.cameraDay = cameraDay
+    self.fileModifiedAt = fileModifiedAt; self.fileDay = fileDay
   }
   public var isRaw: Bool {
     ["ARW", "DNG", "NEF", "CR2", "CR3", "RAF"].contains(
@@ -67,6 +70,11 @@ public struct Photo: Codable, Identifiable, Hashable, Sendable {
     self.contentId = contentId
   }
   public var imported: Bool { files.contains { $0.localPath != nil } }
+  /// File modification time is only an ordering fallback, never written into capture time.
+  public var orderingDate: Date {
+    if capturedAt.timeIntervalSince1970 > 0 { return capturedAt }
+    return Date(timeIntervalSince1970: Double(files.compactMap(\.fileModifiedAt).max() ?? 0) / 1000)
+  }
   public var inLibrary: Bool { !hidden && (imported || source == .capture) }
   public var formatTitle: String {
     files.reduce(into: [String]()) { value, file in
@@ -168,6 +176,8 @@ public struct CameraInfo: Codable, Sendable {
   public let canCapture: Bool
   public let canLiveView: Bool
   public let mediaScope: String?
+  public let manufacturer: String?
+  public let dateSource: String?
 }
 public struct RemotePhoto: Codable, Sendable {
   public let id: String
@@ -219,6 +229,7 @@ public struct CameraIdentity: Codable, Sendable {
   public let algorithm: String
 }
 public struct CameraConfig: Codable, Sendable {
+  public var protocolID = CameraProtocol.sony
   public var host = ""
   public var port = 15740
   public var user = ""
@@ -226,6 +237,17 @@ public struct CameraConfig: Codable, Sendable {
   public var fingerprint = ""
   public var guid = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
   public init() {}
+  private enum CodingKeys: String, CodingKey { case protocolID = "protocol", host, port, user, password, fingerprint, guid }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    protocolID = values.contains(.protocolID) ? try values.decode(String.self, forKey: .protocolID) : CameraProtocol.sony
+    host = try values.decodeIfPresent(String.self, forKey: .host) ?? ""
+    port = try values.decodeIfPresent(Int.self, forKey: .port) ?? (protocolID == CameraProtocol.canon ? 8080 : 15740)
+    user = try values.decodeIfPresent(String.self, forKey: .user) ?? ""
+    password = try values.decodeIfPresent(String.self, forKey: .password) ?? ""
+    fingerprint = try values.decodeIfPresent(String.self, forKey: .fingerprint) ?? ""
+    guid = try values.decodeIfPresent(String.self, forKey: .guid) ?? guid
+  }
 }
 public struct FTPProfile: Codable, Sendable {
   public var host = ""

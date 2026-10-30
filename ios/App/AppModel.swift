@@ -18,6 +18,8 @@ final class AppModel: ObservableObject {
   private var credentialResetConfig: CameraConfig?
   let camera = NativeTransport()
   @Published var cameraInfo: CameraInfo?
+  @Published private(set) var cameraProtocolID = CameraProtocol.sony
+  var cameraClientCapabilities: CameraClientCapabilities { CameraConnectionPolicy.capabilities(info: cameraInfo, protocolID: cameraProtocolID) }
   @Published var cameraIDs: Set<String> = []
   @Published var cameraHasMore = false
   @Published var cameraLoading = false
@@ -177,16 +179,15 @@ final class AppModel: ObservableObject {
     guard cameraInfo == nil else { return false }
     guard !cameraRequiresCredentials() else { return false }
     let saved = savedCamera()
-    guard
-      !saved.host.isEmpty
-        && (saved.user.isEmpty || (!saved.password.isEmpty && !saved.fingerprint.isEmpty))
-    else { return false }
+    guard CameraConnectionPolicy.canReconnect(saved) else { return false }
     connect(saved, openSettingsOnFailure: true, onReady: onReady)
     return true
   }
   func connect(
-    _ config: CameraConfig, openSettingsOnFailure: Bool = false, onReady: (() -> Void)? = nil, rememberCredentials: Bool? = nil
+    _ input: CameraConfig, openSettingsOnFailure: Bool = false, onReady: (() -> Void)? = nil, rememberCredentials: Bool? = nil
   ) {
+    let config: CameraConfig
+    do { config = try CameraConnectionPolicy.wireConfig(input) } catch { notice = error.localizedDescription; return }
     let remember = rememberCredentials ?? ((try? connections.isSaved(config)) ?? false)
     let borrowed = !config.fingerprint.isEmpty || ((try? connections.isSaved(config)) ?? false)
     credentialResetConfig = nil
@@ -200,7 +201,7 @@ final class AppModel: ObservableObject {
     Task {
       do {
         var verified = config
-        if !config.user.isEmpty {
+        if CameraConnectionPolicy.requiresSSHIdentity(config) {
           let identity = try await camera.identity(config.host)
           guard token == generation else { return }
           let stored = !config.fingerprint.isEmpty ? config.fingerprint : ((try? vault.read("trust:\(config.host)", as: String.self)) ?? "")
@@ -218,12 +219,14 @@ final class AppModel: ObservableObject {
         }
         let info = try await camera.connect(verified)
         guard token == generation else { return }
+        try CameraConnectionPolicy.validate(info: info, config: verified)
         try connections.completeCamera(verified, identity: verified.fingerprint.isEmpty ? info.id : verified.fingerprint, remember: remember)
-        let values = try await camera.properties()
+        let values = verified.protocolID == CameraProtocol.sony ? try await camera.properties() : []
         guard token == generation else { return }
         properties = values
         cameraInfo = info
-        cameraMessage = "已连接 \(info.displayName)"
+        cameraProtocolID = verified.protocolID
+        cameraMessage = "已连接 \(info.displayName)" + (verified.protocolID == CameraProtocol.canon ? " · CCAPI实验只读" : "")
         connecting = false
         let ready = afterConnect
         afterConnect = nil
@@ -242,7 +245,7 @@ final class AppModel: ObservableObject {
         guard token == generation else { return }
         connecting = false
         camera.close()
-        cameraMessage = "连接未完成，请检查相机地址、网络与遥控设置"
+        cameraMessage = config.protocolID == CameraProtocol.canon ? "CCAPI连接未完成，请检查机身启用、地址、端口及HTTP认证" : "连接未完成，请检查相机地址、网络与遥控设置"
         if openSettingsOnFailure {
           connectionFailure = "未能直接重连，请检查保存的地址和相机设置"
           needsConnectionSettings = true
@@ -253,7 +256,7 @@ final class AppModel: ObservableObject {
     }
   }
   func confirmIdentity() {
-    guard let identity = identityPrompt, var config = pendingConfig else { return }
+    guard let identity = identityPrompt, var config = pendingConfig, config.protocolID == CameraProtocol.sony else { return }
     do {
       try vault.write(identity.fingerprint, name: "trust:\(config.host)")
       config.fingerprint = identity.fingerprint
@@ -278,6 +281,7 @@ final class AppModel: ObservableObject {
     stopLive()
     camera.close()
     cameraInfo = nil
+    cameraProtocolID = CameraProtocol.sony
     cameraIndex.invalidate()
     properties = []
     connecting = false
@@ -310,7 +314,7 @@ final class AppModel: ObservableObject {
   }
   private func configureCameraIndex(force: Bool = false) {
     guard let info = cameraInfo else { return }
-    let scope = CameraIndexScope(deviceID: info.id, source: gallerySource, slot: cameraSlot, day: cameraDay, mediaScope: info.mediaScope)
+    let scope = CameraIndexScope(deviceID: info.id, source: gallerySource, slot: cameraSlot, day: cameraDay, mediaScope: info.mediaScope, dateSource: info.dateSource)
     if force || cameraIndex.state.scope != scope { cameraIndex.reset(scope: scope) }
   }
   func setCameraRange(slot: Int, day: String) {
@@ -441,7 +445,7 @@ final class AppModel: ObservableObject {
     }
   }
   func startLive() {
-    guard cameraInfo?.canLiveView == true else {
+    guard cameraClientCapabilities.canLiveView else {
       notice = "该连接未提供取景能力，可使用照片浏览或FTP接收"
       return
     }
@@ -479,7 +483,7 @@ final class AppModel: ObservableObject {
     UIApplication.shared.isIdleTimerDisabled = receiverRunning
   }
   func setProperty(_ property: CameraProperty, value: Int64) {
-    guard !propertyUpdating, property.writable,
+    guard cameraClientCapabilities.canSetProperties, !propertyUpdating, property.writable,
       property.choices.contains(where: { $0.value == value })
     else { return }
     propertyUpdating = true
@@ -497,6 +501,7 @@ final class AppModel: ObservableObject {
     }
   }
   func capture() {
+    guard cameraClientCapabilities.canCapture else { notice = "当前连接仅支持浏览与导入，未开放拍摄"; return }
     Task {
       do {
         try await camera.capture()
@@ -523,6 +528,7 @@ final class AppModel: ObservableObject {
     }
   }
   func enqueueDownloads(ids: Set<String>, raw: Bool, all: Bool = false) {
+    guard cameraClientCapabilities.canDownload else { notice = "当前连接未提供原片导入能力"; return }
     do {
       try library.upsertTask(
         TransferTask(

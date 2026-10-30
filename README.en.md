@@ -4,7 +4,7 @@
 
 Connect a camera, review photos, and import the ones you want. FrameLink builds on Aenlly-FTP, keeping FTP transfers while adding wireless live view, local client selections, and optional cloud delivery.
 
-**Android 0.1.25 / iOS 0.1.12 source candidate (device package: 0.1.10)** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
+**Android 0.1.25 / iOS 0.1.13 source candidate (device package: 0.1.10)** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
 
 ## Preview
 | Camera | Gallery | Viewer |
@@ -35,7 +35,7 @@ Local features need no account. Originals retain their bytes; previews and compr
 - **Canon CCAPI, experimental**: enable CCAPI and enter the HTTP address, port, and optional credentials. EOS 850D is a hardware-test target; current evidence comes from an independent service and Android integration tests.
 - **USB reader, experimental**: use phone OTG to browse and import from PTP/MTP devices. This is read-only media access, not remote shooting. X-T30 II hardware testing remains pending; Fujifilm wireless control is not implemented. Use local import for system-mounted storage.
 
-The new CCAPI and USB entries are Android-only. [Connection guide](android/README.md#连接相机) · [Transport and validation matrix](docs/CAMERA_BACKENDS.md)
+CCAPI has Android software support and a read-only iOS source candidate, with no corresponding IPA yet. USB remains Android-only. [Connection guide](android/README.md#连接相机) · [Transport and validation matrix](docs/CAMERA_BACKENDS.md)
 
 Use plain FTP on a trusted local network; explicit FTPS validates certificates. iOS reception requires the app to stay in the foreground. Retry and resume behavior depends on the transport; see the connection guide.
 

@@ -60,7 +60,7 @@ final class NativeTransport: @unchecked Sendable {
   }
   func connect(_ config: CameraConfig) async throws -> CameraInfo {
     try await perform {
-      let raw = try Self.json(config)
+      let raw = try CameraConnectionPolicy.encode(config)
       return try Self.decode(
         Self.result { self.session.connect(raw, error: $0) }, as: CameraInfo.self)
     }

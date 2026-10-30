@@ -75,7 +75,7 @@ public enum ConnectionProfileError: LocalizedError {
     try write(value); try clearLegacy(); return value
   }
   private func write(_ value: Snapshot) throws { try vault.write(value, name: key) }
-  private func cameraKey(_ config: CameraConfig, identity: String) -> String { connectionKey(["sony", config.host.lowercased(), String(config.port), identity]) }
+  private func cameraKey(_ config: CameraConfig, identity: String) -> String { connectionKey([config.protocolID == CameraProtocol.sony ? "sony" : config.protocolID, config.host.lowercased(), String(config.port), identity]) }
   public func cameras() throws -> [SavedConnection<CameraConfig>] { try read().cameras }
   public func ftpProfiles() throws -> [SavedConnection<FTPProfile>] { try read().ftp }
   public func receiverProfiles() throws -> [SavedConnection<ReceiverSettings>] { try read().receivers }
@@ -89,10 +89,11 @@ public enum ConnectionProfileError: LocalizedError {
   public func cameraRequiresCredentials() throws -> Bool { let value = try read(); return value.cameraAuthRequired && !value.cameras.contains { $0.id == value.cameraID } }
   public func lastFTP() throws -> FTPProfile { let value = try read(); return value.ftp.first { $0.id == value.ftpID }?.config ?? value.lastFTP }
   public func lastReceiver() throws -> ReceiverSettings { let value = try read(); return value.receivers.first { $0.id == value.receiverID }?.config ?? value.lastReceiver }
-  public func isSaved(_ camera: CameraConfig) throws -> Bool { try read().cameras.contains { $0.config.host == camera.host && $0.config.port == camera.port && $0.config.fingerprint == camera.fingerprint && $0.config.user == camera.user && $0.config.password == camera.password } }
-  public func completeCamera(_ config: CameraConfig, identity: String, remember: Bool) throws {
+  public func isSaved(_ camera: CameraConfig) throws -> Bool { try read().cameras.contains { $0.config.protocolID == camera.protocolID && $0.config.host == camera.host && $0.config.port == camera.port && $0.config.fingerprint == camera.fingerprint && $0.config.user == camera.user && $0.config.password == camera.password } }
+  public func completeCamera(_ original: CameraConfig, identity: String, remember: Bool) throws {
+    let config = try CameraConnectionPolicy.wireConfig(original)
     var value = try read(); let id = cameraKey(config, identity: identity)
-    value.cameras.removeAll { $0.identity.isEmpty && $0.config.host == config.host && $0.config.port == config.port && $0.config.user == config.user && $0.config.password == config.password }
+    value.cameras.removeAll { $0.config.protocolID == config.protocolID && $0.identity.isEmpty && $0.config.host == config.host && $0.config.port == config.port && $0.config.user == config.user && $0.config.password == config.password }
     if remember { value.cameras.removeAll { $0.id == id }; value.cameras.insert(SavedConnection(id: id, config: config, identity: identity), at: 0) }
     else { value.cameras.removeAll { $0.id == id } }
     value.lastCamera = config; value.lastCamera.user = ""; value.lastCamera.password = ""

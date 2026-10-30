@@ -155,14 +155,14 @@ struct CameraHomeView: View {
             title: "选片下载", subtitle: "先看照片，按需导入", icon: "photo.stack", primary: true,
             action: goGallery)
           HomeAction(
-            title: "取景拍摄", subtitle: "画面优先，轻松遥控", icon: "viewfinder",
+            title: "取景拍摄", subtitle: model.cameraProtocolID == CameraProtocol.canon ? "CCAPI实验通道 · 当前只读" : "画面优先，轻松遥控", icon: "viewfinder",
             action: {
               if model.cameraInfo != nil {
-                live = true
-              } else if !model.reconnectSaved(onReady: { live = true }) {
+                live = model.cameraClientCapabilities.canLiveView
+              } else if !model.reconnectSaved(onReady: { live = model.cameraClientCapabilities.canLiveView }) {
                 connect = true
               }
-            })
+            }).disabled(model.cameraInfo != nil && !model.cameraClientCapabilities.canLiveView)
         }
         GlassCard {
           VStack(spacing: 16) {
@@ -279,13 +279,24 @@ struct ConnectCameraView: View {
             ForEach(profiles) { record in
               HStack {
                 Button(record.config.host + ":" + String(record.config.port) + " · " + record.config.user) { config = record.config; selectedProfile = record.id; rememberCredentials = true; secure = !config.user.isEmpty }
+                Text(CameraProtocol.title(record.config.protocolID)).font(.caption2).foregroundStyle(.secondary)
                 Spacer()
                 Button { do { try model.connections.forgetCamera(record.id); profiles = try model.connections.cameras(); if selectedProfile == record.id { selectedProfile = ""; config.user = ""; config.password = ""; rememberCredentials = false } } catch { model.notice = error.localizedDescription } } label: { Image(systemName: "xmark.circle").accessibilityLabel("忘记连接 " + record.config.host) }
               }
             }
           }.disabled(model.connecting || model.identityPrompt != nil)
         }
-        Section { Text("手机和相机接入同一个Wi-Fi，在相机开启电脑遥控或相应的无线控制功能。").font(.subheadline) }
+        Section("连接通道") {
+          Picker("连接协议", selection: Binding(get: { config.protocolID }, set: { value in
+            config = ConnectionFormEditing.cameraProtocol(config, protocolID: value)
+            selectedProfile = ""; rememberCredentials = false; secure = value == CameraProtocol.sony
+          })) {
+            Text("Sony网络").tag(CameraProtocol.sony)
+            Text("Canon CCAPI（实验）").tag(CameraProtocol.canon)
+            if !CameraProtocol.supported(config.protocolID) { Text("未识别协议，请重新选择").tag(config.protocolID) }
+          }.disabled(model.connecting || model.identityPrompt != nil)
+          Text(config.protocolID == CameraProtocol.canon ? "在机身启用CCAPI，手机与相机加入同一网络。当前仅开放浏览、预览与原片导入，EOS850D实机仍待验。" : config.protocolID == CameraProtocol.sony ? "手机和相机接入同一个Wi-Fi，在相机开启电脑遥控或相应的无线控制功能。" : "此协议未接入，请重新选择；已有配置保留。").font(.subheadline)
+        }
         if !model.connectionFailure.isEmpty {
           Section { Text(model.connectionFailure).font(.footnote).foregroundStyle(.red) }
         }
@@ -306,7 +317,7 @@ struct ConnectCameraView: View {
             PasswordField(title: "相机密码", text: $config.password)
           }
         } footer: {
-          Text("首次读取相机身份后确认。未勾选保存时，账号密码仅用于本次连接。")
+          Text(config.protocolID == CameraProtocol.canon ? "按机身设置填写HTTP认证账号密码；不使用索尼SSH指纹。未勾选保存时仅用于本次连接。" : "首次读取相机身份后确认。未勾选保存时，账号密码仅用于本次连接。")
         }
         Toggle("保存此连接的账号和密码", isOn: Binding(get: { rememberCredentials }, set: { value in
           if !value && !selectedProfile.isEmpty { do { try model.connections.forgetCamera(selectedProfile); profiles = try model.connections.cameras(); selectedProfile = "" } catch { model.notice = error.localizedDescription; return } }
@@ -322,6 +333,7 @@ struct ConnectCameraView: View {
             dismiss()
           }.disabled(
             config.host.trimmingCharacters(in: .whitespaces).isEmpty
+              || !CameraProtocol.supported(config.protocolID)
               || !(1...65535).contains(config.port)
               || (secure
                 && (config.user.trimmingCharacters(in: .whitespaces).isEmpty
@@ -329,7 +341,7 @@ struct ConnectCameraView: View {
           )
         }
         Section {
-          Text("当前无线控制使用索尼协议适配器。机型或固件不兼容时，可改用FTP接收或本地导入。").font(.caption).foregroundStyle(
+          Text("CCAPI依机型、固件和机身启用条件而定，不代表所有佳能相机均可连接。也可使用FTP接收或本地导入。").font(.caption).foregroundStyle(
             .secondary)
         }
       }.navigationTitle("连接相机").navigationBarTitleDisplayMode(.inline).toolbar {
@@ -344,9 +356,9 @@ struct ConnectCameraView: View {
       }.onAppear {
         config = model.savedCamera()
         profiles = (try? model.connections.cameras()) ?? []
-        selectedProfile = profiles.first { $0.config.host == config.host && $0.config.port == config.port && $0.config.fingerprint == config.fingerprint && $0.config.user == config.user && $0.config.password == config.password }?.id ?? ""
+        selectedProfile = profiles.first { $0.config.protocolID == config.protocolID && $0.config.host == config.host && $0.config.port == config.port && $0.config.fingerprint == config.fingerprint && $0.config.user == config.user && $0.config.password == config.password }?.id ?? ""
         rememberCredentials = !selectedProfile.isEmpty
-        secure = !config.user.isEmpty || config.host.isEmpty || model.cameraRequiresCredentials()
+        secure = !config.user.isEmpty || (config.protocolID == CameraProtocol.sony && config.host.isEmpty) || model.cameraRequiresCredentials()
       }
     }
   }
@@ -369,6 +381,7 @@ struct SettingsView: View {
       }
       Section("连接能力") {
         Text("索尼无线：相机内容、原片导入、实时取景与参数控制按设备能力显示。")
+        Text("Canon CCAPI实验：按机身HTTP端点提供只读浏览、预览及JPEG／CR3导入，取景和拍摄未接入iOS。")
         Text("FTP接收：适用于支持FTP上传的相机，不限定品牌。iOS接收需保持App前台。")
         Text("FTP客户端：支持FTP及显式FTPS，可浏览、上传、下载和新建文件夹。")
         Text("蓝牙快门与云端选片目前在Android端提供，iOS端尚未接入。")

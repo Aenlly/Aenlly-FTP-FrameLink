@@ -283,7 +283,7 @@ struct GalleryView: View {
       source == 0
       ? library.importedPhotos
       : library.photos.filter { model.cameraIDs.contains($0.id) }.sorted {
-        $0.capturedAt > $1.capturedAt
+        $0.orderingDate > $1.orderingDate
       }
     return candidates.filter {
       filter == 0 || (filter == 1 && library.selection.contains($0.id))
@@ -341,10 +341,10 @@ struct GalleryView: View {
       HStack {
         selectAllButton
         if source == 1 {
-          let count = model.cameraIndexState.countText(matched: photos.count, filtered: filter != 0)
-          VStack(alignment: .leading, spacing: 3) {
-            Text(count.title)
-            Text(count.detail).font(.caption2)
+          if model.cameraInfo != nil && !model.cameraClientCapabilities.canBrowse { Text("当前连接未提供照片浏览能力") }
+          else {
+            let count = model.cameraIndexState.countText(matched: photos.count, filtered: filter != 0)
+            VStack(alignment: .leading, spacing: 3) { Text(count.title); Text(count.detail).font(.caption2) }
           }
         } else { Text("\(photos.count) 张") }
         Spacer()
@@ -362,6 +362,8 @@ struct GalleryView: View {
           Button("连接相机") { if !model.reconnectSaved() { connect = true } }.buttonStyle(
             .borderedProminent)
         }
+      } else if source == 1 && !model.cameraClientCapabilities.canBrowse {
+        ContentUnavailableView("此连接未提供照片浏览", systemImage: "camera", description: Text("请核对机身已启用的功能及CCAPI端点，或使用FTP接收与本机导入。"))
       } else if source == 1 && photos.isEmpty && model.cameraLoading {
         ProgressView("正在读取照片索引").frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if photos.isEmpty && !dragging {
@@ -615,6 +617,7 @@ struct PhotoViewer: View {
                     + ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file) + " · "
                     + (file.localPath == nil ? "未导入" : "已导入")
                 ).font(.caption).foregroundStyle(.secondary)
+                if let day = file.fileDay, !day.isEmpty { Text("文件修改日期：" + day + "（非拍摄时间）").font(.caption).foregroundStyle(.secondary) }
               }
             }
           }

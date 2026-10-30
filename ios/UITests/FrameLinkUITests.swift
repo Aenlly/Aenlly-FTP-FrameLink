@@ -1,6 +1,18 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  func testCameraIndexShowsRangeTotalAndFillsWithoutScrollingBeforeSelectAll() throws {
+    continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-camera-index-fixture"]; app.launch()
+    app.buttons["图库"].tap()
+    XCTAssertTrue(app.staticTexts["共 250 张"].waitForExistence(timeout: 5))
+    XCTAssertFalse(app.staticTexts["共 100 张"].exists)
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "索引已完整")).firstMatch.waitForExistence(timeout: 8))
+    app.buttons["全选"].tap()
+    XCTAssertTrue(app.buttons["已选 250 ×"].waitForExistence(timeout: 5))
+    XCTAssertFalse(app.buttons["加载更多"].exists)
+    captureBoundaryEvidence(app, name: "camera-index-total-250")
+  }
   private func captureBoundaryEvidence(_ app: XCUIApplication, name: String) {
     let shot = XCUIScreen.main.screenshot()
     print("QA_WINDOW name=\(name) app=\(app.frame) imagePoints=\(shot.image.size) imageScale=\(shot.image.scale) os=\(ProcessInfo.processInfo.operatingSystemVersionString)")

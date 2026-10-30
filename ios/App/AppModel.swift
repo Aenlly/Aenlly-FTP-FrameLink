@@ -21,7 +21,22 @@ final class AppModel: ObservableObject {
   @Published var cameraIDs: Set<String> = []
   @Published var cameraHasMore = false
   @Published var cameraLoading = false
-  @Published var gallerySource = 0
+  @Published private(set) var cameraIndexState = CameraIndexState()
+  @Published var gallerySource = 0 {
+    didSet {
+      guard oldValue != gallerySource else { return }
+      cameraIndex.invalidate()
+      if gallerySource == 1, cameraInfo?.canBrowse == true { configureCameraIndex(); cameraIndex.startBackground() }
+    }
+  }
+  private var cameraSlot = 1
+  private var cameraDay = ""
+  private lazy var cameraIndex = CameraIndexLoader(library: library, fetch: { [weak self] scope, cursor in
+    guard let self else { throw CancellationError() }
+    return try await self.readCameraPage(scope: scope, cursor: cursor)
+  }, changed: { [weak self] state in
+    self?.cameraIndexState = state; self?.cameraIDs = state.ids; self?.cameraLoading = state.loading; self?.cameraHasMore = state.hasMore
+  })
   @Published var cameraMessage = "连接相机，浏览照片或开启取景"
   @Published var connecting = false
   @Published var needsConnectionSettings = false
@@ -59,7 +74,6 @@ final class AppModel: ObservableObject {
   private var liveTask: Task<Void, Never>?
   private var liveGeneration = UUID()
   private var generation = UUID()
-  private var cursor: Int64 = 0
   private var receiver = FLBridgeNewFTPReceiver()!
   private var receiverEvents: NativeReceiveEvents?
   private var ftp = FLBridgeNewFTPClient()!
@@ -147,6 +161,10 @@ final class AppModel: ObservableObject {
           }
         } catch { notice = error.localizedDescription }
       }
+      if acceptance && ProcessInfo.processInfo.arguments.contains("--ui-camera-index-fixture") {
+        cameraInfo = try? NativeTransport.decode("{\"id\":\"qa-index-camera\",\"model\":\"QA\",\"firmware\":\"fixture\",\"canBrowse\":true,\"canDownload\":false,\"canPreview\":false,\"canCapture\":false,\"canLiveView\":false}", as: CameraInfo.self)
+        gallerySource = 1
+      }
     #endif
   }
   func savedCamera() -> CameraConfig {
@@ -219,7 +237,7 @@ final class AppModel: ObservableObject {
             }
           }
         }
-        await loadCamera(reset: true)
+        if gallerySource == 1 { await loadCamera(reset: false) }
       } catch {
         guard token == generation else { return }
         connecting = false
@@ -260,9 +278,7 @@ final class AppModel: ObservableObject {
     stopLive()
     camera.close()
     cameraInfo = nil
-    cameraIDs = []
-    cameraHasMore = false
-    cameraLoading = false
+    cameraIndex.invalidate()
     properties = []
     connecting = false
     identityPrompt = nil
@@ -270,38 +286,51 @@ final class AppModel: ObservableObject {
     cameraMessage = "相机已断开，手机原片已保留"
   }
   func loadCamera(reset: Bool) async {
-    guard cameraInfo?.canBrowse == true, !cameraLoading else { return }
-    if !reset && !cameraHasMore { return }
+    guard gallerySource == 1, cameraInfo?.canBrowse == true else { return }
     let token = generation
-    cameraLoading = true
-    defer { if token == generation { cameraLoading = false } }
-    if reset {
-      cursor = 0
-      cameraIDs = []
-    }
+    configureCameraIndex(force: reset)
     do {
-      let page = try await camera.page(cursor: cursor)
+      try await cameraIndex.loadNext(retry: true)
       guard token == generation else { return }
-      try library.mergeCamera(page)
-      cameraIDs.formUnion(page.items.map(\.id))
-      cursor = page.nextCursor
-      cameraHasMore = cursor != 0
+      if gallerySource == 1 { cameraIndex.startBackground() }
+    } catch is CancellationError {
     } catch {
+      guard token == generation else { return }
       notice = error.localizedDescription
       if !camera.connected() { disconnect() }
     }
   }
   func readAllCameraPhotos() async throws {
     let token = generation
-    while cameraLoading { try await Task.sleep(nanoseconds: 50_000_000) }
-    while cameraHasMore {
-      try Task.checkCancellation()
-      guard token == generation, cameraInfo != nil else { throw CocoaError(.userCancelled) }
-      let previous = cursor
-      await loadCamera(reset: false)
-      if previous == cursor && cameraHasMore { throw CocoaError(.fileReadUnknown) }
-    }
+    guard gallerySource == 1, cameraInfo?.canBrowse == true else { throw CancellationError() }
+    configureCameraIndex()
+    try await cameraIndex.fillAll(retry: true)
     guard token == generation, cameraInfo != nil else { throw CocoaError(.userCancelled) }
+  }
+  private func configureCameraIndex(force: Bool = false) {
+    guard let info = cameraInfo else { return }
+    let scope = CameraIndexScope(deviceID: info.id, source: gallerySource, slot: cameraSlot, day: cameraDay, mediaScope: info.mediaScope)
+    if force || cameraIndex.state.scope != scope { cameraIndex.reset(scope: scope) }
+  }
+  func setCameraRange(slot: Int, day: String) {
+    guard cameraSlot != slot || cameraDay != day else { return }
+    cameraSlot = slot; cameraDay = day; cameraIndex.invalidate()
+    if gallerySource == 1, cameraInfo?.canBrowse == true { configureCameraIndex(); cameraIndex.startBackground() }
+  }
+  private func readCameraPage(scope: CameraIndexScope, cursor: Int64) async throws -> CameraPage {
+    #if DEBUG
+      if ProcessInfo.processInfo.arguments.contains("--ui-acceptance") && ProcessInfo.processInfo.arguments.contains("--ui-camera-index-fixture") {
+        if cursor > 0 { try await Task.sleep(nanoseconds: 800_000_000) }
+        let start = Int(cursor); let end = min(start + 100, 250)
+        let rows: [[String: Any]] = (start..<end).map { item in
+          ["id": "\(scope.deviceID):\(scope.slot):\(item)", "contentId": item, "slot": scope.slot, "capturedAt": 1_800_000_000_000 - item * 1000,
+           "files": [["fileId": 1, "name": "QA_INDEX_\(item).JPG", "size": 0], ["fileId": 2, "name": "QA_INDEX_\(item).ARW", "size": 0]]]
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["items": rows, "nextCursor": end == 250 ? 0 : end, "totalCount": 250])
+        return try JSONDecoder().decode(CameraPage.self, from: data)
+      }
+    #endif
+    return try await camera.page(slot: scope.slot, day: scope.day, cursor: cursor)
   }
   func previewURL(_ snapshot: Photo, large: Bool = false) async -> URL? {
     let epoch = previewEpoch
@@ -326,7 +355,7 @@ final class AppModel: ObservableObject {
     let relative = "previews/\(name)"
     guard let target = try? library.fileURL(relative) else { return nil }
     if FileManager.default.fileExists(atPath: target.path) { return target }
-    guard cameraInfo != nil, cameraIDs.contains(photo.id), photo.source == .camera,
+    guard cameraInfo?.canPreview == true, cameraIDs.contains(photo.id), photo.source == .camera,
       let file = photo.files.first(where: { !$0.isRaw }) ?? photo.files.first
     else { return photo.previewPath.flatMap { try? library.fileURL($0) } }
     do {

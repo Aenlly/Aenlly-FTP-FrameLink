@@ -101,6 +101,7 @@ struct SelectablePhotoGrid: View {
   var style: GalleryStyle = .medium
   var contextKey = ""
   var onDragging: (Bool) -> Void = { _ in }
+  var onNearEnd: () -> Void = {}
   var open: (Photo) -> Void
   @State private var frames: [String: CGRect] = [:]
   @State private var range: SelectionRange?
@@ -175,6 +176,7 @@ struct SelectablePhotoGrid: View {
                       key: CellFrames.self,
                       value: [photo.id: geometry.frame(in: .named("photo-grid"))])
                   })
+                .onAppear { if photo.id == displayedPhotos.last?.id { onNearEnd() } }
             }
           }.padding(style == .small ? 2 : 12)
         }.coordinateSpace(name: "photo-grid").scrollDisabled(range != nil)
@@ -295,7 +297,7 @@ struct GalleryView: View {
   }
   private var selectAllButton: some View {
     Button(allSelected ? "取消全选" : "全选", action: selectAll)
-      .disabled(photos.isEmpty || model.cameraLoading || selectingAll != nil)
+      .disabled(photos.isEmpty || selectingAll != nil)
   }
   private func selectAll() {
     let ids = Set(photos.map(\.id))
@@ -338,7 +340,13 @@ struct GalleryView: View {
       }.scrollIndicators(.hidden)
       HStack {
         selectAllButton
-        Text("\(photos.count) 张")
+        if source == 1 {
+          let count = model.cameraIndexState.countText(matched: photos.count, filtered: filter != 0)
+          VStack(alignment: .leading, spacing: 3) {
+            Text(count.title)
+            Text(count.detail).font(.caption2)
+          }
+        } else { Text("\(photos.count) 张") }
         Spacer()
         if source == 1 {
           Button("刷新") { Task { await model.loadCamera(reset: true) } }.disabled(
@@ -354,6 +362,8 @@ struct GalleryView: View {
           Button("连接相机") { if !model.reconnectSaved() { connect = true } }.buttonStyle(
             .borderedProminent)
         }
+      } else if source == 1 && photos.isEmpty && model.cameraLoading {
+        ProgressView("正在读取照片索引").frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if photos.isEmpty && !dragging {
         ContentUnavailableView(
           "暂无照片", systemImage: "photo",
@@ -361,13 +371,15 @@ struct GalleryView: View {
       } else {
         SelectablePhotoGrid(
           photos: photos, selection: $library.selection, style: layout,
-          contextKey: "\(source):\(filter):\(layoutKey):\(model.cameraInfo?.id ?? "")",
-          onDragging: { dragging = $0 }
+          contextKey: "\(source):\(filter):\(layoutKey):\(model.cameraInfo?.id ?? ""):\(model.cameraIndexState.scope?.slot ?? 1):\(model.cameraIndexState.scope?.day ?? "")",
+          onDragging: { dragging = $0 },
+          onNearEnd: { if source == 1 && model.cameraIndexState.error == nil && model.cameraHasMore { Task { await model.loadCamera(reset: false) } } }
         ) { viewer = $0 }
       }
       if source == 1 && model.cameraInfo != nil && model.cameraHasMore {
-        Button("加载更多") { Task { await model.loadCamera(reset: false) } }.font(.footnote).padding(
-          .bottom, 6)
+        if let error = model.cameraIndexState.error {
+          Button("读取中断，点此重试") { Task { await model.loadCamera(reset: false) } }.font(.footnote).help(error).padding(.bottom, 6)
+        } else { Text(model.cameraLoading ? "正在补齐索引" : "正在准备照片列表").font(.footnote).foregroundStyle(.secondary).padding(.bottom, 6) }
       }
     }
   }

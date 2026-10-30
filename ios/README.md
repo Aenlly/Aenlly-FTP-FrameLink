@@ -7,6 +7,7 @@ SwiftUI原生应用，最低iOS17，适配iPhone与iPad。四个入口为相机�
 ## 当前范围
 
 - 索尼PTP/IP＋SSH连接、首次指纹确认、可选Keychain多设备账号保存，卡内分页、预览、原片下载、取景与中文参数
+- 当前范围总数与后台轻量索引共用取页流程，筛选未补齐时显示已匹配数量及统计进度；缩略图仍按可见范围读取，不批量下载原片
 - 本地文件导入、网格／列表与大图共享选择，小中大缩略图、独立格式与导入状态、长按拖选、收藏、命名批次和图文单
 - 大图“查看原片”仅缓存JPEG，不改变导入状态或下载任务数量；正式导入校验后复用。预览缓存上限约2GiB，设置中可手动清理，RAW不复用JPEG缓存
 - 文件信息读取ISO、快门、光圈、焦距、镜头、机型、时间、像素尺寸与GPS；无记录不补值，不请求手机定位。地图仅在坐标及基准可识别时由用户主动打开
@@ -22,6 +23,8 @@ SwiftUI原生应用，最低iOS17，适配iPhone与iPad。四个入口为相机�
 0.1.10修正慢快门时长、取消后的导入发布，以及同一照片落盘后的参数刷新。缓存复制与原片下载共用发布检查，独立暂存文件在取消后清理，先成功的文件保留。40项核心测试通过，UI与iPhone交互仍待验。[修正记录](../docs/acceptance/2026-10-31-ios-import-publication-0.1.10.md)
 
 模拟器阻断已定位为Xcode27.2系统组件未更新，官方安装流程正等待管理员认证。[环境恢复及专项验收](../docs/acceptance/2026-10-31-ios-simulator-environment.md)
+
+0.1.11当前是源码候选：48项核心测试及基于真实Go生成头文件的Swift源码类型检查通过。随附旧框架不包含新版分页入口，需在环境恢复后运行构建脚本重新生成二进制框架，再验证App链接和UI；未提供0.1.11 IPA，现有设备包仍为0.1.10。[分页同步范围](../docs/acceptance/2026-10-31-ios-camera-index-0.1.11.md)
 
 ## 构建与运行
 
@@ -48,6 +51,10 @@ swift run --package-path ios FrameLinkCoreCheck
 python3 scripts/check-ios-ui.py --device <专用模拟器UDID>
 # 只运行凭据、参数刷新与缓存清理四项，不连接真实相机
 python3 scripts/check-ios-ui.py --suite boundaries --device <FrameLink-QA专用UDID>
+# 合成250张相机索引的独立UI用例
+python3 scripts/check-ios-ui.py --suite index --device <FrameLink-QA专用UDID>
+# 安装认证未完成时可先检查源码，不启动模拟器或安装器
+python3 scripts/check-ios-source.py
 ```
 
 `FrameLinkCore`保存原子JSON索引、相对文件路径、原片、选择记录与任务。运行中的任务在重启后变为“已中断”，由用户重试。核心检查程序可以在仅有Swift命令行工具时执行；UI与协议桥编译需要完整Xcode。

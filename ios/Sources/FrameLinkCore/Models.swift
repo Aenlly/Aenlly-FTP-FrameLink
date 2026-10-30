@@ -167,6 +167,7 @@ public struct CameraInfo: Codable, Sendable {
   public let canPreview: Bool
   public let canCapture: Bool
   public let canLiveView: Bool
+  public let mediaScope: String?
 }
 public struct RemotePhoto: Codable, Sendable {
   public let id: String
@@ -184,6 +185,19 @@ public struct RemotePhoto: Codable, Sendable {
 public struct CameraPage: Codable, Sendable {
   public let items: [RemotePhoto]
   public let nextCursor: Int64
+  public let totalCount: Int?
+  public let mediaScope: String?
+  public init(items: [RemotePhoto], nextCursor: Int64, totalCount: Int? = nil, mediaScope: String? = nil) {
+    self.items = items; self.nextCursor = nextCursor; self.totalCount = totalCount.flatMap { $0 >= 0 ? $0 : nil }; self.mediaScope = mediaScope
+  }
+  private enum CodingKeys: String, CodingKey { case items, nextCursor, totalCount, mediaScope }
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    items = try values.decode([RemotePhoto].self, forKey: .items); nextCursor = try values.decode(Int64.self, forKey: .nextCursor)
+    let count = try? values.decode(Int.self, forKey: .totalCount)
+    totalCount = count.flatMap { $0 >= 0 ? $0 : nil }
+    mediaScope = try? values.decode(String.self, forKey: .mediaScope)
+  }
 }
 public struct CameraProperty: Codable, Identifiable, Sendable {
   public var id: Int { code }

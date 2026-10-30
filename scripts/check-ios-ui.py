@@ -13,14 +13,14 @@ import subprocess
 root = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--device', help='专用测试模拟器的UDID')
-parser.add_argument('--suite', choices=['full', 'boundaries'], default='full', help='boundaries仅检查凭据、照片参数刷新与缓存清理')
+parser.add_argument('--suite', choices=['full', 'boundaries', 'index'], default='full', help='boundaries检查4项既有边界；index只检查合成分页图库')
 args = parser.parse_args()
 inventory = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], text=True))
 devices = [dict(device, runtime=runtime) for runtime, group in inventory['devices'].items() for device in group]
 device = next((item for item in devices if item['udid'] == args.device), None) if args.device else next((item for item in devices if item['name'].startswith('FrameLink QA')), None)
 if device is None:
     raise SystemExit('请先创建专用iPhone模拟器，并用--device指定UDID；默认仅查找名称以FrameLink QA开头的设备')
-if args.suite == 'boundaries' and (not args.device or not device['name'].startswith('FrameLink QA')):
+if args.suite != 'full' and (not args.device or not device['name'].startswith('FrameLink QA')):
     raise SystemExit('专项验收必须显式指定本项目FrameLink QA模拟器，不操作其他设备')
 
 def digest(path):
@@ -43,12 +43,14 @@ def bundle_identity(path):
 
 def boundaries():
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')
-    directory = root / 'artifacts' / ('ios-ui-boundaries-' + stamp)
+    directory = root / 'artifacts' / ('ios-ui-' + args.suite + '-' + stamp)
     directory.mkdir(parents=True)
     tests = ['testCameraUnsavedEndpointAndAccountEditsClearCredentialsButSelectingBPreservesThem',
              'testFTPUnsavedEndpointAndAccountEditsClearCredentialsButSelectingBPreservesThem',
              'testPhotoMetadataUsesFileSettingsAndCacheClearKeepsImportedPhoto',
              'testOpenPhotoInformationRefreshesWhenSamePhotoGetsLocalOriginal']
+    if args.suite == 'index':
+        tests = ['testCameraIndexShowsRangeTotalAndFillsWithoutScrollingBeforeSelectAll']
     def capture(command):
         return subprocess.check_output(command, cwd=root, text=True).strip()
     receipt = {'startedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -122,7 +124,7 @@ def boundaries():
     save()
     return receipt['testExit'] or (0 if receipt['qualified'] else 1)
 
-if args.suite == 'boundaries':
+if args.suite != 'full':
     raise SystemExit(boundaries())
 stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
 command = ['xcodebuild', '-project', 'ios/FrameLink.xcodeproj', '-scheme', 'FrameLink', '-configuration', 'Debug',

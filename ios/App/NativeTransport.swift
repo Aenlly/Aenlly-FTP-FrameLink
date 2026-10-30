@@ -65,10 +65,10 @@ final class NativeTransport: @unchecked Sendable {
         Self.result { self.session.connect(raw, error: $0) }, as: CameraInfo.self)
     }
   }
-  func page(slot: Int = 1, cursor: Int64) async throws -> CameraPage {
+  func page(slot: Int = 1, day: String = "", cursor: Int64) async throws -> CameraPage {
     try await perform {
       try Self.decode(
-        Self.result { self.session.listPage(slot, cursor: cursor, error: $0) }, as: CameraPage.self)
+        Self.result { self.session.listNewestPage(slot, day: day, offset: cursor, error: $0) }, as: CameraPage.self)
     }
   }
   func properties() async throws -> [CameraProperty] {

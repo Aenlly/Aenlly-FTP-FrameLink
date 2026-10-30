@@ -110,6 +110,8 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
     var timer by rememberSaveable{mutableIntStateOf(0)}
     var shootingSettings by rememberSaveable{mutableStateOf(false)}
     var lookUnavailable by remember{mutableStateOf(false)}
+    var lookLoading by remember{mutableStateOf(false)}
+    var lookStatus by remember{mutableStateOf("")}
     var autoImport by remember(camera.info?.id){mutableStateOf(camera.info?.canAutoImport!=false&&runtime.settings.get("capture.auto_import")=="true")}
     var singleShot by remember{mutableStateOf(runtime.settings.get("capture.single")!="false")}
     var openingGallery by remember{mutableStateOf(false)}
@@ -196,7 +198,9 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
             val adjustable=updating==null&&CameraPropertyText.editable(current)
             var draftLabel by remember(current.code){mutableStateOf<String?>(null)}
             val numeric=current.code in CameraPropertyText.exposureOrder
-            GlassSurface(glass,modifier.testTag("live-property-picker").pointerInput(Unit){detectTapGestures(onTap={})},radius=22.dp,dark=true){
+            val modernLook=current.code==CameraPropertyText.CREATIVE_LOOK
+            val choiceColumns=if(modernLook&&LocalDensity.current.fontScale<=1.3f)4 else 2
+            LiveGlass(glass,modifier.testTag("live-property-picker").pointerInput(Unit){detectTapGestures(onTap={})},radius=22.dp,menu=modernLook){
                 if(numeric&&vertical)Column(Modifier.fillMaxSize().padding(vertical=6.dp),horizontalAlignment=Alignment.CenterHorizontally){
                     Text(CameraPropertyText.name(current),fontSize=10.sp,color=Color.White.copy(alpha=.7f))
                     Text((draftLabel?:CameraPropertyText.quickValue(current)).removePrefix("ISO ").removeSuffix(" 秒").removeSuffix(" EV"),fontSize=12.sp,maxLines=1,color=LiveAccent,modifier=Modifier.padding(vertical=4.dp))
@@ -209,16 +213,22 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                     IconButton(onClick={propertyCode=null},modifier=Modifier.size(40.dp)){Icon(Icons.Outlined.Close,"关闭参数",tint=Color.White,modifier=Modifier.size(18.dp))}
                 }else Column(Modifier.fillMaxSize().padding(10.dp)){
                     Row(verticalAlignment=Alignment.CenterVertically){
-                        Text(CameraPropertyText.name(current),color=Color.White,fontSize=14.sp,modifier=Modifier.weight(1f))
+                        Text(CameraPropertyText.name(current)+(if(modernLook)" · "+(CameraPropertyText.label(current)?:"机身设置")else""),color=Color.White,fontSize=14.sp,modifier=Modifier.weight(1f))
                         IconButton(onClick={propertyCode=null}){Icon(Icons.Outlined.Close,"关闭参数",tint=Color.White)}
                     }
+                    if(modernLook&&!current.writable)Text("当前连接仅可查看",fontSize=11.sp,color=Color.White.copy(alpha=.8f))
                     LazyColumn(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(6.dp)){
-                        items(CameraPropertyText.choices(current).chunked(2)){row->
+                        items(CameraPropertyText.choices(current).chunked(choiceColumns)){row->
                             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
-                                row.forEach{choice->TextButton(enabled=adjustable,onClick={scope.launch{applyParameter(current,choice.value)}},modifier=Modifier.weight(1f).background(if(choice.value==current.value)Color.White.copy(alpha=.15f)else Color.Black.copy(alpha=.12f),RoundedCornerShape(12.dp))){
-                                    Text(choice.label,color=if(choice.value==current.value)LiveAccent else Color.White,fontSize=12.sp)
+                                row.forEach{choice->TextButton(enabled=adjustable,onClick={scope.launch{applyParameter(current,choice.value)}},modifier=Modifier.weight(1f).heightIn(min=44.dp).background(if(choice.value==current.value)Color.White.copy(alpha=.15f)else if(modernLook)Color.Transparent else Color.Black.copy(alpha=.12f),RoundedCornerShape(12.dp))){
+                                    Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(3.dp)){
+                                        Text(choice.label,color=if(choice.value==current.value)LiveAccent else Color.White,fontSize=12.sp,lineHeight=16.sp)
+                                        if(modernLook)CameraPropertyText.creativeLookName(choice.value)?.let{name->
+                                            Text(name,color=if(choice.value==current.value)LiveAccent.copy(alpha=.85f)else Color.White.copy(alpha=.78f),fontSize=10.sp,lineHeight=13.sp,maxLines=2,textAlign=androidx.compose.ui.text.style.TextAlign.Center)
+                                        }
+                                    }
                                 }}
-                                if(row.size==1)Spacer(Modifier.weight(1f))
+                                repeat(choiceColumns-row.size){Spacer(Modifier.weight(1f))}
                             }
                         }
                         if(CameraPropertyText.choices(current).size<current.choices.size)item{Text("其他机身选项暂未适配，请在相机调整。",fontSize=11.sp,color=Color.White.copy(alpha=.65f))}
@@ -227,10 +237,37 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
             }
         }
     }
+    fun openLook(){
+        if(lookLoading)return
+        tools=false
+        lookUnavailable=false
+        lookLoading=true
+        scope.launch{
+            try{
+                runtime.refreshCameraProperties().join()
+                val actual=runtime.properties.value.firstOrNull{it.code==CameraPropertyText.CREATIVE_LOOK&&CameraPropertyText.label(it)!=null}
+                if(actual!=null){lookUnavailable=false;propertyCode=actual.code}
+                else{
+                    val result=org.json.JSONObject(runtime.native.creativeLookDiagnostics())
+                    val descriptors=result.optJSONArray("candidateDescriptors")
+                    val modern=descriptors?.let{rows->(0 until rows.length()).map{rows.getJSONObject(it)}.firstOrNull{it.optInt("code")==CameraPropertyText.CREATIVE_LOOK}}
+                    lookStatus=if(modern!=null&&modern.optInt("enabled")!=1)"机身当前将创意外观标为不可调。图片配置文件非关闭或Log拍摄等模式可能限制此功能，请在机身检查；本次未发送设置。"
+                        else if(descriptors==null||descriptors.length()==0)"相机已连接，但应用暂未取得创意外观选项。可以重新读取；如仍无选项，请先在机身调整。"
+                        else "已读取机身设置，但暂未识别当前风格。本次未作更改，可以重新读取。"
+                    lookUnavailable=true
+                }
+            }catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}
+            catch(error:Exception){lookStatus="创意外观设置未读取完成，请检查相机连接后重试。";lookUnavailable=true}
+            finally{lookLoading=false}
+        }
+    }
     @Composable fun Look(size:Int=48){
-        // 现代创意外观的PTP映射尚未验证，旧创意风格和图片效果不能冒充ST／FL
-        IconButton(onClick={lookUnavailable=true},modifier=Modifier.size(size.dp).background(Color.Black.copy(alpha=.35f),CircleShape)){
-            Icon(Icons.Outlined.Palette,"创意外观",tint=Color.White,modifier=Modifier.size(if(size<40)20.dp else 25.dp))
+        val actual=properties.firstOrNull{it.code==CameraPropertyText.CREATIVE_LOOK}
+        val style=actual?.let{CameraPropertyText.label(it)}
+        IconButton(onClick=::openLook,enabled=!lookLoading,modifier=Modifier.size(size.dp).background(Color.Black.copy(alpha=.35f),CircleShape).semantics{contentDescription="创意外观";stateDescription=style?:"读取机身设置"}){
+            if(lookLoading)CircularProgressIndicator(Modifier.size(18.dp),color=Color.White,strokeWidth=1.5.dp)
+            else if(style!=null)Text(style,color=Color.White,fontSize=13.sp)
+            else Icon(Icons.Outlined.Palette,"创意外观",tint=Color.White,modifier=Modifier.size(if(size<40)20.dp else 25.dp))
         }
     }
     @Composable fun HeaderActions(modifier:Modifier=Modifier){
@@ -409,7 +446,8 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                                 LiveToolItem(CameraPropertyText.name(item).let{if(it=="照片保存位置")"保存位置"else it},if(updating==item.code)"应用中…"else CameraPropertyText.compact(item),enabled=updating==null&&CameraPropertyText.editable(item)){
                                     propertyCode=item.code;tools=false
                                 }
-                            }+listOf(LiveToolItem("创意外观","机身调整"){tools=false;lookUnavailable=true},LiveToolItem("连接信息","查看"){tools=false;info=true})
+                            }+listOfNotNull(if(properties.none{it.code==CameraPropertyText.CREATIVE_LOOK&&CameraPropertyText.label(it)!=null})LiveToolItem("创意外观","读取设置",enabled=!lookLoading){openLook()}else null,
+                                LiveToolItem("连接信息","查看"){tools=false;info=true})
                             HorizontalDivider(color=Color.White.copy(alpha=.12f))
                             LazyColumn(Modifier.heightIn(max=(panelHeight-110.dp).coerceAtLeast(44.dp)).testTag("live-properties")){
                                 items(toolItems.chunked(toolColumns)){row->
@@ -453,7 +491,9 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                 Text("预览尺寸由当前连接通道提供，不代表照片原片分辨率。",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },confirmButton={TextButton(onClick={info=false}){Text("完成")}})
-        if(lookUnavailable)AlertDialog(onDismissRequest={lookUnavailable=false},title={Text("创意外观")},text={Text("当前连接尚未提供已适配的创意外观控制，请先在相机上调整。")},confirmButton={TextButton(onClick={lookUnavailable=false}){Text("完成")}})
+        if(lookUnavailable)AlertDialog(onDismissRequest={lookUnavailable=false},title={Text("创意外观")},text={Text(lookStatus)},
+            confirmButton={TextButton(onClick=::openLook,enabled=!lookLoading){Text(if(lookLoading)"正在读取"else"重新读取")}},
+            dismissButton={TextButton(onClick={lookUnavailable=false}){Text("完成")}})
     }
 }
 

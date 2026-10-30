@@ -200,21 +200,21 @@ func (s *Session) Connect(raw string) (string, error) {
 	}
 	di, err := c.GetDeviceInfo(connectCtx)
 	if err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("读取机身信息失败: %w", err))
 	}
 	if !di.IsSony() {
 		return fail(errors.New("当前适配器仅支持Sony相机"))
 	}
 	if err = c.OpenSession(connectCtx, 1); err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("打开遥控会话失败: %w", err))
 	}
 	ext, err := c.SonyHandshake(connectCtx)
 	if err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("Sony能力握手失败: %w", err))
 	}
 	props, err := c.SonyGetProps(connectCtx, false)
 	if err != nil {
-		return fail(err)
+		return fail(fmt.Errorf("读取完整参数失败: %w", err))
 	}
 	identity := sha256.Sum256([]byte(di.SerialNumber + fmt.Sprintf("%x", c.ResponderGUID)))
 	canLive := false
@@ -475,14 +475,34 @@ func (s *Session) Properties() (string, error) {
 	rows := make([]map[string]any, 0)
 	for _, p := range props {
 		info, known := cameraPropertyInfo(p.Code)
-		if !known || !safeGroup(info.Group) {
+		if !known || !safeCameraProperty(info) {
 			continue
 		}
-		choices := make([]map[string]any, 0, len(p.Settable))
-		for _, v := range p.Settable {
+		if p.Code == sonyCreativeLook && p.Writable && p.Enabled == 1 && creativeLookReadable(p) {
+			// 编辑前确认单项描述符通道，并使用较新的机身值，不凭全表广告开放写入
+			actual, readErr := c.SonyGetProp(ctx, sonyCreativeLook)
+			if readErr == nil && actual.Code == sonyCreativeLook && creativeLookReadable(actual) {
+				p = actual
+			} else {
+				p.Writable = false
+			}
+		}
+		settable := p.Settable
+		if p.Code == sonyCreativeLook {
+			if !creativeLookReadable(p) {
+				settable = nil
+			}
+		}
+		choices := make([]map[string]any, 0, len(settable))
+		for _, v := range settable {
 			choices = append(choices, map[string]any{"value": v.Int, "label": valueLabel(info, v.Int)})
 		}
-		rows = append(rows, map[string]any{"code": p.Code, "name": info.Name, "value": p.Current.Int, "label": valueLabel(info, p.Current.Int), "writable": p.Writable && p.Enabled == 1 && info.Danger == propdb.None && len(choices) > 0, "choices": choices})
+		_, knownLook := creativeLookLabels[p.Current.Int]
+		writable := p.Writable && p.Enabled == 1 && info.Danger == propdb.None && len(choices) > 0
+		if p.Code == sonyCreativeLook {
+			writable = writable && creativeLookReadable(p) && knownLook && len(creativeLookChoices(p)) > 0
+		}
+		rows = append(rows, map[string]any{"code": p.Code, "name": info.Name, "value": p.Current.Int, "label": valueLabel(info, p.Current.Int), "writable": writable, "choices": choices})
 	}
 	return marshal(rows)
 }
@@ -502,6 +522,9 @@ func valueLabel(info propdb.Info, value int64) string {
 
 // SetProperty validates the exact value against the latest camera-supplied enum.
 func (s *Session) SetProperty(code int, value int64) error {
+	if code < 0 || code > 0xffff {
+		return errors.New("参数编号超出PTP范围")
+	}
 	if backend := s.alternate(); backend != nil {
 		return backend.SetProperty(code, value)
 	}
@@ -516,12 +539,23 @@ func (s *Session) SetProperty(code int, value int64) error {
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
 	info, known := cameraPropertyInfo(uint16(code))
-	if !known || !safeGroup(info.Group) || info.Danger != propdb.None {
+	if !known || !safeCameraProperty(info) || info.Danger != propdb.None {
 		return errors.New("此参数未开放编辑")
 	}
 	p, err := c.SonyGetProp(ctx, uint16(code))
 	if err != nil {
 		return err
+	}
+	if p.Code != uint16(code) {
+		return errors.New("机身返回了不同的参数描述符，本次设置未发送")
+	}
+	if p.Code == sonyCreativeLook {
+		if _, known := creativeLookLabels[p.Current.Int]; !known || !creativeLookReadable(p) {
+			return errors.New("创意外观描述符尚未确认，本次设置未发送")
+		}
+		if !slices.ContainsFunc(creativeLookChoices(p), func(v ptpip.SonyValue) bool { return v.Int == value }) {
+			return errors.New("创意外观不在机身当前可用候选中")
+		}
 	}
 	if !p.Writable || p.Enabled != 1 {
 		return errors.New("当前拍摄模式不允许修改此参数")

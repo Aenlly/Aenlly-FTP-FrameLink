@@ -124,6 +124,7 @@ class NativeCamera internal constructor(private val context: Context,private val
     }
 
     fun properties():List<CameraProperty> = current().let{if(it.usb!=null)emptyList()else Json.list(it.session.properties())}
+    fun creativeLookDiagnostics():String=networkSession().creativeLookDiagnostics()
     fun setProperty(code:Int,value:Long){networkSession().setProperty(code.toLong(),value)}
     fun capture(autofocus:Boolean){networkSession().capture(autofocus)}
     fun capturePhoto(single:Boolean,receive:Boolean)=JSONObject(networkSession().capturePhoto(true,single,receive))

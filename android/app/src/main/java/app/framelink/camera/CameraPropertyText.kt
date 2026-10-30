@@ -6,16 +6,21 @@ import kotlin.math.roundToInt
 
 /** 仅翻译已核对的协议值；相机仍决定候选值与可写状态，未知选项不提供盲选 */
 internal object CameraPropertyText {
+    const val CREATIVE_LOOK=0xD0FA
+    private val creativeLookNames=mapOf(1L to "标准",2L to "人像",3L to "中性",4L to "鲜明",5L to "鲜明2",6L to "胶片",7L to "哑光",8L to "柔和高调",9L to "黑白",10L to "棕褐色")
+    fun creativeLookName(value:Long):String?=creativeLookNames[value]
     private val names = mapOf(
         0x5005 to "白平衡", 0x5007 to "光圈", 0x5008 to "焦距", 0x5009 to "对焦距离",
         0x500A to "对焦模式", 0x500B to "测光模式", 0x500C to "闪光模式", 0x500D to "快门速度",
         0x500E to "曝光模式", 0x500F to "感光度", 0x5010 to "曝光补偿", 0x501C to "对焦测光",
+        0xD0FA to "创意外观",
         0xD22C to "对焦区域", 0xD284 to "触摸对焦", 0xD285 to "取消触摸对焦",
         0xD20D to "快门速度", 0xD21E to "感光度",
         0x5013 to "拍摄方式", 0xD222 to "照片保存位置",
     )
     val exposureOrder = listOf(0x5007, 0xD20D, 0x500D, 0xD21E, 0x500F, 0x5010)
     private val values = mapOf(
+        0xD0FA to mapOf(1L to "ST",2L to "PT",3L to "NT",4L to "VV",5L to "VV2",6L to "FL",7L to "IN",8L to "SH",9L to "BW",10L to "SE"),
         0x5013 to mapOf(1L to "单张", 2L to "连拍", 3L to "间隔拍摄"),
         0xD222 to mapOf(1L to "仅电脑", 0x10L to "相机存储卡", 0x11L to "电脑与存储卡"),
         0x500A to mapOf(1L to "手动对焦（MF）", 2L to "单次自动对焦（AF-S）", 3L to "微距自动对焦",

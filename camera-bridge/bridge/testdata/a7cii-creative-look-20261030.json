@@ -1,0 +1,19 @@
+{
+  "model": "ILCE-7CM2",
+  "firmware": "2.01",
+  "phone": "25113PN0EC",
+  "androidApi": 37,
+  "source": "Decoded read-only 0x9209 descriptors collected on 2026-10-30; not a binary packet capture",
+  "sourceSha256": "a69c77aa43e307041ef5e63aa14c6f3ebf79e6a9cedabb96a9e44f9fdb1bb380",
+  "replyCodeCount": 391,
+  "cameraSettingWritten": false,
+  "descriptor": {
+    "code": 53498,
+    "type": 4,
+    "current": 6,
+    "enabled": 1,
+    "form": 2,
+    "writable": true,
+    "settable": [1,2,3,4,5,6,7,8,9,10,11,12,257,258,259,260,261,262]
+  }
+}

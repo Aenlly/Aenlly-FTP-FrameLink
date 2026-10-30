@@ -28,6 +28,7 @@ func main() {
 	dir := flag.String("dir", "../artifacts/fixtures", "synthetic QA image directory")
 	withSSH := flag.Bool("ssh", false, "enable loopback-only SSH identity acceptance fixture")
 	previewFile := flag.String("preview", "", "optional licensed JPEG for live-view visual checks")
+	creativeLook := flag.Bool("creative-look", false, "advertise synthetic modern Creative Look for protocol/UI checks, not hardware evidence")
 	flag.Parse()
 	if err := os.MkdirAll(*dir, 0700); err != nil {
 		panic(err)
@@ -123,6 +124,9 @@ func main() {
 		{Code: 0x5005, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 2}, Form: 2, Settable: []ptpip.SonyValue{{Int: 2}, {Int: 4}, {Int: 0x8010}}},
 		{Code: 0xD22C, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 1}, Form: 2, Settable: []ptpip.SonyValue{{Int: 1}, {Int: 0x103}, {Int: 0x205}}},
 		{Code: ptpip.SonyPropTransferSize, Type: 4, Enabled: 1, Current: ptpip.SonyValue{Int: ptpip.SonyTransferOriginal}}}
+	if *creativeLook {
+		props = append(props, ptpip.SonyProp{Code: 0xD0FA, Type: 4, Writable: true, Enabled: 1, Current: ptpip.SonyValue{Int: 1}, Form: 2, Settable: []ptpip.SonyValue{{Int: 1}, {Int: 2}, {Int: 6}}})
+	}
 	server, err := ptpiptest.Start(ptpiptest.Options{Dir: *dir, A6700: true, Model: "QA SIMULATED CAMERA", SerialNumber: "FRAMELINK-QA-NOT-HARDWARE", Preview: preview, Props: props, ControlCodes: []uint16{0xD2C1, 0xD2C2, ptpip.SonyCtlRemoteTouch}})
 	if err != nil {
 		panic(err)

@@ -14,7 +14,7 @@ parser.add_argument('--allow-camera-parameter-check', action='store_true', requi
 parser.add_argument('--manual-install', action='store_true', help='使用已在手机手动安装的App和诊断组件')
 parser.add_argument('--version', help='手动安装模式核对指定的已冻结版本，不使用开发工作区版本')
 parser.add_argument('--app-touch', action='store_true', help='仅向App自己的窗口分发触控，不验证系统输入注入')
-parser.add_argument('--case', choices=['all', 'gallery', 'live', 'focus', 'recover', 'latency'], default='all')
+parser.add_argument('--case', choices=['all', 'gallery', 'live', 'focus', 'recover', 'latency', 'creative', 'creative-ui'], default='all')
 parser.add_argument('--focus-near', help='仅对焦验收：前景目标归一化坐标x,y')
 parser.add_argument('--focus-far', help='仅对焦验收：后景目标归一化坐标x,y')
 parser.add_argument('--include-ftp', action='store_true', help='追加本机FTP客户端字节、中文文件名与取消校验')
@@ -73,7 +73,8 @@ if sdk >= 37:
 base_class = 'app.framelink.camera.PhysicalCoreUiAcceptanceTest'
 methods = {'gallery': 'connectedGallerySelectionDownloadBatchAndReconnectWorkOnPhone',
     'live': 'liveLabelsAndFooterStayVisibleAndApertureRestoresExactly', 'focus': 'focusTargetsDoNotFireShutter',
-    'recover': 'recoverPendingFilesWithoutTakingPhoto', 'latency': 'measurePreviewReceptionAndNetworkWithoutCapture'}
+    'recover': 'recoverPendingFilesWithoutTakingPhoto', 'latency': 'measurePreviewReceptionAndNetworkWithoutCapture',
+    'creative': 'readCreativeLookDescriptorsWithoutChangingCameraSettings','creative-ui':'creativeLookUiReadsActualCameraSelectionWithoutWriting'}
 test_class = ','.join(base_class + '#' + methods[case] for case in (['gallery', 'live'] if args.case == 'all' else [args.case]))
 if args.include_capture:
     test_class += ',' + base_class + '#singleShotFinishesWithoutImportAndAlbumKeepsConnection'

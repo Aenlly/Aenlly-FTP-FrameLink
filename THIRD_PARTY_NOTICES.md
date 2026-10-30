@@ -10,6 +10,7 @@
 | [Chris Banes / Haze](https://github.com/chrisbanes/haze/tree/1.5.3) | 1.5.3 | Apache-2.0 | Compose背景图层捕获和旧系统玻璃降级，作为Gradle依赖使用 |
 | petabyt/libfuji | 3328efc51f74d754f8fa76af70c6becdde62271f；另核对接收器fork22ad5a7dd5dd50b367da1002328ee12e26689cd4 | MIT | PC AutoSave发现、会话与媒体行为参考；未复制或链接C库；许可见docs/protocol-sources/libfuji-LICENSE.txt |
 | petabyt/libpict | f1c94c68a1fa0671feccf371001b74a7275b3bd7；另核对接收器fork01d7352b399a403a49e36a90ba76c6a08e3d9227 | Apache-2.0 | TCP上的PTP容器、长度和释放路径参考；未链接C库；许可见docs/protocol-sources/libpict-LICENSE.txt |
+| mikefsq/ptp | 0fe3c68516f8 | MIT | 现代Creative Look候选PTP编号与枚举参考；未移植其未经过机身验证的Sony远控实现，许可见docs/protocol-sources/mikefsq-ptp-LICENSE.txt |
 
 上游作者的真机测试不等于本应用已通过对应设备验收。Android桥接代码和产品界面属于本工程；没有捆绑Sony专有SDK或其示例源码
 

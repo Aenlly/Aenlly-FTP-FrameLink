@@ -204,8 +204,9 @@ class CameraRuntime(
         runCatching { Json.decode<ConnectionConfig>(settings.get("camera.config")) }
             .getOrDefault(ConnectionConfig())
 
+    /** 只读检查可跳过机身拍摄保存策略同步，普通连接保持原有同步行为 */
     @Synchronized
-    fun connect(input: ConnectionConfig): Job {
+    fun connect(input: ConnectionConfig, synchronizeCaptureStorage:Boolean=true): Job {
         connectionMonitor?.cancel()
         val generation = connectionGeneration.incrementAndGet()
         pendingCameraConnection = null
@@ -243,7 +244,7 @@ class CameraRuntime(
                 val info = native.connect(config)
                 if(config.protocol==CameraProtocols.USB)config=config.copy(usbIdentity=info.id)
                 val choices = native.properties()
-                if (info.canCapture) runCatching {
+                if (info.canCapture&&synchronizeCaptureStorage) runCatching {
                     native.configureCaptureStorage(info.canAutoImport && settings.get("capture.auto_import") == "true")
                 }.onFailure { notice.value = "已连接，但保存位置未能确认；拍摄前请检查机身遥控拍摄设置" }
                 val dates = runCatching { native.dates(1) }.getOrDefault(emptyList())
@@ -1314,6 +1315,18 @@ class CameraRuntime(
         }
     }
 
+    /** 从机身重新读取参数，结果只应用到发起读取的连接代次 */
+    fun refreshCameraProperties() = scope.launch {
+        val generation=connectionGeneration.get()
+        try {
+            val updated=native.properties()
+            if(generation==connectionGeneration.get()&&mutableCamera.value.info!=null)properties.value=updated
+        }catch(cancelled:CancellationException){throw cancelled}
+        catch(error:Exception){
+            if(generation==connectionGeneration.get())notice.value="机身参数未读取完成，请检查相机连接后重试"
+        }
+    }
+
     fun setProperty(property: CameraProperty, value: Long) =
         scope.launch {
             if (!parameterUpdating.compareAndSet(null, property.code)) { notice.value = "正在应用相机设置，请稍候"; return@launch }
@@ -1333,6 +1346,7 @@ class CameraRuntime(
                 }
             } catch (error: Exception) {
                 android.util.Log.w("FrameLink", "Camera property update failed", error)
+                if(property.code==CameraPropertyText.CREATIVE_LOOK&&generation==connectionGeneration.get()&&native.connected())refreshCameraProperties()
                 notice.value = error.message?.takeIf { it.any { character -> character.code in 0x4e00..0x9fff } } ?: "相机未确认此设置，请检查机身模式与连接后重试"
             } finally {
                 if (generation == connectionGeneration.get()) parameterUpdating.value = null

@@ -52,7 +52,7 @@ class PhysicalCoreUiAcceptanceTest {
         rotate(UiAutomation.ROTATION_UNFREEZE)
     }
 
-    private fun connect() {
+    private fun connect(synchronizeCaptureStorage:Boolean=true) {
         assumeTrue(InstrumentationRegistry.getArguments().getString("allowPhysicalCameraRead") == "true")
         check(Build.MODEL in setOf("25113PN0EC", "23013RK75C"))
         val service = automation.serviceInfo
@@ -74,10 +74,11 @@ class PhysicalCoreUiAcceptanceTest {
         }
         val config = runtime.savedConnection()
         check(config.host.isNotBlank())
-        runtime.disconnect(); runtime.connect(config)
+        runtime.disconnect(); runtime.connect(config,synchronizeCaptureStorage=synchronizeCaptureStorage)
         waitFor(45000) { runtime.camera.value.info != null || runtime.cameraIdentityPrompt.value != null }
         assertNull(runtime.cameraIdentityPrompt.value)
         assertEquals("ILCE-7CM2", runtime.camera.value.info!!.model)
+        waitFor(15000){appRoot()?.packageName==app.packageName&&nodes().isNotEmpty()}
         if (!hasText("取景拍摄")) clickText("相机")
     }
 
@@ -351,6 +352,44 @@ class PhysicalCoreUiAcceptanceTest {
                 waitFor(5000) { runtime.native.properties().first { it.code == original.code }.value == original.value }
             }
         }
+    }
+
+    @Test fun creativeLookUiReadsActualCameraSelectionWithoutWriting(){
+        check(Build.MODEL=="25113PN0EC"){"创意外观界面只读验收仅允许小米17"}
+        connect(synchronizeCaptureStorage=false)
+        try{
+            val actual=runtime.properties.value.first{it.code==CameraPropertyText.CREATIVE_LOOK}
+            val label=CameraPropertyText.label(actual)?:error("当前机身风格暂未识别")
+            clickText("取景拍摄")
+            waitFor(30000){runtime.frame.value?.isNotEmpty()==true}
+            clickDescription("创意外观")
+            waitFor{hasText("创意外观 · $label")}
+            screenshot("physical-creative-look-picker")
+            assertEquals(actual.value,runtime.native.properties().first{it.code==actual.code}.value)
+            report("creative-look-ui.json",JSONObject().put("camera",runtime.camera.value.info!!.model).put("firmware",runtime.camera.value.info!!.firmware)
+                .put("code",actual.code).put("current",actual.value).put("label",label).put("advertisedChoices",actual.choices.size)
+                .put("writable",actual.writable)
+                .put("recognizedChoices",CameraPropertyText.choices(actual).size).put("pickerDisplayed",true).put("cameraSettingWritten",false).put("shutterTriggered",false))
+            clickDescription("关闭参数");clickDescription("返回相机")
+        }finally{runtime.stopLive();runtime.disconnect()}
+    }
+
+    @Test fun readCreativeLookDescriptorsWithoutChangingCameraSettings(){
+        assumeTrue(InstrumentationRegistry.getArguments().getString("allowPhysicalCameraRead")=="true")
+        check(Build.MODEL=="25113PN0EC"){"本轮创意外观只读采集仅允许小米17"}
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("am start -W -n app.framelink.camera/.MainActivity")).use{it.readBytes()}
+        val probe=NativeCamera(app)
+        try{
+            // 独立原生连接不调用CameraRuntime的拍摄保存位置同步，只进行描述符读取
+            val config=runtime.savedConnection()
+            report("creative-look-connection.json",JSONObject().put("host",config.host).put("port",config.port).put("protocol",config.protocol).put("accessAuthentication",config.user.isNotBlank()).put("readOnly",true))
+            val info=probe.connect(config)
+            assertEquals("ILCE-7CM2",info.model)
+            val result=JSONObject(probe.creativeLookDiagnostics())
+            assertTrue(result.getBoolean("readOnly"))
+            assertFalse(result.getBoolean("sdkCodeUsed"))
+            report("creative-look-descriptors.json",result.put("shutterTriggered",false).put("cameraSettingWritten",false))
+        }finally{probe.close()}
     }
 
     @Test fun measurePreviewReceptionAndNetworkWithoutCapture() {

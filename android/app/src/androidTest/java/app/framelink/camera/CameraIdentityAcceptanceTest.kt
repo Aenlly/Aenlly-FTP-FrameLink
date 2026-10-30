@@ -87,8 +87,9 @@ class CameraIdentityAcceptanceTest {
     }
 
     private fun connect() {
-        compose.onNode(hasSetTextAction() and hasText("相机IP地址")).performImeAction()
-        compose.onNodeWithTag("camera-connect-action").performClick()
+        // 连接按钮本身负责收起键盘，避免额外IME动作让按钮在注入触摸期间移动
+        compose.waitForIdle()
+        compose.onNodeWithTag("camera-connect-action").assertIsEnabled().performClick()
     }
 
     private fun attempts(): Long {

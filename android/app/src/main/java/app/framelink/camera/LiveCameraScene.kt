@@ -97,7 +97,7 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
     var timer by rememberSaveable{mutableIntStateOf(0)}
     var shootingSettings by rememberSaveable{mutableStateOf(false)}
     var lookUnavailable by remember{mutableStateOf(false)}
-    var autoImport by remember{mutableStateOf(runtime.settings.get("capture.auto_import")=="true")}
+    var autoImport by remember(camera.info?.id){mutableStateOf(camera.info?.canAutoImport!=false&&runtime.settings.get("capture.auto_import")=="true")}
     var singleShot by remember{mutableStateOf(runtime.settings.get("capture.single")!="false")}
     var openingGallery by remember{mutableStateOf(false)}
     var viewport by remember{mutableStateOf(IntSize.Zero)}
@@ -390,10 +390,10 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                     Switch(singleShot,{singleShot=it;runtime.settings.put("capture.single",it.toString())},modifier=Modifier.semantics{contentDescription="单张拍摄"},enabled=!shooting&&!receiving)
                 }
                 Row(verticalAlignment=Alignment.CenterVertically){
-                    Column(Modifier.weight(1f)){Text("拍后自动导入");Text("关闭时仅存相机；开启时同步相机与手机。机身拒绝更改时请先在相机调整",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-                    Switch(autoImport,{next->scope.launch{if(runtime.setCaptureImport(next))autoImport=next}},modifier=Modifier.semantics{contentDescription="拍后自动导入"},enabled=!shooting&&!receiving)
+                    Column(Modifier.weight(1f)){Text("拍后自动导入");Text(if(camera.info?.canAutoImport==false)"此连接不提供拍后队列，请从相机图库选择导入"else"关闭时仅存相机；开启时同步相机与手机。机身拒绝更改时请先在相机调整",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+                    Switch(autoImport,{next->scope.launch{if(runtime.setCaptureImport(next))autoImport=next}},modifier=Modifier.semantics{contentDescription="拍后自动导入"},enabled=camera.info?.canAutoImport!=false&&!shooting&&!receiving)
                 }
-                TextButton(onClick={shootingSettings=false;runtime.receivePendingCaptures()},enabled=!shooting&&!receiving){Text("接收机身待传文件（不拍照）")}
+                TextButton(onClick={shootingSettings=false;runtime.receivePendingCaptures()},enabled=camera.info?.canAutoImport!=false&&!shooting&&!receiving){Text("接收机身待传文件（不拍照）")}
                 Text("点按画面选定位置并对焦，机身能力或当前模式不支持时会给出提示。",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick={shootingSettings=false;info=true}){Text("连接信息")}
             }

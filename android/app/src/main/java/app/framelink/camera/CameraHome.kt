@@ -39,7 +39,7 @@ Surface(color=Color.White,shape=RoundedCornerShape(24.dp)){
                             Box(Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).background(Brand.copy(alpha=.09f)),contentAlignment=Alignment.Center){Icon(Icons.Outlined.CameraAlt,null,tint=Brand,modifier=Modifier.size(27.dp))}
                             Column(Modifier.weight(1f).padding(horizontal=12.dp)){
                                 Text(status.info?.displayName()?:"连接你的相机",fontSize=18.sp,fontWeight=FontWeight.SemiBold,color=Ink,maxLines=2)
-                                Text(if(status.connecting)"正在建立连接…"else if(connected)"已连接 · Wi-Fi"else"未连接",fontSize=12.sp,color=if(connected)Color(0xff348261)else Muted,modifier=Modifier.padding(top=4.dp))
+                                Text(if(status.connecting)"正在建立连接…"else if(connected)if(status.info?.connectionKind==CameraConnectionKinds.USB_READER)"已连接 · USB读卡"else"已连接 · Wi-Fi"else"未连接",fontSize=12.sp,color=if(connected)Color(0xff348261)else Muted,modifier=Modifier.padding(top=4.dp))
                             }
                             TextButton(onClick=if(connected)onConnectionSettings else onConnect,enabled=!status.connecting,modifier=Modifier.semantics{contentDescription=if(connected)"相机连接设置"else"快速连接相机"}){Text(if(connected)"连接设置"else"连接",fontSize=12.sp)}
                         }
@@ -68,7 +68,7 @@ Surface(color=Color.White,shape=RoundedCornerShape(22.dp)){
                 }
     }
     Column(Modifier.fillMaxSize()){
-        WorkspaceHeader("相机",if(connected)"相机已连接，随时继续拍摄"else"连接相机，或先浏览手机照片"){
+        WorkspaceHeader("相机",if(connected)if(status.info?.canCapture==true)"相机已连接，随时继续拍摄"else"相机已连接，浏览并导入照片"else"连接相机，或先浏览手机照片"){
             Box{
                 IconButton(onClick={more=true}){Icon(Icons.Outlined.MoreHoriz,"相机更多操作",tint=Ink)}
                 DropdownMenu(more,{more=false}){

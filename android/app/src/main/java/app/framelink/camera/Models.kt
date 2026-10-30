@@ -60,6 +60,10 @@ data class CameraFile(
     val localUri: String = "",
     val cameraDay: String = "",
     val originalPath: String = "",
+    /** 机身只提供文件时间时单独保留，不写入拍摄时间 */
+    val fileModifiedAt: Long = 0,
+    val fileCreatedAt: Long = 0,
+    val fileDay: String = "",
 ) {
     /** App保留的原片与系统相册URI分开，避免相册变动影响原片 */
     val savedUri
@@ -122,6 +126,11 @@ data class Photo(
     @get:Ignore
     val displayUri
         get() = files().firstOrNull { !it.raw && it.savedUri.isNotBlank() }?.savedUri ?: previewPath
+
+    /** 优先拍摄时间，缺失时仅以明确记录的文件时间辅助浏览排序 */
+    @get:Ignore
+    val browsingTime
+        get() = capturedAt.takeIf { it > 0 } ?: files().maxOfOrNull { it.fileModifiedAt.takeIf { time->time>0 } ?: it.fileCreatedAt } ?: 0
 }
 
 @Entity(tableName = "tasks", indices = [Index("state"), Index("createdAt")])
@@ -139,6 +148,23 @@ data class TransferTask(
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
+internal object CameraTimeSource {
+    const val CAPTURE = "CAPTURE_TIME"
+    const val FILE_MODIFIED = "FILE_MODIFIED"
+    const val FILE_METADATA = "FILE_METADATA"
+}
+
+internal object CameraProtocols {
+    const val SONY = "sony-ptpip"
+    const val CANON = "canon-ccapi"
+    const val USB = "usb-mtp"
+}
+
+internal object CameraConnectionKinds {
+    const val NETWORK="NETWORK"
+    const val USB_READER="USB_READER"
+}
+
 data class CameraInfo(
     val id: String = "",
     val model: String = "",
@@ -151,6 +177,9 @@ data class CameraInfo(
     val canLiveView: Boolean = false,
     val canFocus: Boolean = false,
     val hardwareVerified: Boolean = false,
+    val dateSource: String = CameraTimeSource.CAPTURE,
+    val canAutoImport: Boolean = true,
+    val connectionKind: String = CameraConnectionKinds.NETWORK,
 )
 
 data class CameraPage(val items: List<RemotePhoto> = emptyList(), val nextCursor: Long = 0)
@@ -182,6 +211,8 @@ data class ConnectionConfig(
     val password: String = "",
     val fingerprint: String = "",
     val guid: String = "",
+    val protocol: String = CameraProtocols.SONY,
+    val usbIdentity: String = "",
 )
 
 data class CameraStatus(

@@ -11,12 +11,19 @@ import (
 )
 
 func TestShutterCapabilityFollowsAdvertisedControls(t *testing.T) {
+	for _, model := range []string{"ILCE-7CM2", "ILCE-7M4", "ILCE-7M5", "ILCE-6700"} {
+		t.Run(model, func(t *testing.T) { sonyAdvertisedShutter(t, model) })
+	}
+}
+
+func sonyAdvertisedShutter(t *testing.T, model string) {
+	t.Helper()
 	for _, advertised := range []bool{false, true} {
 		controls := []uint16{0xD2C1}
 		if advertised {
 			controls = append(controls, 0xD2C2)
 		}
-		server, err := ptpiptest.Start(ptpiptest.Options{Dir: t.TempDir(), A6700: true, ControlCodes: controls})
+		server, err := ptpiptest.Start(ptpiptest.Options{Dir: t.TempDir(), A6700: true, Model: model, ControlCodes: controls})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -28,12 +35,19 @@ func TestShutterCapabilityFollowsAdvertisedControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var info struct{ CanCapture bool }
+		var info struct {
+			Model            string
+			CanCapture       bool
+			HardwareVerified bool
+		}
 		if err = json.Unmarshal([]byte(raw), &info); err != nil {
 			t.Fatal(err)
 		}
 		if info.CanCapture != advertised {
 			t.Fatalf("canCapture=%v, advertised=%v", info.CanCapture, advertised)
+		}
+		if info.Model != model || info.HardwareVerified {
+			t.Fatal("model identity changed or a synthetic camera was marked hardware verified")
 		}
 	}
 }

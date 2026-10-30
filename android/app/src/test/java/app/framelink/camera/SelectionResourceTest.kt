@@ -10,6 +10,16 @@ class SelectionResourceTest {
     private val jpeg=CameraFile(1,"DSC001.JPG",size=100,cameraDay="2026-10-29")
     private fun photo(files:List<CameraFile> = listOf(jpeg))=Photo("camera:1","camera:1","DSC001.JPG",PhotoSource.CAMERA.name,1234,Json.encode(files),contentId=1)
 
+    @Test fun legacyDraftIdentityStaysByteCompatibleWithNewOptionalMetadata(){
+        assertEquals("82bd26506a020d75acf5ccd1fdf250d3d14813263526fa96b18d20ae0b95e345",photo().selectionResourceKey())
+    }
+
+    @Test fun fileTimeChangesInvalidateOnlyTheAffectedResource(){
+        val file=jpeg.copy(fileModifiedAt=1000,fileDay="2026-10-23")
+        assertNotEquals(photo(listOf(file)).selectionResourceKey(),photo(listOf(file.copy(fileModifiedAt=2000))).selectionResourceKey())
+        assertEquals(photo(listOf(file)).selectionResourceKey(),photo(listOf(file.copy(originalPath="/original/photo.jpg"))).selectionResourceKey())
+    }
+
     @Test fun downloadAndFavoriteDoNotInvalidateTheSelection(){
         val original=photo()
         val imported=original.copy(mark=PhotoMark.FAVORITE.name,previewPath="/cache/new.jpg",filesJson=Json.encode(listOf(jpeg.copy(localUri="content://photos/1",originalPath="/original/1.jpg"))))

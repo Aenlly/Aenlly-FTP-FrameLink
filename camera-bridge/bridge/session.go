@@ -47,9 +47,11 @@ type Session struct {
 	metadata       string
 	newestIndex    *contentsIndex
 	controls       []uint16
+	backend        cameraBackend
 }
 
 type connectionConfig struct {
+	Protocol    string `json:"protocol"`
 	Host        string `json:"host"`
 	Port        int    `json:"port"`
 	User        string `json:"user"`
@@ -79,16 +81,26 @@ func decodeConfig(raw string) (connectionConfig, error) {
 	if net.ParseIP(cfg.Host) == nil {
 		return cfg, errors.New("请输入相机的局域网IP地址")
 	}
+	if cfg.Protocol == "" {
+		cfg.Protocol = protocolSony
+	}
+	if cfg.Protocol != protocolSony && cfg.Protocol != protocolCanon {
+		return cfg, errors.New("当前连接协议尚未适配")
+	}
 	if cfg.Port == 0 {
-		cfg.Port = 15740
+		if cfg.Protocol == protocolCanon {
+			cfg.Port = 8080
+		} else {
+			cfg.Port = 15740
+		}
 	}
 	if cfg.Port < 1 || cfg.Port > 65535 {
 		return cfg, errors.New("相机端口无效")
 	}
-	if cfg.User != "" && cfg.Fingerprint == "" {
+	if cfg.Protocol == protocolSony && cfg.User != "" && cfg.Fingerprint == "" {
 		return cfg, errors.New("访问认证需要相机显示的SSH指纹")
 	}
-	if cfg.GUID != "" {
+	if cfg.Protocol == protocolSony && cfg.GUID != "" {
 		if b, e := hex.DecodeString(cfg.GUID); e != nil || len(b) != 16 {
 			return cfg, errors.New("设备配对标识无效")
 		}
@@ -96,7 +108,7 @@ func decodeConfig(raw string) (connectionConfig, error) {
 	return cfg, nil
 }
 
-// Connect negotiates PTP/IP, verifies SSH identity when configured and reports real capabilities.
+// Connect selects the requested transport, verifies device identity and reports negotiated capabilities.
 func (s *Session) Connect(raw string) (string, error) {
 	cfg, err := decodeConfig(raw)
 	if err != nil {
@@ -119,6 +131,22 @@ func (s *Session) Connect(raw string) (string, error) {
 		}
 	}
 	opts.DialContext = dialer.DialContext
+	if cfg.Protocol == protocolCanon {
+		backend, info, err := connectCanon(ctx, cfg, dialer.DialContext)
+		if err != nil {
+			cancel()
+			return "", err
+		}
+		s.mu.Lock()
+		if s.ctx != ctx || ctx.Err() != nil {
+			s.mu.Unlock()
+			backend.Close()
+			return "", errors.New("连接已取消")
+		}
+		s.backend, s.identity = backend, backend.identity
+		s.mu.Unlock()
+		return info, nil
+	}
 	if cfg.GUID != "" {
 		b, _ := hex.DecodeString(cfg.GUID)
 		copy(opts.GUID[:], b)
@@ -199,6 +227,9 @@ func (s *Session) camera() (*ptpip.Client, context.Context, error) {
 
 // Connected observes transport state without sending a command to the camera.
 func (s *Session) Connected() bool {
+	if backend := s.alternate(); backend != nil {
+		return backend.Connected()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.client == nil || s.ctx == nil {
@@ -216,6 +247,9 @@ func (s *Session) Connected() bool {
 
 // Dates returns camera wall-clock capture days, encoded as YYYY-MM-DD without applying phone timezone.
 func (s *Session) Dates(slot int) (string, error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.Dates(slot)
+	}
 	s.op.Lock()
 	defer s.op.Unlock()
 	c, parent, err := s.camera()
@@ -239,6 +273,9 @@ func (s *Session) Dates(slot int) (string, error) {
 
 // ListPage fetches one camera page, preserving the camera's RAW/JPEG grouping.
 func (s *Session) ListPage(slot int, cursor int64) (string, error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.ListPage(slot, cursor)
+	}
 	if slot < 1 || slot > 2 || cursor < 0 {
 		return "", errors.New("存储卡或分页游标无效")
 	}
@@ -282,6 +319,9 @@ func (s *Session) ListPage(slot int, cursor int64) (string, error) {
 
 // Preview writes the camera-provided preview without decoding or altering it.
 func (s *Session) Preview(slot, contentID, fileID int, target string, large bool) error {
+	if backend := s.alternate(); backend != nil {
+		return backend.Preview(slot, contentID, fileID, target, large)
+	}
 	s.op.Lock()
 	defer s.op.Unlock()
 	c, parent, err := s.camera()
@@ -312,6 +352,9 @@ func (s *Session) Preview(slot, contentID, fileID int, target string, large bool
 
 // Download resumes only the same identity-specific target, preserving partial bytes on failure.
 func (s *Session) Download(raw, target string, progress Progress) (string, error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.Download(raw, target, progress)
+	}
 	var req downloadRequest
 	if err := json.Unmarshal([]byte(raw), &req); err != nil {
 		return "", err
@@ -388,6 +431,9 @@ func (s *Session) Download(raw, target string, progress Progress) (string, error
 
 // Properties reports only camera-supplied values. Unknown or dangerous controls remain read-only.
 func (s *Session) Properties() (string, error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.Properties()
+	}
 	s.op.Lock()
 	defer s.op.Unlock()
 	c, parent, err := s.camera()
@@ -430,6 +476,9 @@ func valueLabel(info propdb.Info, value int64) string {
 
 // SetProperty validates the exact value against the latest camera-supplied enum.
 func (s *Session) SetProperty(code int, value int64) error {
+	if backend := s.alternate(); backend != nil {
+		return backend.SetProperty(code, value)
+	}
 	if !s.op.TryLock() {
 		return errors.New("相机正在处理传输，请稍后修改参数")
 	}
@@ -459,6 +508,9 @@ func (s *Session) SetProperty(code int, value int64) error {
 
 // Capture is deliberately never retried. A timeout can mean the camera already fired.
 func (s *Session) Capture(autofocus bool) error {
+	if backend := s.alternate(); backend != nil {
+		return backend.Capture(autofocus)
+	}
 	if !s.op.TryLock() {
 		return errors.New("相机正在处理传输，本次快门未发送，请稍后再拍")
 	}
@@ -477,6 +529,9 @@ func (s *Session) Capture(autofocus bool) error {
 
 // StartLiveView opens the camera-advertised HTTP stream through the existing transport.
 func (s *Session) StartLiveView() error {
+	if backend := s.alternate(); backend != nil {
+		return backend.StartLiveView()
+	}
 	c, parent, err := s.camera()
 	if err != nil {
 		return err
@@ -494,6 +549,9 @@ func (s *Session) StartLiveView() error {
 
 // NextFrame returns JPEG bytes only; it does not queue old frames.
 func (s *Session) NextFrame() ([]byte, error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.NextFrame()
+	}
 	s.mu.Lock()
 	live := s.live
 	s.mu.Unlock()
@@ -511,10 +569,20 @@ func (s *Session) NextFrame() ([]byte, error) {
 	}
 	return frame.JPEG, err
 }
-func (s *Session) LiveMetadata() string { s.mu.Lock(); defer s.mu.Unlock(); return s.metadata }
+func (s *Session) LiveMetadata() string {
+	if backend := s.alternate(); backend != nil {
+		return backend.LiveMetadata()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.metadata
+}
 
 // FetchCaptured saves the camera's post-capture file and distinguishes a preview from original-size transfer.
 func (s *Session) FetchCaptured(target string) (string, error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.FetchCaptured(target)
+	}
 	if !s.op.TryLock() {
 		return "", errors.New("相机正在处理其他操作，稍后可浏览拍摄结果")
 	}
@@ -555,6 +623,10 @@ func (s *Session) FetchCaptured(target string) (string, error) {
 	return marshal(map[string]any{"ready": true, "path": target, "name": info.Filename, "size": n, "original": original})
 }
 func (s *Session) StopLiveView() {
+	if backend := s.alternate(); backend != nil {
+		backend.StopLiveView()
+		return
+	}
 	s.mu.Lock()
 	live := s.live
 	s.live = nil
@@ -566,6 +638,10 @@ func (s *Session) StopLiveView() {
 
 // CancelTransfer interrupts only the active transfer context, preserving its partial file.
 func (s *Session) CancelTransfer() {
+	if backend := s.alternate(); backend != nil {
+		backend.CancelTransfer()
+		return
+	}
 	s.mu.Lock()
 	cancel := s.transferCancel
 	s.mu.Unlock()
@@ -579,6 +655,8 @@ func (s *Session) Close() {
 	s.StopLiveView()
 	s.mu.Lock()
 	c, tunnel, cancel := s.client, s.ssh, s.cancel
+	backend := s.backend
+	s.backend = nil
 	s.client, s.ssh, s.cancel = nil, nil, nil
 	s.newestIndex = nil
 	s.controls = nil
@@ -591,6 +669,9 @@ func (s *Session) Close() {
 	}
 	if tunnel != nil {
 		tunnel.Close()
+	}
+	if backend != nil {
+		backend.Close()
 	}
 }
 func marshal(v any) (string, error) { b, err := json.Marshal(v); return string(b), err }

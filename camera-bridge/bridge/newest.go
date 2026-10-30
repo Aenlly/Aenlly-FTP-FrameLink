@@ -27,6 +27,9 @@ type contentsIndex struct {
 // ListNewestPage presents a stable newest-first snapshot. Offset is an opaque page cursor,
 // unlike ListPage's legacy camera timestamp. Only verified forward-read operations are used.
 func (s *Session) ListNewestPage(slot int, day string, offset int64) (string, error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.ListNewestPage(slot, day, offset)
+	}
 	if slot < 1 || slot > 2 || offset < 0 {
 		return "", errors.New("存储卡或分页游标无效")
 	}

@@ -56,6 +56,9 @@ func applyCaptureStorage(ctx context.Context, c *ptpip.Client, props []ptpip.Son
 }
 
 func (s *Session) ConfigureCaptureStorage(receive bool) (string, error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.ConfigureCaptureStorage(receive)
+	}
 	if !s.op.TryLock() {
 		return "", errors.New("相机正忙，请稍后再更改保存位置")
 	}
@@ -80,6 +83,9 @@ func (s *Session) ConfigureCaptureStorage(receive bool) (string, error) {
 // CapturePhoto separates shutter completion from optional host-file reception.
 // Single mode is verified before pressing and restored only after a successful release.
 func (s *Session) CapturePhoto(autofocus, single, receive bool) (result string, err error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.CapturePhoto(autofocus, single, receive)
+	}
 	if !s.op.TryLock() {
 		return "", errors.New("相机正在处理传输，本次快门未发送，请稍后再拍")
 	}
@@ -155,6 +161,9 @@ func (s *Session) CapturePhoto(autofocus, single, receive bool) (result string, 
 // FocusAt accepts normalized coordinates inside the actual preview image.
 // It selects the position, pulses AF and releases half-press without a full shutter press.
 func (s *Session) FocusAt(x, y float64) (err error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.FocusAt(x, y)
+	}
 	if math.IsNaN(x) || math.IsNaN(y) || x < 0 || x > 1 || y < 0 || y > 1 {
 		return errors.New("对焦位置无效")
 	}
@@ -215,6 +224,9 @@ func (s *Session) FocusAt(x, y float64) (err error) {
 
 // ShootingState exposes a small read-only snapshot for validation, never credentials.
 func (s *Session) ShootingState() (string, error) {
+	if backend := s.alternate(); backend != nil {
+		return backend.ShootingState()
+	}
 	s.op.Lock()
 	defer s.op.Unlock()
 	c, parent, err := s.camera()

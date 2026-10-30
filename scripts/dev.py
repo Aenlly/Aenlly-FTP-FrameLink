@@ -22,8 +22,11 @@ elif mode=='simulator':
     command=[str(root/'.tools/go/bin/go'),'run','./cmd/simulator','-dir',str(root/'artifacts/fixtures'),'-ssh']
     if len(sys.argv)>2: command+=['-preview',str(pathlib.Path(sys.argv[2]).resolve())]
     cwd=root/'camera-bridge'
+elif mode=='ccapi-simulator':
+    command=[str(root/'.tools/go/bin/go'),'run','./cmd/ccapi-simulator','-dir',str(root/'artifacts/visual-fixtures'),'-addr','127.0.0.1:18080']
+    cwd=root/'camera-bridge'
 else:
-    raise SystemExit('usage: dev.py cloud|web')
+    raise SystemExit('usage: dev.py cloud|web|simulator|ccapi-simulator')
 logs=root/'build-logs'
 logs.mkdir(exist_ok=True)
 with (logs/('dev-'+mode+'.log')).open('a') as log:

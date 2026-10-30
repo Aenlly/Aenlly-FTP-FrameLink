@@ -10,5 +10,6 @@ class CameraMediaIdentityTest {
         assertTrue(canReuseCameraFile(first, first.copy(originalPath = "/original/old.jpg")))
         assertFalse(canReuseCameraFile(first, first.copy(name = "DSC2.JPG")))
         assertFalse(canReuseCameraFile(first, first.copy(size = 101)))
+        assertFalse(canReuseCameraFile(first.copy(fileModifiedAt=1000),first.copy(fileModifiedAt=2000)))
     }
 }

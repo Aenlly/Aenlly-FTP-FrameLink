@@ -1194,7 +1194,11 @@ private fun Gallery(
     if (choosingDay)
         AlertDialog(
             onDismissRequest = { choosingDay = false },
-            title = { Text("按拍摄日期筛选") },
+            title = { Text(when {
+                source=="camera"&&camera.info?.dateSource in setOf(CameraTimeSource.FILE_MODIFIED,CameraTimeSource.FILE_METADATA)->"按文件日期筛选"
+                source=="local"&&photos.any { it.capturedAt<=0&&it.browsingTime>0 }->"按日期筛选"
+                else->"按拍摄日期筛选"
+            }) },
             text = {
                 LazyColumn {
                     item {
@@ -1213,6 +1217,7 @@ private fun Gallery(
                         else
                             all.filter { it.inLibrary }
                                 .map { photoDay(it) }
+                                .filter(String::isNotBlank)
                                 .distinct()
                                 .sortedDescending())
                     ) { day ->
@@ -1302,11 +1307,14 @@ internal fun ModalSheet(
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "", onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val saved = remember { runtime.savedConnection() }
+    var protocol by rememberSaveable { mutableStateOf(saved.protocol) }
+    var port by rememberSaveable { mutableStateOf(saved.port.toString()) }
     var host by rememberSaveable { mutableStateOf(saved.host) }
     var user by rememberSaveable { mutableStateOf(saved.user) }
     var password by remember { mutableStateOf(saved.password) }
@@ -1318,6 +1326,14 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
     val identityPrompt by runtime.cameraIdentityPrompt.collectAsStateWithLifecycle()
     var scanning by remember { mutableStateOf(false) }
     var found by remember { mutableStateOf<List<String>>(emptyList()) }
+    var usbDevices by remember { mutableStateOf<List<UsbCameraTarget>>(emptyList()) }
+    LaunchedEffect(protocol){
+        if(protocol==CameraProtocols.USB)while(true){
+            usbDevices=runtime.native.usbTargets()
+            if(usbDevices.none{it.key==host}&&usbDevices.size==1)host=usbDevices.single().key
+            kotlinx.coroutines.delay(1000)
+        }
+    }
     fun closeConnection() {
         if (status.connecting || identityPrompt != null) runtime.disconnect()
         onClose()
@@ -1335,9 +1351,9 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
                 onClick = {
                     keyboard?.hide()
                     submitted = true
-                    runtime.connect(ConnectionConfig(host = host.trim(), user = if (authenticate) user.trim() else "", password = if (authenticate) password else ""))
+                    runtime.connect(ConnectionConfig(host = host.trim(), port=if(protocol==CameraProtocols.USB)0 else port.toIntOrNull()?:0, user = if (protocol!=CameraProtocols.USB&&authenticate) user.trim() else "", password = if (protocol!=CameraProtocols.USB&&authenticate) password else "",protocol=protocol))
                 },
-                enabled = host.isNotBlank() && (!authenticate || (user.isNotBlank() && password.isNotBlank())) && !status.connecting && identityPrompt == null,
+                enabled = (if(protocol==CameraProtocols.USB)usbDevices.any{it.key==host}else host.isNotBlank() && (port.toIntOrNull()?:0) in 1..65535 && (!authenticate || (user.isNotBlank() && password.isNotBlank()))) && !status.connecting && identityPrompt == null,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("camera-connect-action"),
                 shape = UiTokens.control,
                 colors = ButtonDefaults.buttonColors(containerColor = Brand),
@@ -1349,15 +1365,38 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
             }
         }
     }) {
-        Info("Sony 网络浏览与遥控 · 同一Wi-Fi或相机热点。其他具备FTP上传功能的相机可使用首页“FTP接收”。")
+        FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            listOf(CameraProtocols.SONY to "Sony 网络",CameraProtocols.CANON to "佳能 CCAPI",CameraProtocols.USB to "USB读卡").forEach{(value,title)->
+                FilterChip(selected=protocol==value,onClick={
+                    if(protocol!=value){
+                        protocol=value
+                        port=if(value==saved.protocol)saved.port.toString()else if(value==CameraProtocols.CANON)"8080"else"15740"
+                        host=if(value==saved.protocol)saved.host else""
+                        user=if(value==saved.protocol)saved.user else""
+                        password=if(value==saved.protocol)saved.password else""
+                        authenticate=value!=CameraProtocols.USB&&if(value==saved.protocol)(saved.host.isBlank()||saved.user.isNotBlank())else value==CameraProtocols.SONY
+                        found=emptyList()
+                    }
+                },label={Text(title)},enabled=!status.connecting&&identityPrompt==null)
+            }
+        }
+        if(protocol==CameraProtocols.USB){
+            Info("USB读卡 · 用数据线将相机接到手机，必要时开启OTG，并在机身选择USB读卡模式。此入口用于浏览和原片导入，不提供取景遥控。")
+            if(usbDevices.isEmpty())Info("尚未发现PTP/MTP设备。若系统已将相机或读卡器识别为外置存储，可从首页“本机导入”选择文件。")
+            usbDevices.forEach{device->
+                FilterChip(selected=host==device.key,onClick={host=device.key},label={Text(device.name)},enabled=!status.connecting)
+            }
+            Info("连接时请允许系统USB访问提示。首次连接及目标机型兼容性仍需真机核对。")
+        }else{
+        Info(if(protocol==CameraProtocols.CANON)"CCAPI测试适配 · 先在机身启用CCAPI，再将手机和相机连到同一网络。功能由机身实际公布的端点决定，目标机型仍待实测。"else"Sony 网络浏览与遥控 · 同一Wi-Fi或相机热点。其他具备FTP上传功能的相机可使用首页“FTP接收”。")
         Panel {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.CameraAlt, null, tint = Brand, modifier = Modifier.size(22.dp))
-                Text("开启电脑遥控与访问身份验证", Modifier.weight(1f).padding(start = 10.dp), fontSize = 13.sp)
+                Text(if(protocol==CameraProtocols.CANON)"启用机身CCAPI"else"开启电脑遥控与访问身份验证", Modifier.weight(1f).padding(start = 10.dp), fontSize = 13.sp)
                 TextButton(onClick = { showPreparation = !showPreparation }) { Text(if (showPreparation) "收起" else "设置步骤", fontSize = 12.sp) }
             }
             androidx.compose.animation.AnimatedVisibility(showPreparation) {
-                Info("① 网络 → 连接/电脑遥控 → 电脑遥控 → 开\n② 网络 → 网络选项 → 访问身份验证信息\n③ 首次填写相机地址、用户名和密码，指纹自动读取后确认\n连接前请断开其他控制App的相机会话。")
+                Info(if(protocol==CameraProtocols.CANON)"① 按Canon官方说明确认机型、固件和CCAPI启用条件\n② 在机身CCAPI连接设置读取HTTP地址及端口\n③ 填写地址；机身设置了HTTP认证时，再启用下方账号密码\n首次启用可能需要Canon官方工具；已启用后可直接连接。"else"① 网络 → 连接/电脑遥控 → 电脑遥控 → 开\n② 网络 → 网络选项 → 访问身份验证信息\n③ 首次填写相机地址、用户名和密码，指纹自动读取后确认\n连接前请断开其他控制App的相机会话。")
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -1373,7 +1412,7 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
             ) {
                 Text("打开Wi-Fi设置", fontSize = 10.sp)
             }
-            OutlinedButton(
+            if(protocol==CameraProtocols.SONY)OutlinedButton(
                 enabled = !scanning,
                 onClick = {
                     scanning = true
@@ -1391,7 +1430,7 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
                 Text(if (scanning) "发现中…" else "发现相机", fontSize = 10.sp)
             }
         }
-        found.forEach { address ->
+        if(protocol==CameraProtocols.SONY)found.forEach { address ->
             AssistChip(onClick = { host = address }, label = { Text(address) })
         }
         OutlinedTextField(
@@ -1405,6 +1444,9 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
             keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
             modifier = Modifier.fillMaxWidth(),
         )
+        OutlinedTextField(port,{port=it.filter(Char::isDigit).take(5)},label={Text("相机端口")},singleLine=true,
+            enabled=!status.connecting&&identityPrompt==null,
+            keyboardOptions=KeyboardOptions(keyboardType=androidx.compose.ui.text.input.KeyboardType.Number),modifier=Modifier.fillMaxWidth())
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("使用相机访问身份验证", Modifier.weight(1f), fontSize = 13.sp)
             Switch(
@@ -1440,7 +1482,8 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        Info(if (authenticate) "指纹自动读取，首次确认即可。认证信息加密保存在本机，下次无需重复输入。" else "仅在机身已关闭访问身份验证时使用此方式；首次连接可能需要在相机上配对。")
+        Info(if(protocol==CameraProtocols.CANON)"地址、端口和认证信息在成功连接后保存在本机。CCAPI使用机身HTTP认证，无需填写Sony的SSH指纹。"else if (authenticate) "指纹自动读取，首次确认即可。认证信息加密保存在本机，下次无需重复输入。" else "仅在机身已关闭访问身份验证时使用此方式；首次连接可能需要在相机上配对。")
+        }
     }
     identityPrompt?.let { prompt ->
         val changed = prompt.previousFingerprint.isNotBlank()
@@ -2551,7 +2594,7 @@ private fun PhotoViewer(
                     Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(8.dp).background(Color.Black.copy(alpha=.42f),RoundedCornerShape(24.dp)).padding(horizontal=4.dp,vertical=2.dp),verticalAlignment=Alignment.CenterVertically){
                         IconButton(onClick=onClose){Icon(Icons.Outlined.ArrowBack,"关闭照片",tint=Color.White)}
                         Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally){
-                            Text(SimpleDateFormat("M月d日 · HH:mm",Locale.CHINA).format(Date(photo.capturedAt)),color=Color.White,fontSize=14.sp,fontWeight=FontWeight.Medium)
+                            Text(if(photo.browsingTime<=0)"日期未提供"else (if(photo.capturedAt<=0)"文件时间 · "else"")+SimpleDateFormat("M月d日 · HH:mm",Locale.CHINA).format(Date(photo.browsingTime)),color=Color.White,fontSize=14.sp,fontWeight=FontWeight.Medium)
                             Text(if(original!=null)"已导入原片 · "+photo.formatTitle() else if(photo.imported)"已导入RAW · 当前为预览" else if(!cameraConnected&&photo.source==PhotoSource.CAMERA.name)"离线缓存 · 相机已断开" else if(!resourceConfirmed)"缓存预览 · 需重新核对相机" else "相机预览 · "+photo.formatTitle(),
                                 fontSize=11.sp,color=Color.White.copy(alpha=.72f),maxLines=1,overflow=TextOverflow.Ellipsis)
                         }
@@ -2666,7 +2709,8 @@ private fun PhotoSelectionAction(selected: Boolean, onClick: () -> Unit,enabled:
 
 private fun photoDay(photo: Photo): String =
     photo.files().firstOrNull()?.cameraDay?.takeIf { it.isNotBlank() }
-        ?: SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date(photo.capturedAt))
+        ?: if(photo.capturedAt>0)SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date(photo.capturedAt))
+        else photo.files().fileTimeDay()
 
 @Composable
 internal fun DarkDialogBars() {

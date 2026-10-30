@@ -11,10 +11,11 @@ import zipfile
 
 root=pathlib.Path(__file__).resolve().parents[1]
 artifacts=root/'artifacts'
-version='0.1.16'
+version='0.1.17'
 ios_version='0.1.6'
 checks=['cloud','web','bridge','upstream','android-tests-build','android-lint','android-instrument','android-instrument-ui','android-instrument-gallery','android-instrument-usability','android-instrument-live','android-visual-phone','android-visual-small','android-visual-gesture','android-identity-small','ftp-benchmark','ios','ios-core','ios-ui','ios-device']
 checks.append('android-instrument-live-flow')
+checks+=['bridge-race']
 for name in checks:
     result=root/'build-logs'/f'{name}.exit'
     if not result.exists() or result.read_text().strip()!='0': raise SystemExit(f'检查尚未通过：{name}')
@@ -89,6 +90,12 @@ tablet=json.loads(tablet_path.read_text())
 if not tablet.get('passed')or len(tablet.get('profiles',[]))!=9 or tablet.get('apkSha256')!=result['apkSha256']or tablet.get('diagnosticSha256')!=result['diagnosticApk']['sha256']:
     raise SystemExit('平板窗口验收未通过或不属于当前候选包')
 result['tabletUiEvidence']=tablet
+protocol_path=artifacts/f'protocol-ui-{version}-evidence.json'
+if not protocol_path.exists():raise SystemExit('缺少多协议同包验收记录')
+protocol=json.loads(protocol_path.read_text())
+if not protocol.get('passed')or protocol.get('apkSha256')!=result['apkSha256']or protocol.get('diagnosticSha256')!=result['diagnosticApk']['sha256']:
+    raise SystemExit('多协议记录未通过或不属于当前候选包')
+result['protocolEvidence']=protocol
 def freeze_ui_evidence(kind,source,data):
     directory=artifacts/f'{kind}-ui-{version}'
     saved=directory/'evidence.json'
@@ -106,6 +113,7 @@ def freeze_ui_evidence(kind,source,data):
         if hashlib.sha256(path.read_bytes()).hexdigest()!=item['sha256']:raise SystemExit('界面证据文件散列不一致：'+str(relative))
         target=directory/relative;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(path,target)
     logs=[p['log']for p in data.get('profiles',[])if p.get('log')]
+    logs+=list(data.get('logs',[]))
     if data.get('log'):logs.append(data['log'])
     for name in logs:
         relative=pathlib.Path(name)
@@ -117,6 +125,7 @@ result['tabletUiEvidenceDirectory']=freeze_ui_evidence('tablet',tablet_path,tabl
 shutil.copyfile(tablet_path,artifacts/f'tablet-ui-{version}-evidence.json')
 if result.get('galleryUiEvidence'):result['galleryUiEvidenceDirectory']=freeze_ui_evidence('gallery',gallery_evidence,result['galleryUiEvidence'])
 if result.get('cameraUiEvidence'):result['cameraUiEvidenceDirectory']=freeze_ui_evidence('camera',ui_evidence,result['cameraUiEvidence'])
+result['protocolUiEvidenceDirectory']=freeze_ui_evidence('protocol',protocol_path,protocol)
 alias=artifacts/f'FrameLink-{version}-glass-{datetime.datetime.now().strftime("%Y%m%d-%H%M")}-debug.apk'
 shutil.copyfile(apk,alias)
 result['timestampedApk']=alias.name

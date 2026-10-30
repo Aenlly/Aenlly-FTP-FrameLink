@@ -30,6 +30,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -57,7 +58,11 @@ class CameraRuntime(
     val batches = SelectionBatchRepository(context, database)
     val photoRemoval = PhotoRemovalRepository(context, database)
     val native = NativeCamera(context)
-    val photos = database.photos().observe()
+    val photos = database.photos().observe().map { rows ->
+        if(rows.any { it.capturedAt<=0&&it.files().any { file->file.fileModifiedAt>0 } })
+            rows.sortedWith(compareByDescending<Photo> { it.browsingTime }.thenBy { it.id })
+        else rows
+    }
     val tasks = database.tasks().observe()
     private val mutableCamera = MutableStateFlow(CameraStatus())
     val camera = mutableCamera.asStateFlow()
@@ -212,7 +217,7 @@ class CameraRuntime(
                     }
                 settings.put("camera.guid", guid)
                 var config = input.copy(guid = guid)
-                if (config.user.isNotBlank()) {
+                if (config.protocol==CameraProtocols.SONY && config.user.isNotBlank()) {
                     mutableCamera.value = CameraStatus(connecting = true, message = "正在读取相机身份")
                     val identity = native.inspectIdentity(config.host)
                     if (connectionGeneration.get() != generation) return@launch
@@ -231,9 +236,10 @@ class CameraRuntime(
                     config = config.copy(fingerprint = identity.fingerprint)
                 }
                 val info = native.connect(config)
+                if(config.protocol==CameraProtocols.USB)config=config.copy(usbIdentity=info.id)
                 val choices = native.properties()
                 if (info.canCapture) runCatching {
-                    native.configureCaptureStorage(settings.get("capture.auto_import") == "true")
+                    native.configureCaptureStorage(info.canAutoImport && settings.get("capture.auto_import") == "true")
                 }.onFailure { notice.value = "已连接，但保存位置未能确认；拍摄前请检查机身遥控拍摄设置" }
                 val dates = runCatching { native.dates(1) }.getOrDefault(emptyList())
                 synchronized(this@CameraRuntime) {
@@ -263,7 +269,7 @@ class CameraRuntime(
                     if (connectionGeneration.get() == generation) {
                         android.util.Log.e("FrameLink", "Camera connection failed", error)
                         native.close()
-                        mutableCamera.value = CameraStatus(message = cameraConnectionMessage(error))
+                        mutableCamera.value = CameraStatus(message = cameraConnectionMessage(error,input.protocol))
                         notice.value = mutableCamera.value.message
                     }
                 }
@@ -1088,7 +1094,7 @@ class CameraRuntime(
             return it
         }
         val generation = connectionGeneration.get()
-        val receive = settings.get("capture.auto_import") == "true"
+        val receive = mutableCamera.value.info?.canAutoImport!=false && settings.get("capture.auto_import") == "true"
         captureBusy.value = true
         val job =
             scope.launch(Dispatchers.Main.immediate) {
@@ -1192,6 +1198,10 @@ class CameraRuntime(
     suspend fun awaitPhotoWork() { captureJob?.join(); postCaptureJob?.join(); focusJob?.join() }
 
     suspend fun setCaptureImport(receive: Boolean): Boolean = withContext(Dispatchers.IO) {
+        if(receive&&mutableCamera.value.info?.canAutoImport==false){
+            notice.value="此连接不提供拍后电脑队列，请从相机图库选择导入"
+            return@withContext false
+        }
         try {
             if (mutableCamera.value.info != null) native.configureCaptureStorage(receive)
             settings.put("capture.auto_import", receive.toString())
@@ -1205,6 +1215,9 @@ class CameraRuntime(
     /** 只接收已存在的机身待传文件，不触发拍摄、不删除相机原片 */
     @Synchronized
     fun receivePendingCaptures(): Job {
+        if(mutableCamera.value.info?.canAutoImport==false)return scope.launch{
+            notice.value="此连接不提供电脑待传文件，请从相机图库选择导入"
+        }
         postCaptureJob?.takeIf { it.isActive }?.let { return it }
         captureJob?.takeIf { it.isActive }?.let { notice.value = "请等当前拍摄完成"; return it }
         val generation = connectionGeneration.get()

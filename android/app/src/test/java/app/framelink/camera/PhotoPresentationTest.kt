@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PhotoPresentationTest {
+    @Test fun reconnectRequirementsFollowTheActualTransport(){
+        assertTrue(ConnectionConfig(host="192.168.1.3",port=8080,user="camera",password="secret",protocol=CameraProtocols.CANON).canReconnectDirectly())
+        assertFalse(ConnectionConfig(host="192.168.1.3",port=8080,user="camera",protocol=CameraProtocols.CANON).canReconnectDirectly())
+        assertTrue(ConnectionConfig(host="/dev/bus/usb/001/002",port=0,protocol=CameraProtocols.USB,usbIdentity="verified-device").canReconnectDirectly())
+        assertFalse(ConnectionConfig(host="/dev/bus/usb/001/002",port=0,protocol=CameraProtocols.USB).canReconnectDirectly())
+    }
     @Test fun pairedFormatsKeepIndependentImportState() {
         val photo = Photo("one", "one", "DSC001.JPG", PhotoSource.CAMERA.name, 0,
             Json.encode(listOf(CameraFile(name="DSC001.JPG",originalPath="/app/media/a.jpg"),CameraFile(name="DSC001.ARW"))))

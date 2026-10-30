@@ -23,13 +23,23 @@ internal fun Photo.importTitle(): String = files().groupBy { it.formatTitle() }.
 
 internal fun Photo.hasUnimportedFiles(): Boolean = files().any { it.image && it.savedUri.isBlank() }
 
+/** 文件日期与浏览排序采用同一份文件时间，RAW/JPEG跨日写入也不会错分日期 */
+internal fun List<CameraFile>.fileTimeDay():String = maxByOrNull { it.fileModifiedAt.takeIf { time->time>0 }?:it.fileCreatedAt }?.fileDay.orEmpty()
+
 internal fun CameraInfo.displayName(): String = when (model) {
     "ILCE-7CM2" -> "Sony α7C II"
+    "ILCE-7M4" -> "Sony α7 IV"
+    "ILCE-7M5" -> "Sony α7 V"
+    "ILCE-6700" -> "Sony α6700"
     else -> model.ifBlank { manufacturer.ifBlank { "相机" } }
 }
 
-internal fun ConnectionConfig.canReconnectDirectly(): Boolean = host.isNotBlank() &&
-    (user.isBlank() || (password.isNotBlank() && fingerprint.isNotBlank()))
+internal fun ConnectionConfig.canReconnectDirectly(): Boolean = host.isNotBlank() && when(protocol){
+    CameraProtocols.USB->usbIdentity.isNotBlank()
+    CameraProtocols.CANON->port in 1..65535&&(user.isBlank()||password.isNotBlank())
+    CameraProtocols.SONY->port in 1..65535&&(user.isBlank()||(password.isNotBlank()&&fingerprint.isNotBlank()))
+    else->false
+}
 
 internal enum class GalleryLayout(val key: String, val title: String, val columns: Int) {
     SMALL("small", "小图", 5), MEDIUM("medium", "中图", 3), LARGE("large", "大图", 2), LIST("list", "列表", 1);

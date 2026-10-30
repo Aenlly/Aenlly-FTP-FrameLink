@@ -19,6 +19,7 @@ checks = {
     'cloud': ('cloud', [['mvn', '-B', 'test']]),
     'cloud-package': ('cloud', [['mvn', '-B', 'package', '-DskipTests']]),
     'bridge': ('camera-bridge', [['go', 'mod', 'tidy'], ['go', 'test', './...']]),
+    'bridge-race': ('camera-bridge', [['go','test','-race','./bridge','-timeout','90s']]),
     'upstream': ('third_party/alpha2go', [['go', 'test', './...']]),
     'android': ('.', [['sh', 'scripts/build-android.sh']]),
     'android-deps': ('android', [['./gradlew', '--no-daemon', ':app:dependencies', '--configuration', 'debugCompileClasspath']]),

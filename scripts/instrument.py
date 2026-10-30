@@ -11,12 +11,15 @@ serial='emulator-5580'
 base=[adb,'-s',serial]
 name=subprocess.check_output(base+['emu','avd','name'],text=True)
 if 'FrameLinkQA' not in name: raise SystemExit('设备不是本项目验收模拟器，停止安装')
-commands=[['shell','settings','put','secure','immersive_mode_confirmations','confirmed'],['reverse','tcp:15740','tcp:15740'],['reverse','tcp:16001','tcp:16001'],['install','-r',str(root/'android/app/build/outputs/apk/debug/app-debug.apk')],['install','-r',str(root/'android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk')],['shell','am','instrument','-w','-r','app.framelink.camera.test/androidx.test.runner.AndroidJUnitRunner']]
+commands=[['shell','settings','put','secure','immersive_mode_confirmations','confirmed'],['reverse','tcp:15740','tcp:15740'],['reverse','tcp:18080','tcp:18080'],['reverse','tcp:16001','tcp:16001'],['install','-r',str(root/'android/app/build/outputs/apk/debug/app-debug.apk')],['install','-r',str(root/'android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk')],['shell','am','instrument','-w','-r','app.framelink.camera.test/androidx.test.runner.AndroidJUnitRunner']]
 mode=sys.argv[1] if len(sys.argv)>1 else 'all'
 prefix='app.framelink.camera.'
 classes={'all':','.join(prefix+x for x in ['LocalAcceptanceTest','NativeProtocolAcceptanceTest','NativeUiAcceptanceTest','FtpClientAcceptanceTest','PhotoManagementAcceptanceTest','CameraIdentityAcceptanceTest','GalleryInteractionAcceptanceTest','SelectionBatchesAcceptanceTest','LiveViewUsabilityAcceptanceTest','CameraUsabilityAcceptanceTest']), 'native':prefix+'NativeProtocolAcceptanceTest', 'ui':prefix+'NativeUiAcceptanceTest', 'ftp':prefix+'FtpClientAcceptanceTest', 'ftp-ui':prefix+'FtpClientAcceptanceTest#installedUiShowsCoreActionsConnectsAndDownloads', 'visual':prefix+'VisualAcceptanceTest','photos':prefix+'PhotoManagementAcceptanceTest','identity':prefix+'CameraIdentityAcceptanceTest','gallery':prefix+'GalleryInteractionAcceptanceTest','batches':prefix+'SelectionBatchesAcceptanceTest','live':prefix+'LiveViewUsabilityAcceptanceTest','usability':prefix+'CameraUsabilityAcceptanceTest'}
 classes['live-flow']=prefix+'LiveViewUsabilityAcceptanceTest#cameraWorkflowStaysConnectedThroughRulerFocusShotAlbumAndRotation'
 classes['live-menu']=prefix+'LiveViewUsabilityAcceptanceTest#compactMenusKeepBodyDefaultAndReadableTargetsAcrossRotation'
+classes['canon']=prefix+'CanonProtocolAcceptanceTest'
+classes['usb']=prefix+'UsbConnectionUiAcceptanceTest'
+classes['all']+=','+classes['canon']+','+classes['usb']
 if mode not in classes: raise SystemExit('未知验收模式：'+mode)
 if mode in ['all', 'identity', 'gallery', 'ui']:
     # 仅测试设备需要绑定反向端口22；业务App连接相机不需要root

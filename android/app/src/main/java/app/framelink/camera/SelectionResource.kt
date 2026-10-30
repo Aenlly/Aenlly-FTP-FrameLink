@@ -4,6 +4,7 @@ package app.framelink.camera
 internal fun Photo.selectionResourceKey(): String = MediaFiles.key(Json.encode(listOf(
     sourceKey, source, slot, contentId, capturedAt,
     files().sortedWith(compareBy<CameraFile> { it.fileId }.thenBy { it.name }).map {
-        listOf(it.fileId, it.name, it.size, it.cameraDay, it.cameraPath)
+        listOf(it.fileId, it.name, it.size, it.cameraDay, it.cameraPath) +
+            if(it.fileModifiedAt>0||it.fileCreatedAt>0||it.fileDay.isNotBlank())listOf(it.fileModifiedAt,it.fileCreatedAt,it.fileDay)else emptyList()
     },
 )))

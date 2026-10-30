@@ -20,8 +20,14 @@ internal fun sameCameraFingerprint(expected: String, observed: String): Boolean 
     return expected.isNotBlank() && normalized(expected) == normalized(observed)
 }
 
-internal fun cameraConnectionMessage(error: Exception): String {
+internal fun cameraConnectionMessage(error: Exception,protocol:String=CameraProtocols.SONY): String {
     val detail = error.message.orEmpty()
+    if(protocol==CameraProtocols.USB)return detail.ifBlank{"USB连接未完成，请检查OTG、授权和机身读卡模式"}
+    if(protocol==CameraProtocols.CANON)return when{
+        "connection refused" in detail->"机身未接受CCAPI连接，请核对IP、HTTP端口并确认相机已启用CCAPI"
+        "timeout" in detail||"deadline exceeded" in detail->"CCAPI连接超时，请确认相机未休眠、手机与相机在同一网络，且机身HTTP服务已开启"
+        else->detail.ifBlank{"CCAPI连接未完成，请核对机身HTTP设置"}
+    }
     return when {
         "does not match" in detail && "fingerprint" in detail ->
             "相机身份与刚确认的指纹不一致，请重新读取并核对后连接"

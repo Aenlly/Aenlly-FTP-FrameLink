@@ -11,6 +11,19 @@ import (
 )
 
 func TestCardBrowseAndRawJpegDownloadPreservesBytes(t *testing.T) {
+	sonyCardRoundTrip(t, "ILCE-6700")
+}
+
+// These synthetic model variants exercise the shared wire implementation. They
+// are not captures from the named cameras or evidence of hardware compatibility.
+func TestModernSonyModelVariantsShareCardProtocol(t *testing.T) {
+	for _, model := range []string{"ILCE-7CM2", "ILCE-7M4", "ILCE-7M5", "ILCE-6700"} {
+		t.Run(model, func(t *testing.T) { sonyCardRoundTrip(t, model) })
+	}
+}
+
+func sonyCardRoundTrip(t *testing.T, model string) {
+	t.Helper()
 	dir := t.TempDir()
 	jpeg := []byte("camera-original-jpeg-payload")
 	raw := make([]byte, 5<<20)
@@ -23,7 +36,7 @@ func TestCardBrowseAndRawJpegDownloadPreservesBytes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "DSC00001.ARW"), raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	server, err := ptpiptest.Start(ptpiptest.Options{Dir: dir, A6700: true})
+	server, err := ptpiptest.Start(ptpiptest.Options{Dir: dir, A6700: true, Model: model, SerialNumber: "fixture-" + model})
 	if err != nil {
 		t.Fatal(err)
 	}

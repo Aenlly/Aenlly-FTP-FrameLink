@@ -21,6 +21,8 @@ SwiftUI原生应用，最低iOS17，适配iPhone与iPad。四个入口为相机�
 
 0.1.10修正慢快门时长、取消后的导入发布，以及同一照片落盘后的参数刷新。缓存复制与原片下载共用发布检查，独立暂存文件在取消后清理，先成功的文件保留。40项核心测试通过，UI与iPhone交互仍待验。[修正记录](../docs/acceptance/2026-10-31-ios-import-publication-0.1.10.md)
 
+模拟器阻断已定位为Xcode27.2系统组件未更新，官方安装流程正等待管理员认证。[环境恢复及专项验收](../docs/acceptance/2026-10-31-ios-simulator-environment.md)
+
 ## 构建与运行
 
 准备完整Xcode、iOS SDK和Go工具链。`scripts/bootstrap.py`可准备固定的Go与Android命令行工具，iOS构建不需要安装Android平台SDK或NDK；构建脚本会补齐固定版本的gomobile。
@@ -44,6 +46,8 @@ swift test --package-path ios
 swift run --package-path ios FrameLinkCoreCheck
 # 先在另一终端运行本机模拟相机，参照camera-bridge/README.md
 python3 scripts/check-ios-ui.py --device <专用模拟器UDID>
+# 只运行凭据、参数刷新与缓存清理四项，不连接真实相机
+python3 scripts/check-ios-ui.py --suite boundaries --device <FrameLink-QA专用UDID>
 ```
 
 `FrameLinkCore`保存原子JSON索引、相对文件路径、原片、选择记录与任务。运行中的任务在重启后变为“已中断”，由用户重试。核心检查程序可以在仅有Swift命令行工具时执行；UI与协议桥编译需要完整Xcode。

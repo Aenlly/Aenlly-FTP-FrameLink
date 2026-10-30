@@ -1,17 +1,25 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  private func captureBoundaryEvidence(_ app: XCUIApplication, name: String) {
+    let shot = XCUIScreen.main.screenshot()
+    print("QA_WINDOW name=\(name) app=\(app.frame) imagePoints=\(shot.image.size) imageScale=\(shot.image.scale) os=\(ProcessInfo.processInfo.operatingSystemVersionString)")
+    let attachment = XCTAttachment(screenshot: shot); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+  }
   func testOpenPhotoInformationRefreshesWhenSamePhotoGetsLocalOriginal() throws {
     continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-metadata-fixture", "--ui-metadata-upgrade-fixture"]; app.launch()
     app.buttons["图库"].tap(); app.buttons["查看 QA_6.jpg"].tap(); app.buttons["文件信息"].tap()
     XCTAssertTrue(app.staticTexts["ISO 100"].waitForExistence(timeout: 5))
     XCTAssertTrue(app.staticTexts["0.8 秒"].exists)
     XCTAssertTrue(app.staticTexts["ISO 400"].waitForExistence(timeout: 8))
     XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "本机原片")).firstMatch.exists)
+    captureBoundaryEvidence(app, name: "metadata-original-published")
   }
   func testPhotoMetadataUsesFileSettingsAndCacheClearKeepsImportedPhoto() throws {
     continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-metadata-fixture"]; app.launch()
     app.buttons["图库"].tap(); app.buttons["查看 QA_6.jpg"].tap(); app.buttons["文件信息"].tap()
     XCTAssertTrue(app.staticTexts["ISO 400"].waitForExistence(timeout: 5))
@@ -24,12 +32,14 @@ final class FrameLinkUITests: XCTestCase {
     app.navigationBars.buttons.element(boundBy: 0).tap(); app.buttons["图库"].tap()
     app.buttons["查看 QA_6.jpg"].tap(); app.buttons["文件信息"].tap()
     XCTAssertTrue(app.staticTexts["ISO 400"].waitForExistence(timeout: 5))
+    captureBoundaryEvidence(app, name: "metadata-after-cache-clear")
   }
   private func assertEmpty(_ field: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
     XCTAssertTrue(["", field.placeholderValue ?? ""].contains(field.value as? String ?? ""), file: file, line: line)
   }
   func testCameraUnsavedEndpointAndAccountEditsClearCredentialsButSelectingBPreservesThem() throws {
     continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-foundations"]; app.launch()
     app.buttons["相机连接设置"].tap(); app.buttons["qa-a.local:15740 · qa-user-a"].tap()
     app.switches["保存此连接的账号和密码"].tap()
@@ -44,9 +54,11 @@ final class FrameLinkUITests: XCTestCase {
     app.textFields["相机密码"].tap(); app.textFields["相机密码"].typeText("manual-secret")
     app.textFields["例如 192.168.1.20"].tap(); app.textFields["例如 192.168.1.20"].typeText("c")
     assertEmpty(app.textFields["相机用户名"]); assertEmpty(app.textFields["相机密码"])
+    captureBoundaryEvidence(app, name: "camera-credential-boundary")
   }
   func testFTPUnsavedEndpointAndAccountEditsClearCredentialsButSelectingBPreservesThem() throws {
     continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-foundations"]; app.launch()
     app.buttons["FTP 客户端"].tap(); app.buttons["ftp-qa-a.local:21 · qa-user-a"].tap()
     app.switches["保存此连接的账号和密码"].tap()
@@ -61,6 +73,7 @@ final class FrameLinkUITests: XCTestCase {
     app.textFields["密码"].tap(); app.textFields["密码"].typeText("manual-secret")
     app.switches["使用显式FTPS"].tap()
     assertEmpty(app.textFields["用户名"]); assertEmpty(app.textFields["密码"])
+    captureBoundaryEvidence(app, name: "ftp-credential-boundary")
   }
   func testSavedConnectionsForgetIndependentlyAndUnsavedInputDoesNotReturn() throws {
     continueAfterFailure = false

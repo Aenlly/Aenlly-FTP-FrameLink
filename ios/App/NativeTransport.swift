@@ -79,6 +79,9 @@ final class NativeTransport: @unchecked Sendable {
   func set(_ property: CameraProperty, value: Int64) async throws {
     try await perform { try self.session.setProperty(property.code, value: value) }
   }
+  func creativeLookDiagnostics() async throws -> CreativeLookDiagnostics {
+    try await perform { try Self.decode(Self.result { self.session.creativeLookDiagnostics($0) }, as: CreativeLookDiagnostics.self) }
+  }
   func preview(_ photo: Photo, file: CameraFile, target: URL, large: Bool) async throws {
     try await perform {
       try self.session.preview(

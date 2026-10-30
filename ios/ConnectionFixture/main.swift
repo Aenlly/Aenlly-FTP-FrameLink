@@ -5,6 +5,21 @@ import FrameLinkCore
 @main struct ConnectionFixture {
   @MainActor static func main() async {
     let values = Array(CommandLine.arguments.dropFirst())
+    if values.count == 4, values[0] == "--look-request", let target = Int64(values[2]) {
+      do {
+        let snapshot = try lookSnapshot(URL(fileURLWithPath: values[1]))
+        print(try SonyCreativeLookPolicy.encodedWrite(properties: snapshot.0, diagnostics: snapshot.1, target: target, protocolID: values[3]))
+      } catch { FileHandle.standardError.write(Data("look request rejected\n".utf8)); exit(4) }
+      return
+    }
+    if values.count == 3, values[0] == "--look-verify", let target = Int64(values[2]) {
+      do {
+        let snapshot = try lookSnapshot(URL(fileURLWithPath: values[1]))
+        guard let property = SonyCreativeLookPolicy.property(snapshot.0), property.value == target, let preset = SonyCreativeLookPreset(rawValue: property.value) else { throw CreativeLookError.readbackMismatch }
+        print("{\"confirmed\":true,\"code\":\"" + preset.code + "\"}")
+      } catch { FileHandle.standardError.write(Data("look readback rejected\n".utf8)); exit(5) }
+      return
+    }
     if values.count == 2, values[0] == "--verify-media" {
       do { try await verifyMedia(URL(fileURLWithPath: values[1])); print("{\"passed\":true,\"jpegCacheReused\":true,\"rawBytesPreserved\":true,\"captureTimeInferred\":false}") }
       catch { FileHandle.standardError.write(Data(("media contract rejected: " + error.localizedDescription + "\n").utf8)); exit(3) }
@@ -16,6 +31,9 @@ import FrameLinkCore
     if values[3] != "anonymous" { config.user = "fixture-user"; config.password = values[3] == "invalid" ? "wrong-secret" : "fixture-secret" }
     do { print(try CameraConnectionPolicy.encode(config)) }
     catch { FileHandle.standardError.write(Data("configuration rejected\n".utf8)); exit(2) }
+  }
+  private static func lookSnapshot(_ folder: URL) throws -> ([CameraProperty], CreativeLookDiagnostics) {
+    (try JSONDecoder().decode([CameraProperty].self, from: Data(contentsOf: folder.appendingPathComponent("properties.json"))), try JSONDecoder().decode(CreativeLookDiagnostics.self, from: Data(contentsOf: folder.appendingPathComponent("diagnostics.json"))))
   }
   @MainActor private static func verifyMedia(_ folder: URL) async throws {
     let info = try JSONDecoder().decode(CameraInfo.self, from: Data(contentsOf: folder.appendingPathComponent("connection-info.json")))

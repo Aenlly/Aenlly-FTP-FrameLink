@@ -1,5 +1,7 @@
 # Sony创意外观接入
 
+iOS0.1.14源码候选复用同一现代0xD0FA链路，含中文预设、诊断保护、写入回读及连接代次隔离。67项核心与独立PTP/IP／Swift边界验证通过；无新二进制框架、App链接、IPA或UI／实体运行结论。[iOS软件记录](acceptance/2026-10-31-ios-creative-look-0.1.14.md)。以下历史机身观察仍仅适用于记录的机型／固件，不外推新机型。
+
 现代Creative Look与旧CreativeStyle、PictureEffect分开处理。本实现只精确注册现代候选PTP属性0xD0FA，不使用Camera Remote SDK内部属性编号0x01C5，不放开整个Image类厂商属性。
 
 ## 来源与实际观察

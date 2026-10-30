@@ -1,6 +1,23 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  /// Requires the isolated local PTP/IP simulator started with -creative-look; never select a physical camera.
+  func testSyntheticSonyCreativeLookShowsChineseChoicesAndConfirmedFLST() throws {
+    continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures"]; app.launch()
+    app.buttons["相机连接设置"].tap()
+    let host = app.textFields["例如 192.168.1.20"]; host.tap()
+    if host.value as? String != "127.0.0.1" { host.typeText("127.0.0.1") }
+    app.buttons["收起键盘"].tap()
+    let auth = app.switches["相机要求访问认证"]; if String(describing: auth.value ?? "") != "0" { auth.tap() }
+    app.buttons["连接相机"].tap(); XCTAssertTrue(app.staticTexts["QA SIMULATED CAMERA"].waitForExistence(timeout: 20))
+    app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "取景拍摄")).firstMatch.tap()
+    app.buttons["创意外观"].firstMatch.tap()
+    XCTAssertTrue(app.buttons["FL 胶片"].waitForExistence(timeout: 5))
+    app.buttons["FL 胶片"].tap(); XCTAssertTrue(app.staticTexts["机身已确认 FL"].waitForExistence(timeout: 8))
+    app.buttons["ST 标准"].tap(); XCTAssertTrue(app.staticTexts["机身已确认 ST"].waitForExistence(timeout: 8))
+    captureBoundaryEvidence(app, name: "creative-look-synthetic-confirmed")
+  }
   func testSelectingCanonProtocolClearsSonyCredentialsAndKeepsSaveOff() throws {
     continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait
     let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-foundations"]; app.launch()

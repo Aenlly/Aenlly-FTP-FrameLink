@@ -217,6 +217,9 @@ public struct CameraProperty: Codable, Identifiable, Sendable {
   public let label: String
   public let writable: Bool
   public let choices: [PropertyChoice]
+  public let dataType: Int?
+  public let form: Int?
+  public let enabled: Int?
 }
 public struct PropertyChoice: Codable, Hashable, Sendable {
   public let value: Int64

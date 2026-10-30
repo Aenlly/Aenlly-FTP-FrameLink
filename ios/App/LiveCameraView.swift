@@ -6,6 +6,7 @@ enum PropertyText {
   static let names: [Int: String] = [
     0x5007: "光圈", 0x500D: "快门", 0xD20D: "快门", 0x500F: "感光度", 0xD21E: "感光度", 0x5010: "曝光补偿",
     0x5005: "白平衡", 0x500A: "对焦模式", 0x500B: "测光模式", 0xD22C: "对焦区域", 0x500C: "闪光模式", 0x500E: "曝光模式",
+    0xD0FA: "创意外观",
   ]
   static let enums: [Int: [Int64: String]] = [
     0x500A: [
@@ -38,9 +39,8 @@ enum PropertyText {
       let iso = raw & 0xFFFFFF
       return raw >> 24 > 2 ? nil : iso == 0xFFFFFF ? "自动" : "ISO \(iso)"
     case 0x500D:
-      let seconds = Double(raw) / 10000
-      return seconds > 0 && seconds < 1
-        ? "1/\(Int((1/seconds).rounded()))" : String(format: "%.1f秒", seconds)
+      return ExposureTimeText.standardPTPShutter(raw)
+    case 0xD0FA: return SonyCreativeLookPreset(rawValue: raw)?.code
     case 0xD20D:
       let numerator = raw >> 16
       let denominator = raw & 0xFFFF
@@ -67,6 +67,7 @@ struct LiveCameraView: View {
   @State private var histogramBins = [Int](repeating: 0, count: 64)
   @State private var histogramUpdatedAt = Date.distantPast
   @State private var showInfo = false
+  @State private var showCreativeLook = false
   @State private var grid = false
   @State private var countdown = 0
   @State private var remaining = 0
@@ -74,7 +75,7 @@ struct LiveCameraView: View {
   @State private var property: CameraProperty?
   private var properties: [CameraProperty] {
     model.properties.filter {
-      PropertyText.names[$0.code] != nil && PropertyText.value($0, $0.value) != nil
+      $0.code != SonyCreativeLookPolicy.propertyCode && PropertyText.names[$0.code] != nil && PropertyText.value($0, $0.value) != nil
     }.sorted {
       rank($0.code) == rank($1.code)
         ? ($0.code >= 0xD000 && $1.code < 0xD000) : rank($0.code) < rank($1.code)
@@ -188,6 +189,7 @@ struct LiveCameraView: View {
               HStack(spacing: 28) {
                 Text("拍照").foregroundStyle(Color(red: 0.72, green: 0.84, blue: 0.94))
                 Button("专业工具") { professional = true }.foregroundStyle(.white.opacity(0.75))
+                creativeLookButton
               }.font(.system(size: 14))
               HStack {
                 Button(action: onGallery) {
@@ -229,7 +231,7 @@ struct LiveCameraView: View {
                         Text(PropertyText.names[item.code] ?? "参数").font(.system(size: 10)).foregroundStyle(.secondary)
                         Text(PropertyText.value(item, item.value) ?? "机身设置").font(.system(size: 13))
                       }.frame(maxWidth: .infinity, alignment: .leading)
-                    }.disabled(!item.writable || model.propertyUpdating)
+                    }.disabled(!item.writable || model.propertyUpdating || model.creativeLookState.busy)
                   }
                 }
               }.frame(width: 108)
@@ -246,6 +248,7 @@ struct LiveCameraView: View {
                 }.frame(height: 24)
               }
               Button("专业工具") { professional = true }.font(.system(size: 12)).frame(height: 44)
+              creativeLookButton
               Spacer()
               GlassCapsule {
                 VStack(spacing: 12) {
@@ -301,6 +304,9 @@ struct LiveCameraView: View {
         .medium, .large,
       ])
     }
+    .sheet(isPresented: $showCreativeLook) {
+      NavigationStack { CreativeLookPicker().toolbar { Button("完成") { showCreativeLook = false } } }.presentationDetents([.medium, .large])
+    }
   }
   private var professionalPanel: some View {
     LiveToolGlass {
@@ -333,6 +339,7 @@ struct LiveCameraView: View {
               Toggle("直方图", isOn: $histogramVisible).toggleStyle(.switch).frame(minHeight: 44)
               Text("辅助分析基于取景预览").font(.caption2).foregroundStyle(.secondary)
             } else {
+              creativeLookButton
               ForEach(properties) { item in
                 Button { property = item } label: {
                   HStack {
@@ -341,7 +348,7 @@ struct LiveCameraView: View {
                     Text(PropertyText.value(item, item.value) ?? "机身调整").foregroundStyle(.secondary)
                     Image(systemName: "chevron.right").font(.system(size: 11))
                   }.font(.system(size: 12)).frame(minHeight: 44)
-                }.disabled(!item.writable || model.propertyUpdating)
+                }.disabled(!item.writable || model.propertyUpdating || model.creativeLookState.busy)
               }
               Button("连接信息与预览规格") { showInfo = true }.font(.caption).frame(minHeight: 44)
             }
@@ -380,7 +387,7 @@ struct LiveCameraView: View {
                   model.propertyUpdating ? "应用中" : PropertyText.value(item, item.value) ?? "机身设置"
                 ).font(.system(size: 13))
               }
-            }.disabled(!item.writable || model.propertyUpdating)
+            }.disabled(!item.writable || model.propertyUpdating || model.creativeLookState.busy)
           }
         }
       }.scrollIndicators(.hidden)
@@ -409,6 +416,42 @@ struct LiveCameraView: View {
   }
   private func rank(_ code: Int) -> Int {
     [0x5007: 0, 0xD20D: 1, 0x500D: 1, 0xD21E: 2, 0x500F: 2, 0x5010: 3][code] ?? 10 + code
+  }
+  private var creativeLookButton: some View {
+    Button { showCreativeLook = true } label: {
+      HStack(spacing: 6) {
+        if model.creativeLookState.busy && model.creativeLookState.property == nil { ProgressView().tint(.white) }
+        else { Image(systemName: "paintpalette") }
+        if let code = model.creativeLookState.currentCode { Text(code).font(.system(size: 12)).lineLimit(1) }
+      }.frame(minWidth: 44, minHeight: 44)
+    }.accessibilityLabel("创意外观").accessibilityValue(model.creativeLookState.currentCode ?? (model.creativeLookState.busy ? "读取中" : "未读取"))
+  }
+}
+
+private struct CreativeLookPicker: View {
+  @EnvironmentObject var model: AppModel
+  var body: some View {
+    let state = model.creativeLookState
+    List {
+      Section {
+        Text("当前：" + (state.currentCode ?? "尚未读取"))
+        Text(state.message).font(.footnote).foregroundStyle(state.confirmed ? Color.green : Color.secondary)
+        if let reason = state.availability { Text(reason).font(.footnote).foregroundStyle(.secondary) }
+        Button("重新读取") { Task { await model.refreshCreativeLook() } }.disabled(state.busy || !state.connected || state.protocolID != CameraProtocol.sony)
+      }
+      Section("机身当前候选") {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 76))], spacing: 14) {
+          ForEach(state.choices, id: \.rawValue) { preset in
+            Button { model.selectCreativeLook(preset.rawValue) } label: {
+              VStack(spacing: 5) { Text(preset.code).font(.headline); Text(preset.chinese).font(.caption) }.frame(maxWidth: .infinity, minHeight: 58)
+                .background(state.property?.value == preset.rawValue ? Color.white.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 16))
+            }.disabled(state.busy || SonyCreativeLookPolicy.rejection(state.property, target: preset.rawValue, diagnostics: state.diagnostics) != nil)
+              .accessibilityLabel(preset.code + " " + preset.chinese)
+          }
+        }
+      }
+      Text("仅开放机身提供且已识别的预设；未知、自定义与细调项请在机身操作。").font(.caption).foregroundStyle(.secondary)
+    }.navigationTitle("创意外观").navigationBarTitleDisplayMode(.inline).task { await model.refreshCreativeLook() }
   }
 }
 

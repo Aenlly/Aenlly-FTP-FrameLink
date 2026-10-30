@@ -47,6 +47,17 @@ final class AppModel: ObservableObject {
   @Published var previousFingerprint = ""
   @Published var notice: String?
   @Published var properties: [CameraProperty] = []
+  @Published private(set) var creativeLookState = CreativeLookState()
+  private var propertyOperation: UUID?
+  private lazy var creativeLookController = CreativeLookController(read: { [weak self] in
+    guard let self else { throw CancellationError() }; return try await self.camera.properties()
+  }, diagnose: { [weak self] in
+    guard let self else { throw CancellationError() }; return try await self.camera.creativeLookDiagnostics()
+  }, write: { [weak self] property, value in
+    guard let self else { throw CancellationError() }; try await self.camera.set(property, value: value)
+  }, changed: { [weak self] state, values in
+    self?.creativeLookState = state; if let values { self?.properties = values }
+  })
   @Published var liveImage: UIImage?
   @Published var liveSize = ""
   @Published var liveRunning = false
@@ -226,6 +237,7 @@ final class AppModel: ObservableObject {
         properties = values
         cameraInfo = info
         cameraProtocolID = verified.protocolID
+        creativeLookController.connect(protocolID: verified.protocolID, properties: values)
         cameraMessage = "已连接 \(info.displayName)" + (verified.protocolID == CameraProtocol.canon ? " · CCAPI实验只读" : "")
         connecting = false
         let ready = afterConnect
@@ -281,6 +293,7 @@ final class AppModel: ObservableObject {
     stopLive()
     camera.close()
     cameraInfo = nil
+    creativeLookController.disconnect(); propertyOperation = nil; propertyUpdating = false
     cameraProtocolID = CameraProtocol.sony
     cameraIndex.invalidate()
     properties = []
@@ -483,22 +496,34 @@ final class AppModel: ObservableObject {
     UIApplication.shared.isIdleTimerDisabled = receiverRunning
   }
   func setProperty(_ property: CameraProperty, value: Int64) {
-    guard cameraClientCapabilities.canSetProperties, !propertyUpdating, property.writable,
+    if property.code == SonyCreativeLookPolicy.propertyCode { selectCreativeLook(value); return }
+    guard cameraClientCapabilities.canSetProperties, !propertyUpdating, !creativeLookState.busy, property.writable,
       property.choices.contains(where: { $0.value == value })
     else { return }
     propertyUpdating = true
+    let token = generation; let operation = UUID(); propertyOperation = operation
     Task {
-      defer { propertyUpdating = false }
+      defer { if token == generation && propertyOperation == operation { propertyUpdating = false; propertyOperation = nil } }
       do {
+        guard token == generation && propertyOperation == operation else { return }
         try await camera.set(property, value: value)
+        guard token == generation && propertyOperation == operation else { return }
         for _ in 0..<10 {
-          properties = try await camera.properties()
+          let actual = try await camera.properties()
+          guard token == generation && propertyOperation == operation else { return }
+          properties = actual; creativeLookController.observe(actual)
           if properties.first(where: { $0.code == property.code })?.value == value { return }
           try await Task.sleep(nanoseconds: 150_000_000)
         }
-        notice = "相机尚未确认该参数，请查看机身状态"
-      } catch { notice = error.localizedDescription }
+        if token == generation && propertyOperation == operation { notice = "相机尚未确认该参数，请查看机身状态" }
+      } catch { if token == generation && propertyOperation == operation { notice = error.localizedDescription } }
     }
+  }
+  func refreshCreativeLook() async { guard !propertyUpdating else { return }; await creativeLookController.refresh() }
+  func selectCreativeLook(_ value: Int64) {
+    guard cameraClientCapabilities.canSetProperties, !propertyUpdating else { return }
+    let request = creativeLookController.selection(value)
+    Task { await creativeLookController.select(request) }
   }
   func capture() {
     guard cameraClientCapabilities.canCapture else { notice = "当前连接仅支持浏览与导入，未开放拍摄"; return }

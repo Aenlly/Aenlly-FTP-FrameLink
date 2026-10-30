@@ -86,7 +86,7 @@ func (s *Session) ListNewestPage(slot int, day string, offset int64) (string, er
 	if until == int64(len(index.items)) {
 		next = 0
 	}
-	return marshal(map[string]any{"items": rows, "nextCursor": next})
+	return marshal(map[string]any{"items": rows, "nextCursor": next, "totalCount": len(index.items)})
 }
 
 func readNewestContents(ctx context.Context, c *ptpip.Client, slot uint32, day string, start, end int64) ([]ptpip.SonyContent, error) {

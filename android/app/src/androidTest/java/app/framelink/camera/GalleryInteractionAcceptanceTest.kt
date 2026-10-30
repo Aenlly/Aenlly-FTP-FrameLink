@@ -171,15 +171,15 @@ class GalleryInteractionAcceptanceTest {
             compose.waitUntil(30000) { !runtime.camera.value.loadingPhotos && runtime.currentCameraIds.value.isNotEmpty() }
             fun listing() = runBlocking { runtime.database.photos().observe().first().filter { it.id in runtime.currentCameraIds.value } }
             val latest = listing().first().id
-            var pages = 0
-            while (runtime.galleryHasMore.value && pages++ < 10) {
-                val before = runtime.currentCameraIds.value.size
-                compose.onNodeWithTag("gallery-grid").performScrollToIndex(before - 1)
-                compose.waitUntil(30000) { runtime.currentCameraIds.value.size > before || !runtime.galleryHasMore.value }
-                assertEquals(latest, listing().first().id)
-            }
+            val total=runtime.galleryTotalCount.value!!
+            compose.onNodeWithText("共 $total 张",substring=false).assertIsDisplayed()
+            acceptanceScreenshot(compose.activity,"gallery-total-count")
+            // 无需滚动到底，记录在后台补齐，首图排序和显示总数保持不变
+            compose.waitUntil(30000){!runtime.galleryHasMore.value&&!runtime.camera.value.loadingPhotos}
+            assertEquals(latest,listing().first().id)
             assertFalse(runtime.galleryHasMore.value)
             val rows = listing()
+            assertEquals(total,rows.size)
             assertTrue(rows.zipWithNext().all { (left, right) -> left.capturedAt >= right.capturedAt })
             compose.onNodeWithTag("gallery-grid").performScrollToIndex(rows.size)
             compose.onNodeWithText("已加载全部").assertIsDisplayed()
@@ -190,6 +190,59 @@ class GalleryInteractionAcceptanceTest {
             clearGallerySelection(compose)
             assertEquals(rows.size, runtime.currentCameraIds.value.size)
         } finally { runtime.disconnect() }
+    }
+
+    @Test fun cameraOriginalLoadsWithoutClosingDetail(){
+        runtime.disconnect()
+        try{
+            runtime.connect(ConnectionConfig(host="127.0.0.1"))
+            compose.waitUntil(30000){runtime.camera.value.info!=null}
+            compose.onNodeWithTag("tab-gallery").performClick()
+            compose.onNodeWithText("相机内").performClick()
+            compose.waitUntil(30000){runtime.currentCameraIds.value.isNotEmpty()&&!runtime.galleryHasMore.value&&!runtime.camera.value.loadingPhotos}
+            val rows=runBlocking{runtime.database.photos().observe().first().filter{it.id in runtime.currentCameraIds.value}}
+            val photo=rows.first{!it.imported&&it.downloadFiles(DownloadFormat.JPEG).isNotEmpty()}
+            compose.onNodeWithTag("gallery-grid").performScrollToIndex(rows.indexOf(photo))
+            compose.onNodeWithContentDescription("查看 ${photo.name}").performClick()
+            compose.onNodeWithContentDescription("查看原片，导入JPEG").performClick()
+            compose.waitUntil(30000){runBlocking{runtime.database.photos().find(photo.id)!!.imported}}
+            compose.onNodeWithContentDescription("关闭照片").assertIsDisplayed()
+            compose.onNodeWithText("已导入原片",substring=true).assertIsDisplayed()
+            compose.onNodeWithTag("photo-viewer-pager").performTouchInput{doubleClick(center)}
+            compose.waitUntil(10000){compose.onAllNodesWithContentDescription("原片细节已显示").fetchSemanticsNodes().isNotEmpty()}
+            acceptanceScreenshot(compose.activity,"gallery-original-zoom")
+        }finally{runtime.disconnect()}
+    }
+
+    @Test fun originalDetailDecodesVisiblePixelsAndHonorsAllExifOrientations(){
+        val context=compose.activity
+        val file=File(context.cacheDir,"detail-qa-${UUID.randomUUID()}.jpg")
+        val bitmap=Bitmap.createBitmap(2400,1600,Bitmap.Config.ARGB_8888)
+        try{
+            val canvas=android.graphics.Canvas(bitmap)
+            canvas.drawColor(android.graphics.Color.RED)
+            canvas.drawRect(1200f,0f,2400f,1600f,android.graphics.Paint().apply{color=android.graphics.Color.BLUE})
+            file.outputStream().use{bitmap.compress(Bitmap.CompressFormat.JPEG,95,it)}
+            val frames=listOf(500f to android.graphics.Color.RED,-500f to android.graphics.Color.BLUE).map{(pan,expected)->
+                val frame=requireNotNull(decodeOriginalDetail(context,file.absolutePath,3f,Offset(pan,0f),androidx.compose.ui.unit.IntSize(600,400)))
+                val pixel=frame.bitmap.getPixel(frame.bitmap.width/2,frame.bitmap.height/2)
+                assertTrue("区域像素应来自原片对应位置",kotlin.math.abs(android.graphics.Color.red(pixel)-android.graphics.Color.red(expected))<10&&kotlin.math.abs(android.graphics.Color.blue(pixel)-android.graphics.Color.blue(expected))<10)
+                assertTrue("不能解码整张原片",frame.bitmap.width<2400&&frame.bitmap.height<1600)
+                frame.bitmap
+            }
+            frames.forEach{it.recycle()}
+            val expected=listOf(1f to .5f,3f to .5f,3f to 1.5f,1f to 1.5f,.5f to 1f,1.5f to 1f,1.5f to 3f,.5f to 3f)
+            expected.forEachIndexed{index,point->
+                val actual=floatArrayOf(1f,.5f)
+                originalOrientation(index+1,4,2).mapPoints(actual)
+                assertEquals(point.first,actual[0],.001f);assertEquals(point.second,actual[1],.001f)
+                val exif=androidx.exifinterface.media.ExifInterface(file)
+                exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION,(index+1).toString());exif.saveAttributes()
+                val frame=requireNotNull(decodeOriginalDetail(context,file.absolutePath,3f,Offset.Zero,androidx.compose.ui.unit.IntSize(600,400)))
+                assertTrue(frame.bitmap.width>0&&frame.bitmap.height>0)
+                frame.bitmap.recycle()
+            }
+        }finally{bitmap.recycle();file.delete()}
     }
 
     @Test

@@ -4,6 +4,16 @@ import java.util.Locale
 
 internal val SelectionAccent = androidx.compose.ui.graphics.Color(0xff287af3)
 
+/** 相机总数来自当前日期索引，筛选未结束时仅将已匹配数量作为进度 */
+internal fun galleryCountText(camera:Boolean,filtered:Boolean,loaded:Int,total:Int?,hasMore:Boolean):String = when {
+    !camera -> "$loaded 张"
+    filtered && hasMore -> "已匹配 $loaded 张" + (total?.let { " · 共 $it 张" } ?: "")
+    filtered -> "$loaded 张"
+    total != null -> "共 $total 张"
+    hasMore -> "正在统计照片"
+    else -> "共 $loaded 张"
+}
+
 /** 同一次拍摄的格式与保存状态分开呈现，JPEG已导入不代表RAW也已保存 */
 internal fun CameraFile.formatTitle(): String = when {
     raw -> "RAW"

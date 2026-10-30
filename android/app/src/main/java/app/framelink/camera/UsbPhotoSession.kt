@@ -118,7 +118,7 @@ internal class UsbPhotoSession(private val access:UsbPhotoAccess){
         val rows=if(day.isBlank())indexed else indexed.filter{it.files.fileTimeDay()==day}
         require(cursor<=rows.size){"USB分页已变化，请刷新"}
         val until=minOf(cursor+100,rows.size.toLong()).toInt()
-        CameraPage(rows.subList(cursor.toInt(),until),if(until==rows.size)0 else until.toLong())
+        CameraPage(rows.subList(cursor.toInt(),until),if(until==rows.size)0 else until.toLong(),rows.size)
     }
 
     private fun selected(photo:Photo,file:CameraFile):UsbPhotoObject{

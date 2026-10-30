@@ -894,6 +894,7 @@ private fun Gallery(
     val scope = rememberCoroutineScope()
     var bulkSelection by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val hasMore by runtime.galleryHasMore.collectAsStateWithLifecycle()
+    val totalCount by runtime.galleryTotalCount.collectAsStateWithLifecycle()
     val pageError by runtime.galleryError.collectAsStateWithLifecycle()
     val selectionSet = remember(selection) { selection.toSet() }
     var burst by remember { mutableStateOf<List<Photo>?>(null) }
@@ -961,15 +962,12 @@ private fun Gallery(
     val scrollContext="$source:$chosenDay:$filter:${camera.info?.id.orEmpty()}"
     var appliedScrollContext by rememberSaveable{mutableStateOf(scrollContext)}
     LaunchedEffect(scrollContext) { if(appliedScrollContext!=scrollContext){state.scrollToItem(0);appliedScrollContext=scrollContext} }
-    LaunchedEffect(source, camera.info?.id, chosenDay, filter, layout, columns, hasMore, camera.loadingPhotos, photos.size, bulkSelection, dragGroups != null, pageError) {
+    LaunchedEffect(source, camera.info?.id, chosenDay, filter, hasMore, camera.loadingPhotos, listedIds.size, bulkSelection, dragGroups != null, pageError) {
         if (source == "camera" && camera.info != null && filter != "picked" && hasMore &&
             !camera.loadingPhotos && bulkSelection == null && dragGroups == null && pageError.isBlank()) {
-            if (photos.isEmpty()) runtime.loadPhotos().join()
-            else snapshotFlow {
-                val info = state.layoutInfo
-                val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
-                last >= 0 && last >= info.totalItemsCount - columns * 2 - 1
-            }.collect { nearEnd -> if (nearEnd) runtime.loadPhotos().join() }
+            // 完整索引已由协议层读取；后台补齐轻量记录，图片仍只为可见项请求
+            kotlinx.coroutines.delay(150)
+            runtime.loadPhotos().join()
         }
     }
     Column(Modifier.fillMaxSize().background(Color.White)) {
@@ -1016,7 +1014,7 @@ private fun Gallery(
                     Text(chosenDay.ifBlank{"全部日期"},fontSize=13.sp,color=Ink)
                     Icon(Icons.Outlined.ExpandMore,null,Modifier.padding(start=3.dp).size(17.dp),tint=Muted)
                 }
-                Text(photos.size.toString()+" 张"+if(filter!="all")" · "+when(filter){"picked"->"本次已选";"favorite"->"收藏";"new"->"未导入";else->"RAW"}else"",
+                Text(galleryCountText(source=="camera",filter!="all",photos.size,totalCount,hasMore)+if(filter!="all")" · "+when(filter){"picked"->"本次已选";"favorite"->"收藏";"new"->"未导入";else->"RAW"}else"",
                     modifier=Modifier.weight(1f).padding(start=12.dp),fontSize=11.sp,color=Muted,maxLines=1,overflow=TextOverflow.Ellipsis)
                 IconButton(onClick={choosingFilter=true}){Icon(Icons.Outlined.FilterList,"筛选照片",tint=if(filter=="all")Muted else SelectionAccent,modifier=Modifier.size(22.dp))}
                 IconButton(onClick={choosingLayout=true}){Icon(if(layout==GalleryLayout.LIST)Icons.Outlined.ViewList else Icons.Outlined.GridView,"显示方式",tint=Muted,modifier=Modifier.size(22.dp))}
@@ -2439,6 +2437,7 @@ private fun PhotoViewer(
     var viewerControls by remember { mutableStateOf(true) }
     var viewerMore by remember { mutableStateOf(false) }
     var importingCurrent by remember { mutableStateOf(false) }
+    var loadingOriginal by remember(photo.id) { mutableStateOf(false) }
     val pager=rememberPagerState(initialPage=neighbors.indexOfFirst{it.id==photo.id}.coerceAtLeast(0),pageCount={neighbors.size})
     val strip=rememberLazyListState()
     LaunchedEffect(pager.settledPage,neighbors.size,canLoadMore,loadingMore){
@@ -2541,7 +2540,8 @@ private fun PhotoViewer(
                             HorizontalPager(state=pager,userScrollEnabled=scale<=1.01f,modifier=Modifier.fillMaxSize().testTag("photo-viewer-pager")){page->
                                 val pagePhoto=neighbors[page]
                                 val active=pagePhoto.id==photo.id
-                                AsyncImage(model=if(active)model else pagePhoto.displayUri,contentDescription=pagePhoto.name,contentScale=ContentScale.Fit,
+                                AsyncImage(model=ImageRequest.Builder(context).data(if(active)model else pagePhoto.displayUri)
+                                    .size(if(active)4096 else 1280,if(active)4096 else 1280).precision(coil.size.Precision.INEXACT).build(),contentDescription=pagePhoto.name,contentScale=ContentScale.Fit,
                                     modifier=Modifier.fillMaxSize().onSizeChanged{if(active)imageViewport=it}
                                         .drawWithContent{
                                             withTransform({translate(if(active)pan.x else 0f,if(active)pan.y else 0f);scale(if(active)scale else 1f,if(active)scale else 1f,center)}){
@@ -2571,6 +2571,8 @@ private fun PhotoViewer(
                                     onError={if(active){viewerLoading=false;viewerFailure=if(photo.imported)"此格式暂不能显示，原文件仍可在文件信息中查看。" else "预览暂不能显示，请检查连接后重试。"}})
                             }
                         }
+                    if(original!=null&&scale>1.15f&&!pager.isScrollInProgress)
+                        OriginalPhotoDetail(original.savedUri,scale,pan,imageViewport)
                     if (viewerLoading)
                         CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                     if (viewerFailure.isNotBlank())
@@ -2598,6 +2600,14 @@ private fun PhotoViewer(
                             Text(if(original!=null)"已导入原片 · "+photo.formatTitle() else if(photo.imported)"已导入RAW · 当前为预览" else if(!cameraConnected&&photo.source==PhotoSource.CAMERA.name)"离线缓存 · 相机已断开" else if(!resourceConfirmed)"缓存预览 · 需重新核对相机" else "相机预览 · "+photo.formatTitle(),
                                 fontSize=11.sp,color=Color.White.copy(alpha=.72f),maxLines=1,overflow=TextOverflow.Ellipsis)
                         }
+                        if(original==null&&photo.downloadFiles(DownloadFormat.JPEG).isNotEmpty()&&canDownload&&resourceConfirmed)
+                            TextButton(enabled=!loadingOriginal&&!pager.isScrollInProgress,onClick={
+                                loadingOriginal=true
+                                runtime.notice.value="正在导入当前JPEG原片，完成后自动显示"
+                                scope.launch{try{runtime.enqueueDownload(listOf(photo.id),DownloadFormat.JPEG).join()}finally{loadingOriginal=false}}
+                            },modifier=Modifier.semantics{contentDescription="查看原片，导入JPEG"}){
+                                Text(if(loadingOriginal)"原片加载中"else"查看原片",fontSize=11.sp,color=Color.White)
+                            }
                         if(selectionReadOnly)Text(if(selected)"客户已选"else"客户未选",fontSize=11.sp,color=if(selected)LiveAccent else Color.White.copy(alpha=.7f),modifier=Modifier.padding(horizontal=8.dp))
                         else PhotoSelectionAction(selected,onSelect,enabled=!pager.isScrollInProgress)
                     }

@@ -183,7 +183,7 @@ data class CameraInfo(
     val mediaScope: String = "",
 )
 
-data class CameraPage(val items: List<RemotePhoto> = emptyList(), val nextCursor: Long = 0)
+data class CameraPage(val items: List<RemotePhoto> = emptyList(), val nextCursor: Long = 0, val totalCount: Int = -1)
 
 data class RemotePhoto(
     val id: String,

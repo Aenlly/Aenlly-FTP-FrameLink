@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PhotoPresentationTest {
+    @Test fun cameraCountUsesSnapshotTotalBeforeAllPagesAreLoaded(){
+        assertEquals(-1,Json.decode<CameraPage>("{\"items\":[],\"nextCursor\":100}").totalCount)
+        assertEquals("共 250 张",galleryCountText(true,false,100,250,true))
+        assertEquals("共 250 张",galleryCountText(true,false,200,250,true))
+        assertEquals("已匹配 25 张 · 共 250 张",galleryCountText(true,true,25,250,true))
+        assertEquals("25 张",galleryCountText(true,true,25,250,false))
+        assertEquals("正在统计照片",galleryCountText(true,false,100,null,true))
+        assertEquals("10 张",galleryCountText(false,false,10,250,false))
+    }
     @Test fun reconnectRequirementsFollowTheActualTransport(){
         assertTrue(ConnectionConfig(host="192.168.1.3",port=8080,user="camera",password="secret",protocol=CameraProtocols.CANON).canReconnectDirectly())
         assertFalse(ConnectionConfig(host="192.168.1.3",port=8080,user="camera",protocol=CameraProtocols.CANON).canReconnectDirectly())

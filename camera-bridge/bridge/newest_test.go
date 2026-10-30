@@ -21,7 +21,8 @@ type newestResult struct {
 			Name string `json:"name"`
 		} `json:"files"`
 	} `json:"items"`
-	Next int64 `json:"nextCursor"`
+	Next  int64 `json:"nextCursor"`
+	Total int   `json:"totalCount"`
 }
 
 func newestFixture(t *testing.T, count int, stuck bool, sameTime ...bool) (*Session, *ptpiptest.Server) {
@@ -75,6 +76,9 @@ func readNewest(t *testing.T, s *Session, day string, offset int64) newestResult
 func TestNewestPagingStartsWithLastShotAndKeepsStableOrder(t *testing.T) {
 	s, server := newestFixture(t, 250, false)
 	first := readNewest(t, s, "2026-01-01", 0)
+	if first.Total != 250 {
+		t.Fatalf("first page must include complete filtered count, got %d", first.Total)
+	}
 	if len(first.Items) != 100 || first.Items[0].Files[0].Name != "F0249.JPG" || first.Next != 100 {
 		t.Fatalf("first page: %+v", first)
 	}

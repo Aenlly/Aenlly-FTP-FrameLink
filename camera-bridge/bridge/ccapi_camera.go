@@ -286,7 +286,7 @@ func (c *canonCamera) ListNewestPage(slot int, day string, offset int64) (string
 	if until == int64(len(filtered)) {
 		next = 0
 	}
-	return marshal(map[string]any{"items": rows, "nextCursor": next})
+	return marshal(map[string]any{"items": rows, "nextCursor": next, "totalCount": len(filtered)})
 }
 
 func (c *canonCamera) lookup(slot, contentID, fileID int) (ccapiFile, error) {

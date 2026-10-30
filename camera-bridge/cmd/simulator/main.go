@@ -29,11 +29,15 @@ func main() {
 	withSSH := flag.Bool("ssh", false, "enable loopback-only SSH identity acceptance fixture")
 	previewFile := flag.String("preview", "", "optional licensed JPEG for live-view visual checks")
 	creativeLook := flag.Bool("creative-look", false, "advertise synthetic modern Creative Look for protocol/UI checks, not hardware evidence")
+	mediaCount := flag.Int("media-count", 8, "number of synthetic photos for pagination acceptance (1 to 1000)")
 	flag.Parse()
+	if *mediaCount < 1 || *mediaCount > 1000 {
+		panic("synthetic media count must be between 1 and 1000")
+	}
 	if err := os.MkdirAll(*dir, 0700); err != nil {
 		panic(err)
 	}
-	for n := 0; n < 8; n++ {
+	for n := 0; n < *mediaCount; n++ {
 		canvas := image.NewRGBA(image.Rect(0, 0, 1200, 900))
 		for y := 0; y < 900; y++ {
 			for x := 0; x < 1200; x++ {

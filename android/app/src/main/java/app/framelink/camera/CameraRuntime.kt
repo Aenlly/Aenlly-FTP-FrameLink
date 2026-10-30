@@ -75,6 +75,8 @@ class CameraRuntime(
     val galleryDay = MutableStateFlow("")
     val currentCameraIds = MutableStateFlow<Set<String>>(emptySet())
     val galleryHasMore = MutableStateFlow(false)
+    /** 当前相机日期范围的完整拍摄数量，未知时不以已载入数量冒充总数 */
+    val galleryTotalCount = MutableStateFlow<Int?>(null)
     val galleryError = MutableStateFlow("")
     val captureCountdown = MutableStateFlow(0)
     val captureBusy = MutableStateFlow(false)
@@ -253,6 +255,7 @@ class CameraRuntime(
                     if (!config.experimentalFuji) settings.put("camera.config", Json.encode(config))
                     currentCameraIds.value = emptySet()
                     galleryHasMore.value = false
+                    galleryTotalCount.value = null
                     galleryError.value = ""
                     properties.value = choices
                     captureDates.value = dates
@@ -308,6 +311,7 @@ class CameraRuntime(
         mutableCamera.value = CameraStatus(message = "相机已断开，手机中的照片已保留")
         currentCameraIds.value = emptySet()
         galleryHasMore.value = false
+        galleryTotalCount.value = null
         galleryError.value = ""
         properties.value = emptyList()
         parameterUpdating.value = null
@@ -331,6 +335,7 @@ class CameraRuntime(
         val previousDay = galleryDay.value
         currentCameraIds.value = emptySet()
         galleryHasMore.value = false
+        galleryTotalCount.value = null
         galleryError.value = ""
         mutableCamera.value = mutableCamera.value.copy(loadingPhotos = true)
         galleryRefreshJob = scope.launch {
@@ -369,6 +374,7 @@ class CameraRuntime(
 
     fun selectCameraDay(day: String): Job {
         galleryRefreshJob?.cancel()
+        galleryTotalCount.value = null
         galleryDay.value = day
         return loadPhotos(true)
     }
@@ -393,6 +399,7 @@ class CameraRuntime(
                         cursor = 0
                         currentSlot = slot
                         currentCameraIds.value = emptySet()
+                        galleryTotalCount.value = null
                     }
                     val page = native.newestPage(currentSlot, requestedDay, cursor)
                     if (generation != connectionGeneration.get() || requestedDay != galleryDay.value) return@withLock
@@ -441,6 +448,8 @@ class CameraRuntime(
                     currentCameraIds.value = currentCameraIds.value + records.map { it.id }
                     cursor = page.nextCursor
                     galleryHasMore.value = cursor != 0L
+                    galleryTotalCount.value = page.totalCount.takeIf { it >= 0 }
+                        ?: currentCameraIds.value.size.takeIf { cursor == 0L }
                 } catch (error: Exception) {
                     if (generation == connectionGeneration.get()) {
                         galleryError.value = error.message ?: "照片列表读取失败"
@@ -477,7 +486,8 @@ class CameraRuntime(
                             target.delete()
                             error("照片资源已变化，请刷新相机列表")
                         }
-                        database.photos().save(it.copy(previewPath = target.absolutePath))
+                        if (large || !it.previewPath.endsWith("-large.preview"))
+                            database.photos().save(it.copy(previewPath = target.absolutePath))
                     }
                     target.absolutePath
                 } else if (photo.imported) {

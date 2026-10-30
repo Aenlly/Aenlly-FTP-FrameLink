@@ -386,7 +386,7 @@ func (c *fujiCamera) ListNewestPage(slot int, day string, offset int64) (string,
 	if until == int64(len(photos)) {
 		next = 0
 	}
-	return marshal(map[string]any{"items": rows, "nextCursor": next, "mediaScope": "AUTOSAVE_PENDING_BATCH"})
+	return marshal(map[string]any{"items": rows, "nextCursor": next, "totalCount": len(photos), "mediaScope": "AUTOSAVE_PENDING_BATCH"})
 }
 
 func (c *fujiCamera) Download(raw, target string, progress Progress) (string, error) {

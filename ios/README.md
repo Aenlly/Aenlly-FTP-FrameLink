@@ -23,6 +23,8 @@ SwiftUI原生应用，最低iOS17，适配iPhone与iPad。四个入口为相机�
 
 0.1.15接入富士接收生命周期及缺失序列号的会话身份隔离。仅有本机隔离协议、Core与源码类型检查，无新版二进制框架、App链接、IPA或真机结果。[范围与权限](../docs/acceptance/2026-10-31-ios-fuji-autosave-0.1.15.md)
 
+0.1.16修正富士接收页退出与撤销启用后的待连接发布边界，成功进入图库保留会话。84项Core测试通过；没有新版IPA或UI运行结果。[专项记录](../docs/acceptance/2026-10-31-ios-fuji-page-boundary-0.1.16.md)
+
 0.1.9的30项核心测试、App及UI测试工程编译已通过；界面执行受本机CoreSimulator版本限制，iPhone安装、JPEG清晰度与真实相机缓存复用仍待验。[本轮记录](../docs/acceptance/2026-10-31-ios-preview-exif-0.1.9.md)
 
 0.1.10修正慢快门时长、取消后的导入发布，以及同一照片落盘后的参数刷新。缓存复制与原片下载共用发布检查，独立暂存文件在取消后清理，先成功的文件保留。40项核心测试通过，UI与iPhone交互仍待验。[修正记录](../docs/acceptance/2026-10-31-ios-import-publication-0.1.10.md)

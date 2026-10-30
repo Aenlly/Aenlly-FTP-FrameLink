@@ -8,7 +8,8 @@ struct FujiAutoSaveView: View {
   @State private var addresses: [String] = []
   @State private var localIPv4 = ""
   @State private var importerName = "FrameLink"
-  @State private var experimental = false
+  private var experimental: Bool { model.fujiPageEnabled }
+  @State private var pageID = UUID()
   private var active: Bool { model.fujiReceiverState.phase == .starting || model.fujiReceiverState.phase == .listening }
   var body: some View {
     Form {
@@ -16,13 +17,15 @@ struct FujiAutoSaveView: View {
         Label("PC AutoSave · 实验接收", systemImage: "tray.and.arrow.down").font(.headline)
         Text(model.fujiReceiverState.message).font(.subheadline).foregroundStyle(.secondary)
         if model.fujiReceiverState.phase == .invited {
-          Button("接收当前待传批次") { model.acceptFujiInvitation { dismiss(); onBrowse() } }
-            .disabled(model.connecting)
+          Button("接收当前待传批次") { model.acceptFujiInvitation(page: pageID) { dismiss(); onBrowse() } }
+            .disabled(model.connecting || !experimental)
         }
         if model.connecting { ProgressView("正在连接待传批次") }
       }
       Section {
-        Toggle("启用本次实验接收", isOn: $experimental).disabled(active)
+        Toggle("启用本次实验接收", isOn: Binding(get: { experimental }, set: {
+          model.setFujiConsent($0, page: pageID)
+        }))
         Picker("本机局域网地址", selection: $localIPv4) {
           Text("请选择").tag("")
           ForEach(addresses, id: \.self) { Text($0).tag($0) }
@@ -30,11 +33,11 @@ struct FujiAutoSaveView: View {
         TextField("接收名称", text: $importerName).textInputAutocapitalization(.never).autocorrectionDisabled().disabled(active)
         if addresses.isEmpty { Text("未找到有线或Wi-Fi局域网地址，请连接相机所在网络后重新进入。没有启动接收监听。").font(.caption).foregroundStyle(.secondary) }
         Button("开始等待传输邀请") {
-          model.startFujiReceiver(localIPv4: localIPv4, importerName: importerName, experimental: experimental)
+          model.startFujiReceiver(localIPv4: localIPv4, importerName: importerName, experimental: experimental, page: pageID)
         }.disabled(active || !experimental || localIPv4.isEmpty || importerName.isEmpty || model.connecting)
-        Button("停止本次接收", role: .destructive) { model.stopFujiReceiver(); experimental = false }
+        Button("停止本次接收", role: .destructive) { model.stopFujiReceiver(page: pageID) }
       } header: { Text("本次接收") } footer: {
-        Text("在机身回放菜单启动PC AutoSave。注册完成后仍需机身发出IMPORT传输邀请；等待最长一分钟，超时或离开页面会关闭监听。")
+        Text("在机身回放菜单启动PC AutoSave。注册完成后仍需机身发出IMPORT传输邀请；离开或关闭启用会取消尚未完成的连接，已成功进入图库的会话保留。")
       }
       Section("当前支持范围") {
         Label("仅当前待传批次", systemImage: "square.stack")
@@ -47,7 +50,8 @@ struct FujiAutoSaveView: View {
       }
     }.navigationTitle("富士 PC AutoSave").navigationBarTitleDisplayMode(.inline)
       .task { addresses = NativeFujiReceiver.localAddresses(); if addresses.count == 1 { localIPv4 = addresses[0] } }
-      .onDisappear { model.stopFujiListening() }
+      .onAppear { model.openFujiPage(pageID) }
+      .onDisappear { model.leaveFujiPage(pageID) }
   }
 }
 

@@ -64,7 +64,9 @@ final class AppModel: ObservableObject {
   @Published var receiverRunning = false
   @Published private(set) var receiverSession: ReceiverSettings?
   @Published private(set) var fujiReceiverState = FujiReceiverState()
+  @Published private(set) var fujiPageEnabled = false
   private var connectingFuji = false
+  private lazy var fujiPage = FujiConnectionBoundary(cancelConnection: { [weak self] in self?.disconnect() })
   private lazy var fujiReceiver = FujiAutoSaveController(make: { NativeFujiReceiver() }, changed: { [weak self] in self?.fujiReceiverState = $0 })
   @Published var receiverAddress = ""
   @Published var ftpEntries: [FTPEntry] = []
@@ -197,22 +199,38 @@ final class AppModel: ObservableObject {
     connect(saved, openSettingsOnFailure: true, onReady: onReady)
     return true
   }
-  func startFujiReceiver(localIPv4: String, importerName: String, experimental: Bool) {
+  @discardableResult func openFujiPage(_ page: UUID) -> Bool {
+    let opened = fujiPage.open(page)
+    if opened { fujiPageEnabled = false; fujiReceiver.stop() }
+    return opened
+  }
+  func leaveFujiPage(_ page: UUID) { if fujiPage.leave(page) { fujiPageEnabled = false; fujiReceiver.stop() } }
+  func setFujiConsent(_ enabled: Bool, page: UUID) {
+    guard fujiPage.owns(page) else { return }
+    fujiPageEnabled = enabled
+    fujiPage.setConsent(enabled, page: page)
+    if !enabled { stopFujiReceiver() }
+  }
+  func startFujiReceiver(localIPv4: String, importerName: String, experimental: Bool, page: UUID) {
+    guard experimental, fujiPage.permits(page) else { notice = "请先启用本次实验接收"; return }
     if cameraProtocolID == CameraProtocol.fuji || connectingFuji { cancelQueue(); disconnect() }
     fujiReceiver.start(localIPv4: localIPv4, importerName: importerName, experimental: experimental)
   }
-  func stopFujiListening() { fujiReceiver.stop() }
-  func stopFujiReceiver() {
+  func stopFujiReceiver(page: UUID? = nil) {
+    if let page, !fujiPage.owns(page) { return }
+    fujiPageEnabled = false
+    fujiPage.stop()
     fujiReceiver.stop()
     if cameraProtocolID == CameraProtocol.fuji || connectingFuji { cancelQueue(); disconnect() }
   }
-  func acceptFujiInvitation(onReady: (() -> Void)? = nil) {
+  func acceptFujiInvitation(page: UUID, onReady: (() -> Void)? = nil) {
+    guard fujiPage.permits(page) else { notice = "本次接收已取消，请重新启用并等待传输邀请"; return }
     guard let config = fujiReceiver.takeInvitation() else { notice = "传输邀请已失效，请重新开启实验接收"; return }
     connectCamera(config, onReady: { [weak self] in
       guard let self else { return }
       self.cameraDay = ""; self.cameraSlot = 1; self.library.selection = []; self.gallerySource = 1
       onReady?()
-    }, rememberCredentials: false)
+    }, rememberCredentials: false, fujiPageID: page)
   }
   func connect(_ input: CameraConfig, openSettingsOnFailure: Bool = false, onReady: (() -> Void)? = nil, rememberCredentials: Bool? = nil) {
     guard CameraProtocol.normalConnection(input.protocolID) else {
@@ -223,16 +241,24 @@ final class AppModel: ObservableObject {
     connectCamera(input, openSettingsOnFailure: openSettingsOnFailure, onReady: onReady, rememberCredentials: rememberCredentials)
   }
   private func connectCamera(
-    _ input: CameraConfig, openSettingsOnFailure: Bool = false, onReady: (() -> Void)? = nil, rememberCredentials: Bool? = nil
+    _ input: CameraConfig, openSettingsOnFailure: Bool = false, onReady: (() -> Void)? = nil, rememberCredentials: Bool? = nil, fujiPageID: UUID? = nil
   ) {
     let config: CameraConfig
     do { config = try CameraConnectionPolicy.wireConfig(input) } catch { notice = error.localizedDescription; return }
     let remember = rememberCredentials ?? ((try? connections.isSaved(config)) ?? false)
     let borrowed = !config.fingerprint.isEmpty || ((try? connections.isSaved(config)) ?? false)
+    if config.protocolID == CameraProtocol.fuji {
+      guard let page = fujiPageID, fujiPage.permits(page) else { notice = "本次富士接收已取消"; return }
+    }
     credentialResetConfig = nil
     disconnect()
+    let fujiAttempt: UUID?
+    if config.protocolID == CameraProtocol.fuji {
+      guard let page = fujiPageID, let attempt = fujiPage.begin(page: page, onReady: onReady) else { return }
+      fujiAttempt = attempt
+    } else { fujiAttempt = nil }
     connectingFuji = config.protocolID == CameraProtocol.fuji
-    afterConnect = onReady
+    afterConnect = fujiAttempt == nil ? onReady : nil
     openSettingsAfterFailure = openSettingsOnFailure
     connectionFailure = ""
     let token = generation
@@ -265,38 +291,46 @@ final class AppModel: ObservableObject {
         }
         let values = verified.protocolID == CameraProtocol.sony ? try await camera.properties() : []
         guard token == generation else { return }
-        properties = values
-        cameraInfo = info
-        cameraProtocolID = verified.protocolID
-        creativeLookController.connect(protocolID: verified.protocolID, properties: values)
-        cameraMessage = "已连接 \(info.displayName)" + (verified.protocolID == CameraProtocol.canon ? " · CCAPI实验只读" : verified.protocolID == CameraProtocol.fuji ? " · AutoSave实验待传批次" : "")
-        connecting = false
-        connectingFuji = false
-        let ready = afterConnect
-        afterConnect = nil
-        ready?()
-        monitor = Task {
-          while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            if token == self.generation && !self.camera.connected() {
-              self.disconnect()
-              break
+        let publish = { [self] in
+          properties = values
+          cameraInfo = info
+          cameraProtocolID = verified.protocolID
+          creativeLookController.connect(protocolID: verified.protocolID, properties: values)
+          cameraMessage = "已连接 \(info.displayName)" + (verified.protocolID == CameraProtocol.canon ? " · CCAPI实验只读" : verified.protocolID == CameraProtocol.fuji ? " · AutoSave实验待传批次" : "")
+          connecting = false
+          connectingFuji = false
+          let ready = afterConnect
+          afterConnect = nil
+          ready?()
+          monitor = Task {
+            while !Task.isCancelled {
+              try? await Task.sleep(nanoseconds: 1_000_000_000)
+              if token == self.generation && !self.camera.connected() {
+                self.disconnect()
+                break
+              }
             }
           }
         }
+        if let attempt = fujiAttempt {
+          guard fujiPage.publish(attempt, publish) else { return }
+        } else { publish() }
         if gallerySource == 1 { await loadCamera(intent: .automatic) }
       } catch {
         guard token == generation else { return }
-        connecting = false
-        connectingFuji = false
-        camera.close()
-        cameraMessage = config.protocolID == CameraProtocol.canon ? "CCAPI连接未完成，请检查机身启用、地址、端口及HTTP认证" : config.protocolID == CameraProtocol.fuji ? "AutoSave批次连接未完成，请在实验入口重新等待机身传输邀请" : "连接未完成，请检查相机地址、网络与遥控设置"
-        if openSettingsOnFailure {
-          connectionFailure = "未能直接重连，请检查保存的地址和相机设置"
-          needsConnectionSettings = true
-        } else {
-          notice = error.localizedDescription
+        let publishFailure = { [self] in
+          connecting = false
+          connectingFuji = false
+          camera.close()
+          cameraMessage = config.protocolID == CameraProtocol.canon ? "CCAPI连接未完成，请检查机身启用、地址、端口及HTTP认证" : config.protocolID == CameraProtocol.fuji ? "AutoSave批次连接未完成，请在实验入口重新等待机身传输邀请" : "连接未完成，请检查相机地址、网络与遥控设置"
+          if openSettingsOnFailure {
+            connectionFailure = "未能直接重连，请检查保存的地址和相机设置"
+            needsConnectionSettings = true
+          } else {
+            notice = error.localizedDescription
+          }
         }
+        if let attempt = fujiAttempt { fujiPage.fail(attempt, publishFailure) } else { publishFailure() }
       }
     }
   }
@@ -317,6 +351,7 @@ final class AppModel: ObservableObject {
     } catch { notice = error.localizedDescription }
   }
   func disconnect() {
+    fujiPage.sessionClosed()
     fujiReceiver.stop(); connectingFuji = false
     originalPreviewTasks.values.forEach { $0.cancel() }
     afterConnect = nil

@@ -22,6 +22,46 @@ class LiveDeviceOrientationAcceptanceTest{
         return android.view.inspector.WindowInspector.getGlobalWindowViews().firstNotNullOfOrNull(::find)
     }
 
+    /** 实际点击ISO入口，覆盖握持转向后的命中区域及机身确认值回读 */
+    @Test fun isoTouchOpensPickerAndReadsBackWithoutReplacingLiveView(){
+        val orientation=LiveDeviceOrientation()
+        runtime.connect(ConnectionConfig(host="127.0.0.1"))
+        try{
+            compose.waitUntil(30000){runtime.camera.value.info!=null}
+            compose.runOnUiThread{compose.activity.setContent{MaterialTheme{LiveScreen(runtime,{},false,{},orientation)}}}
+            compose.waitUntil(20000){runtime.frame.value?.isNotEmpty()==true}
+            compose.waitUntil(15000){liveSurface()?.isAvailable==true}
+            compose.onNodeWithContentDescription("专业模式").performClick()
+            val scene=compose.onNodeWithTag("fullscreen-scene").fetchSemanticsNode().id
+            val surface=liveSurface()
+            val session=runtime.camera.value.info!!.id
+            val original=CameraPropertyText.quick(runtime.properties.value).first{CameraPropertyText.quickCode(it)=="ISO"}
+            val choices=CameraPropertyText.choices(original)
+            val target=choices.indexOfFirst{it.value!=original.value}
+            assertTrue("模拟机身必须提供不同的ISO候选",target>=0)
+            for(degrees in listOf(0,90,270)){
+                compose.runOnIdle{orientation.update(degrees)}
+                compose.waitForIdle()
+                compose.onNodeWithContentDescription("调整感光度").performTouchInput{click()}
+                compose.onNodeWithTag("live-property-picker").assertIsDisplayed()
+                compose.onNodeWithTag("live-property-choices").assertIsDisplayed()
+                if(degrees==0){
+                    compose.onNodeWithTag("live-property-choices").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress){it(target.toFloat())}
+                    compose.waitUntil(10000){runtime.properties.value.first{it.code==original.code}.value==choices[target].value}
+                    val originalIndex=choices.indexOfFirst{it.value==original.value}
+                    compose.onNodeWithTag("live-property-choices").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress){it(originalIndex.toFloat())}
+                    compose.waitUntil(10000){runtime.properties.value.first{it.code==original.code}.value==original.value}
+                }
+                acceptanceScreenshot(compose.activity,"live-iso-touch-$degrees")
+                compose.onNodeWithContentDescription("关闭参数").performTouchInput{click()}
+                compose.onNodeWithTag("live-property-picker").assertDoesNotExist()
+                assertEquals(scene,compose.onNodeWithTag("fullscreen-scene").fetchSemanticsNode().id)
+                assertSame(surface,liveSurface())
+                assertEquals(session,runtime.camera.value.info!!.id)
+            }
+        }finally{runtime.disconnect()}
+    }
+
     @Test fun holdingDirectionOnlyRotatesContentAndKeepsTheSameScene(){
         val orientation=LiveDeviceOrientation()
         runtime.connect(ConnectionConfig(host="127.0.0.1"))

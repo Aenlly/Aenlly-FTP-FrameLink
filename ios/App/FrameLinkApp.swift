@@ -213,7 +213,7 @@ struct CameraHomeView: View {
           SettingsView()
         } label: {
           Image(systemName: "gearshape")
-        }
+        }.accessibilityLabel("设置与帮助")
       }
       .fullScreenCover(isPresented: $live) {
         LiveCameraView(onGallery: {
@@ -358,6 +358,9 @@ struct ConnectCameraView: View {
 }
 
 struct SettingsView: View {
+  @EnvironmentObject var model: AppModel
+  @State private var previewBytes: Int64 = 0
+  @State private var clearPreviews = false
   var body: some View {
     List {
       Section("FrameLink") {
@@ -370,11 +373,21 @@ struct SettingsView: View {
         Text("FTP客户端：支持FTP及显式FTPS，可浏览、上传、下载和新建文件夹。")
         Text("蓝牙快门与云端选片目前在Android端提供，iOS端尚未接入。")
       }
+      Section("预览缓存") {
+        LabeledContent("当前占用", value: ByteCountFormatter.string(fromByteCount: previewBytes, countStyle: .file))
+        Text("上限约2GB，包含缩略图和临时JPEG原片。正式导入会校验并复用缓存；清理不会删除已导入照片或选片记录。").font(.footnote).foregroundStyle(.secondary)
+        Button("清除预览缓存", role: .destructive) { clearPreviews = true }.disabled(model.clearingPreviews)
+      }
       Section {
         Link("源码与使用说明", destination: URL(string: "https://github.com/Aenlly/Aenlly-FTP-FrameLink")!)
         Text("基于Aenlly-FTP，使用GPL-3.0许可证。相机协议来自alpha2go，具体署名见源码。").font(.caption).foregroundStyle(
           .secondary)
       }
     }.navigationTitle("设置与帮助")
+      .task { previewBytes = (try? await model.previewCache?.usage()) ?? 0 }
+      .alert("清除预览缓存？", isPresented: $clearPreviews) {
+        Button("取消", role: .cancel) {}
+        Button("清除缓存", role: .destructive) { Task { await model.clearPreviewCache(); previewBytes = (try? await model.previewCache?.usage()) ?? 0 } }
+      } message: { Text("仅清理可重新生成的预览和临时JPEG原片，保留正式导入文件与选择记录。") }
   }
 }

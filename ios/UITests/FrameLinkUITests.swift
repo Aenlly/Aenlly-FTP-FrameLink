@@ -1,6 +1,21 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  func testPhotoMetadataUsesFileSettingsAndCacheClearKeepsImportedPhoto() throws {
+    continueAfterFailure = false
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-metadata-fixture"]; app.launch()
+    app.buttons["图库"].tap(); app.buttons["查看 QA_6.jpg"].tap(); app.buttons["文件信息"].tap()
+    XCTAssertTrue(app.staticTexts["ISO 400"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["1/125 秒"].exists); XCTAssertTrue(app.staticTexts["f/2.8"].exists)
+    XCTAssertTrue(app.staticTexts["QA Camera"].exists)
+    app.buttons["完成"].tap(); app.buttons["关闭照片"].tap()
+    app.buttons["相机"].tap(); app.buttons["设置与帮助"].tap(); app.buttons["清除预览缓存"].tap(); app.buttons["清除缓存"].tap()
+    XCTAssertTrue(app.buttons["好"].waitForExistence(timeout: 5)); app.buttons["好"].tap()
+    XCTAssertTrue(app.staticTexts["当前占用"].exists)
+    app.navigationBars.buttons.element(boundBy: 0).tap(); app.buttons["图库"].tap()
+    app.buttons["查看 QA_6.jpg"].tap(); app.buttons["文件信息"].tap()
+    XCTAssertTrue(app.staticTexts["ISO 400"].waitForExistence(timeout: 5))
+  }
   private func assertEmpty(_ field: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
     XCTAssertTrue(["", field.placeholderValue ?? ""].contains(field.value as? String ?? ""), file: file, line: line)
   }

@@ -18,11 +18,11 @@ final class TransferHistoryTests: XCTestCase {
     var active: [TransferTask] = []
     for state in activeStates { var task = TransferTask(title: state.rawValue, kind: "camera-download"); task.state = state; try library.upsertTask(task); active.append(task) }
     try library.upsertTask(done); try library.upsertTask(cancelled)
-    let beforePhoto = try JSONEncoder().encode(library.photos)
+    let beforePhoto = library.photos
     let beforeHash = try LibraryStore.digest(try library.fileURL(photo.files[0].localPath!))
     XCTAssertEqual(try library.clearTaskHistory(Set(library.tasks.map(\.id))), 2)
     XCTAssertEqual(Set(library.tasks.map(\.id)), Set(active.map(\.id)))
-    XCTAssertEqual(try JSONEncoder().encode(library.photos), beforePhoto)
+    XCTAssertEqual(library.photos, beforePhoto)
     XCTAssertEqual(try LibraryStore.digest(try library.fileURL(photo.files[0].localPath!)), beforeHash)
     XCTAssertEqual(library.savedFiles.count, 2)
     var late = done; late.state = .running; try library.upsertTask(late)

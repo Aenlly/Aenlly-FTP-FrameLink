@@ -53,7 +53,7 @@ struct PhotoThumbnail: View {
       }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
     }
     .clipped().task(
-      id: photo.id + String(large)
+      id: photo.id + String(large) + String(model.previewRevision)
         + (library.photos.first { $0.id == photo.id } ?? photo).files.compactMap(\.localPath)
         .joined()
     ) {
@@ -469,9 +469,7 @@ struct GalleryView: View {
       }
   }
   private func removeSelection(_ files: Bool) {
-    do { try library.remove(library.selection, deleteFiles: files) } catch {
-      model.notice = error.localizedDescription
-    }
+    model.removePhotos(library.selection, deleteFiles: files)
   }
 }
 
@@ -520,7 +518,7 @@ struct PhotoViewer: View {
       Color.black.ignoresSafeArea()
       TabView(selection: $current) {
         ForEach(photos) { photo in
-          ZoomPhoto(photo: library.photos.first { $0.id == photo.id } ?? photo).tag(photo.id)
+          ZoomPhoto(photo: library.photos.first { $0.id == photo.id } ?? photo, active: current == photo.id).tag(photo.id)
         }
       }.tabViewStyle(.page(indexDisplayMode: .never))
     }
@@ -534,11 +532,7 @@ struct PhotoViewer: View {
         Spacer()
         VStack(spacing: 4) {
           Text(selected?.displayTitle ?? "照片").lineLimit(1)
-          Text(
-            selected?.imported == true
-              ? (selected?.files.contains { !$0.isRaw && $0.localPath != nil } == true
-                ? "已导入原片" : "已导入RAW原片 · 当前显示预览") : "相机预览 · 清晰度不代表原片"
-          ).font(.caption)
+          Text(previewStatus).font(.caption)
             .foregroundStyle(.white.opacity(0.7))
         }
         Spacer()
@@ -572,6 +566,14 @@ struct PhotoViewer: View {
           .caption
         ).foregroundStyle(.white.opacity(0.7))
         Spacer()
+        if let selected, selected.files.contains(where: { $0.formatTitle == "JPEG" }), !selected.files.contains(where: { $0.formatTitle == "JPEG" && $0.localPath != nil }) {
+          Button {
+            model.requestOriginalPreview(selected)
+          } label: {
+            if model.originalPreviewRequests.contains(selected.id) { ProgressView().tint(.white) }
+            else { Text(model.originalPreviews[selected.id] == nil ? "查看原片" : "JPEG原片").font(.subheadline) }
+          }.disabled(model.originalPreviewRequests.contains(selected.id) || model.clearingPreviews)
+        }
         Button {
           library.toggle(current)
         } label: {
@@ -591,6 +593,7 @@ struct PhotoViewer: View {
       NavigationStack {
         List {
           if let selected {
+            PhotoMetadataSection(photo: selected)
             Text(selected.importTitle).font(.footnote)
             ForEach(Array(selected.files.enumerated()), id: \.offset) { _, file in
               VStack(alignment: .leading, spacing: 6) {
@@ -612,11 +615,18 @@ struct PhotoViewer: View {
   private var selected: Photo? {
     library.photos.first { $0.id == current } ?? photos.first { $0.id == current }
   }
+  private var previewStatus: String {
+    guard let selected else { return "照片预览" }
+    if selected.files.contains(where: { !$0.isRaw && $0.localPath != nil }) { return "已导入原片" }
+    if model.originalPreviews[current] != nil { return selected.imported ? "RAW已导入 · 临时JPEG原片未导入" : "临时JPEG原片 · 未导入" }
+    return selected.imported ? "已导入RAW原片 · 当前显示预览" : "相机预览 · 清晰度不代表原片"
+  }
 }
 
 private struct ZoomPhoto: View {
   @EnvironmentObject var model: AppModel
   let photo: Photo
+  let active: Bool
   @State private var image: UIImage?
   @State private var loading = true
   @State private var scale: CGFloat = 1
@@ -645,13 +655,58 @@ private struct ZoomPhoto: View {
       ).onTapGesture(count: 2) {
         withAnimation(.easeInOut(duration: 0.2)) { scale = scale > 1 ? 1 : 2.5 }
       }
-    }.task(id: photo.id + photo.files.compactMap(\.localPath).joined()) {
+    }.task(id: photo.id + photo.files.compactMap(\.localPath).joined() + String(model.previewRevision) + String(active)) {
+      guard active else { image = nil; loading = false; return }
       loading = true
       if let url = await model.previewURL(photo, large: true) {
-        image = await Task.detached(priority: .userInitiated) {
-          loadPhotoImage(url, maxPixel: 4096)
+        let maxPixel = model.originalPreviews[photo.id] != nil || photo.imported ? 8192 : 4096
+        let loaded = await Task.detached(priority: .userInitiated) {
+          loadPhotoImage(url, maxPixel: maxPixel)
         }
         .value
+        guard !Task.isCancelled else { return }
+        image = loaded
+      }
+      loading = false
+    }
+  }
+}
+
+private struct PhotoMetadataSection: View {
+  @EnvironmentObject var model: AppModel
+  let photo: Photo
+  @State private var metadata = PhotoMetadata()
+  @State private var source = ""
+  @State private var loading = true
+  var body: some View {
+    Section("拍摄信息") {
+      if loading { ProgressView("读取照片参数") }
+      else {
+        LabeledContent("感光度", value: metadata.iso.map { "ISO " + $0 } ?? "未记录")
+        LabeledContent("快门速度", value: metadata.shutter ?? "未记录")
+        LabeledContent("光圈", value: metadata.aperture ?? "未记录")
+        if let value = metadata.capturedAt { LabeledContent("拍摄时间", value: value) }
+        if let value = metadata.camera { LabeledContent("相机", value: value) }
+        if let value = metadata.lens { LabeledContent("镜头", value: value) }
+        if let value = metadata.focalLength { LabeledContent("焦距", value: value) }
+        if let value = metadata.equivalentFocalLength { LabeledContent("等效焦距", value: value) }
+        if let value = metadata.exposureBias { LabeledContent("曝光补偿", value: value) }
+        if let value = metadata.pixelSize { LabeledContent("像素尺寸", value: value) }
+        if let latitude = metadata.latitude, let longitude = metadata.longitude {
+          LabeledContent("GPS", value: String(format: "%.6f, %.6f", latitude, longitude))
+          if let url = metadata.mapURL { Link("在地图中查看", destination: url) }
+          else { Text("此坐标基准暂不支持地图定位").font(.caption).foregroundStyle(.secondary) }
+        }
+        if let value = metadata.coordinateDatum { LabeledContent("坐标基准", value: value) }
+        if let value = metadata.altitude { LabeledContent("海拔", value: value) }
+        Text(source.isEmpty ? "暂无可读取文件，预览照片或查看JPEG原片后再试。" : "来源：" + source + (metadata.readable ? "" : " · 此格式未读到参数")).font(.caption).foregroundStyle(.secondary)
+      }
+    }.task(id: photo.id + String(model.previewRevision)) {
+      loading = true; metadata = PhotoMetadata(); source = ""
+      if let file = await model.metadataFile(photo) {
+        let read = await Task.detached(priority: .utility) { PhotoMetadataReader.read(file.0) }.value
+        guard !Task.isCancelled else { return }
+        metadata = read; source = file.1
       }
       loading = false
     }

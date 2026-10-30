@@ -25,6 +25,8 @@ if architectures != ['arm64'] or not re.search(r'platform\s+IOS\s*$', platform, 
 artifacts = root / 'artifacts'
 artifacts.mkdir(exist_ok=True)
 ipa = artifacts / f'FrameLink-{info["CFBundleShortVersionString"]}-ios-unsigned.ipa'
+if ipa.exists():
+    raise SystemExit('该版本IPA已存在，保留历史文件；请递增版本后生成新候选包')
 with tempfile.TemporaryDirectory(prefix='framelink-ipa-') as temporary:
     payload = pathlib.Path(temporary) / 'Payload'
     app = payload / source.name
@@ -45,6 +47,8 @@ manifest = {
     'ipa': ipa.name, 'bytes': ipa.stat().st_size,
     'sha256': hashlib.sha256(ipa.read_bytes()).hexdigest(),
     'physicalIPhoneVerified': False,
+    'sourceCommit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
+    'sourceWorktreeDirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=root).strip()),
 }
 ipa.with_suffix('.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
 print(ipa)

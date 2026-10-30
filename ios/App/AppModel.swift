@@ -2,6 +2,7 @@ import Camera
 import CryptoKit
 import Foundation
 import FrameLinkCore
+import ImageIO
 import UIKit
 
 @MainActor
@@ -40,6 +41,13 @@ final class AppModel: ObservableObject {
   @Published var ftpBusy = false
   @Published var queueBusy = false
   @Published var propertyUpdating = false
+  @Published private(set) var originalPreviewRequests: Set<String> = []
+  @Published private(set) var originalPreviews: [String: URL] = [:]
+  @Published private(set) var previewRevision = 0
+  @Published private(set) var clearingPreviews = false
+  let previewCache: JPEGPreviewCache?
+  private var previewEpoch = UUID()
+  private var originalPreviewTasks: [String: Task<Void, Never>] = [:]
   private var pendingConfig: CameraConfig?
   private var afterConnect: (() -> Void)?
   private var openSettingsAfterFailure = false
@@ -75,6 +83,8 @@ final class AppModel: ObservableObject {
       }
     #endif
     library = LibraryStore(root: directory)
+    previewCache = try? JPEGPreviewCache(root: directory.appendingPathComponent("previews", isDirectory: true))
+    if let previewCache { Task { try? await previewCache.trim() } }
     if let error = library.persistenceError { notice = error }
     recoverFTPReceipts()
     #if DEBUG
@@ -93,6 +103,13 @@ final class AppModel: ObservableObject {
           }
           if let data = image.jpegData(compressionQuality: 0.85) {
             try? data.write(to: source)
+            if ProcessInfo.processInfo.arguments.contains("--ui-metadata-fixture"),
+              let input = CGImageSourceCreateWithData(data as CFData, nil),
+              let output = CGImageDestinationCreateWithURL(source as CFURL, "public.jpeg" as CFString, 1, nil) {
+              let metadata: [CFString: Any] = [kCGImagePropertyExifDictionary: [kCGImagePropertyExifISOSpeedRatings: [400], kCGImagePropertyExifExposureTime: 1.0 / 125, kCGImagePropertyExifFNumber: 2.8], kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFModel: "QA Camera"]]
+              CGImageDestinationAddImageFromSource(output, input, 0, metadata as CFDictionary)
+              _ = CGImageDestinationFinalize(output)
+            }
             _ = try? library.importFile(source)
             try? FileManager.default.removeItem(at: source)
           }
@@ -222,6 +239,7 @@ final class AppModel: ObservableObject {
     } catch { notice = error.localizedDescription }
   }
   func disconnect() {
+    originalPreviewTasks.values.forEach { $0.cancel() }
     afterConnect = nil
     if gallerySource == 1 { library.selection = [] }
     generation = UUID()
@@ -274,11 +292,18 @@ final class AppModel: ObservableObject {
     guard token == generation, cameraInfo != nil else { throw CocoaError(.userCancelled) }
   }
   func previewURL(_ snapshot: Photo, large: Bool = false) async -> URL? {
+    let epoch = previewEpoch
     let photo = library.photos.first { $0.id == snapshot.id } ?? snapshot
     if let path = photo.files.first(where: { !$0.isRaw && $0.localPath != nil })?.localPath,
       let url = try? library.fileURL(path), FileManager.default.fileExists(atPath: url.path)
     {
       return url
+    }
+    if large, let file = photo.files.first(where: { $0.formatTitle == "JPEG" }),
+      let cached = try? await previewCache?.lookup(JPEGPreviewResource(photo: photo, file: file)) {
+      guard epoch == previewEpoch, !Task.isCancelled else { return nil }
+      originalPreviews[photo.id] = cached.url
+      return cached.url
     }
     if !large, let path = photo.previewPath, let url = try? library.fileURL(path),
       FileManager.default.fileExists(atPath: url.path)
@@ -296,12 +321,81 @@ final class AppModel: ObservableObject {
       try FileManager.default.createDirectory(
         at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
       try await camera.preview(photo, file: file, target: target, large: large)
+      guard epoch == previewEpoch else { try? FileManager.default.removeItem(at: target); return nil }
       if var current = library.photos.first(where: { $0.id == photo.id }) {
         current.previewPath = relative
         try library.update(current)
       }
+      try? await previewCache?.trim()
       return target
     } catch { return nil }
+  }
+  func requestOriginalPreview(_ photo: Photo) {
+    guard !clearingPreviews, !originalPreviewRequests.contains(photo.id) else { return }
+    guard let file = photo.files.first(where: { $0.formatTitle == "JPEG" }) else { notice = "此拍摄没有配对JPEG原片，保留现有预览"; return }
+    originalPreviewRequests.insert(photo.id)
+    originalPreviewTasks[photo.id] = Task {
+      defer { originalPreviewRequests.remove(photo.id); originalPreviewTasks[photo.id] = nil }
+      guard let previewCache else { notice = "预览缓存暂不可用，请检查可用空间"; return }
+      var ticket: JPEGCacheTicket?
+      do {
+        try Task.checkCancellation()
+        let resource = JPEGPreviewResource(photo: photo, file: file)
+        if let cached = try await previewCache.lookup(resource) {
+          try Task.checkCancellation()
+          originalPreviews[photo.id] = cached.url; previewRevision += 1; return
+        }
+        guard cameraInfo != nil, cameraIDs.contains(photo.id) else { throw URLError(.notConnectedToInternet) }
+        let generation = self.generation
+        let pending = try await previewCache.begin(resource); ticket = pending
+        try Task.checkCancellation()
+        let receipt = try await camera.download(photo, file: file, target: pending.url, update: { _, _ in })
+        try Task.checkCancellation()
+        guard generation == self.generation else { throw CancellationError() }
+        let cached = try await previewCache.commit(pending, bytes: receipt.size, sha256: receipt.sha256)
+        try Task.checkCancellation()
+        guard generation == self.generation else { throw CancellationError() }
+        originalPreviews[photo.id] = cached.url; previewRevision += 1
+      } catch is CancellationError {
+      } catch JPEGCacheError.cleared {
+      } catch { if !Task.isCancelled { notice = "JPEG原片预览未完成，请检查相机连接与可用空间" } }
+      if let ticket { await previewCache.discard(ticket) }
+    }
+  }
+  func clearPreviewCache() async {
+    guard !clearingPreviews else { return }
+    clearingPreviews = true
+    defer { clearingPreviews = false }
+    previewEpoch = UUID()
+    originalPreviewTasks.values.forEach { $0.cancel() }
+    do {
+      guard let previewCache else { throw CocoaError(.fileNoSuchFile) }
+      try await previewCache.clear(); originalPreviews = [:]; previewRevision += 1
+      notice = "预览缓存已清除，已导入原片与选片记录保留"
+    } catch { notice = "缓存清除未完成，请检查可用空间或稍后重试" }
+  }
+  func metadataFile(_ photo: Photo) async -> (URL, String)? {
+    for file in photo.files where !file.isRaw {
+      if let path = file.localPath, let url = try? library.fileURL(path), FileManager.default.fileExists(atPath: url.path) { return (url, file.name + " · 本机原片") }
+    }
+    if let file = photo.files.first(where: { $0.formatTitle == "JPEG" }),
+      let cached = try? await previewCache?.lookup(JPEGPreviewResource(photo: photo, file: file)) { return (cached.url, file.name + " · 临时JPEG原片") }
+    for file in photo.files where file.isRaw {
+      if let path = file.localPath, let url = try? library.fileURL(path), FileManager.default.fileExists(atPath: url.path) { return (url, file.name + " · 本机原片") }
+    }
+    if let path = photo.previewPath, let url = try? library.fileURL(path), FileManager.default.fileExists(atPath: url.path) { return (url, "相机预览 · 参数可能不全") }
+    return nil
+  }
+  func removePhotos(_ ids: Set<String>, deleteFiles: Bool) {
+    do { try library.remove(ids, deleteFiles: deleteFiles) } catch { notice = error.localizedDescription; return }
+    guard deleteFiles else { return }
+    for id in ids { originalPreviewTasks[id]?.cancel() }
+    Task {
+      do {
+        try await previewCache?.remove(photoIDs: ids)
+        originalPreviews = originalPreviews.filter { !ids.contains($0.key) }; previewRevision += 1
+      } catch { notice = "原片已移除，部分临时预览未清理，可在设置中清除预览缓存" }
+    }
   }
   func startLive() {
     guard cameraInfo?.canLiveView == true else {
@@ -437,21 +531,27 @@ final class AppModel: ObservableObject {
                   at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 let progressTask = task
                 let baseDone = task.done
-                let receipt = try await camera.download(
-                  photo, file: file, target: target,
-                  update: { done, total in
-                    Task { @MainActor in
-                      guard
-                        self.library.tasks.first(where: { $0.id == progressTask.id })?.state
-                          == .running
-                      else { return }
-                      var progress = progressTask
-                      progress.done = baseDone + done
-                      progress.total = max(progressTask.total, baseDone + total)
-                      try? self.library.upsertTask(progress)
-                    }
-                  })
-                task.done = baseDone + receipt.size
+                let reused = try await previewCache?.copyForImport(JPEGPreviewResource(photo: photo, file: file), to: target)
+                let savedBytes: Int64
+                if let reused { savedBytes = reused.size }
+                else {
+                  let receipt = try await camera.download(
+                    photo, file: file, target: target,
+                    update: { done, total in
+                      Task { @MainActor in
+                        guard
+                          self.library.tasks.first(where: { $0.id == progressTask.id })?.state
+                            == .running
+                        else { return }
+                        var progress = progressTask
+                        progress.done = baseDone + done
+                        progress.total = max(progressTask.total, baseDone + total)
+                        try? self.library.upsertTask(progress)
+                      }
+                    })
+                  savedBytes = receipt.size
+                }
+                task.done = baseDone + savedBytes
                 if var latest = library.photos.first(where: { $0.id == photo.id }),
                   let index = latest.files.firstIndex(where: {
                     $0.fileId == file.fileId && $0.name == file.name && $0.size == file.size

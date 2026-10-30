@@ -19,13 +19,19 @@ import java.util.concurrent.TimeUnit
 
 internal data class UsbCameraTarget(val key:String,val name:String)
 
-internal class AndroidUsbCameraOpener(private val context:Context){
+internal interface UsbCameraOpener {
+    fun begin():Long
+    fun targets():List<UsbCameraTarget>
+    fun open(key:String,ticket:Long):UsbPhotoAccess
+}
+
+internal class AndroidUsbCameraOpener(private val context:Context):UsbCameraOpener{
     private val manager=context.getSystemService(UsbManager::class.java)
     private val lock=Any()
     private var epoch=0L
     private var waiting:CountDownLatch?=null
 
-    fun begin():Long=synchronized(lock){
+    override fun begin():Long=synchronized(lock){
         epoch++
         waiting?.countDown()
         waiting=null
@@ -34,11 +40,11 @@ internal class AndroidUsbCameraOpener(private val context:Context){
 
     private fun valid(ticket:Long)=synchronized(lock){epoch==ticket}
 
-    fun targets():List<UsbCameraTarget> = manager.deviceList.values.filter{device->
+    override fun targets():List<UsbCameraTarget> = manager.deviceList.values.filter{device->
         (0 until device.interfaceCount).any{device.getInterface(it).interfaceClass==UsbConstants.USB_CLASS_STILL_IMAGE}
     }.map{UsbCameraTarget(it.deviceName,listOfNotNull(it.manufacturerName,it.productName).distinct().joinToString(" ").ifBlank{"USB相机"})}
 
-    fun open(key:String,ticket:Long):UsbPhotoAccess {
+    override fun open(key:String,ticket:Long):UsbPhotoAccess {
         check(valid(ticket)){"USB连接已取消"}
         val candidates=targets()
         val selected=candidates.firstOrNull{it.key==key}?:candidates.singleOrNull()?:error("未找到USB相机，请检查OTG连接并选择USB读卡模式")

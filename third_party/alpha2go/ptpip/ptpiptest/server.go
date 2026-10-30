@@ -23,23 +23,24 @@ import (
 
 // Options control the fake camera.
 type Options struct {
-	Dir          string
-	Sony         bool   // advertise and accept the Sony SDIO operations
-	RefuseInit   bool   // answer InitCommandRequest with InitFail (auth required)
-	NoPartial    bool   // do not support GetPartialObject
-	DropAfter    int64  // close the command connection once after serving this many object bytes (0 = never)
-	ChunkSize    int    // data packet size (default 64 KiB)
-	DateSuffix   string // appended to capture dates, e.g. "Z" or "+0200"; empty = no zone
-	A6700        bool   // emulate a6700 remote mode (implies Sony): storage ops fail until 0x9212(2,1,0); no GetPartialObject; 0x9211 instead; empty ModificationDate
-	IgnoreAfter  bool   // 0x923C always returns the first page (broken paging cursor)
-	NoRemote     bool   // A6700 without 0x923B-0x923D (legacy cameras: only ContentsTransfer mode)
-	CardBusy     bool   // 0x923B-0x923E answer OperationNotSupported (camera refuses card access right now)
-	Model        string // default "ILCE-6700"
-	SerialNumber string
-	Props        []ptpip.SonyProp // Sony extended properties (0x9209); default: a few small ones
-	Preview      []byte           // optional synthetic JPEG for application UI acceptance
-	FailControl  uint16           // 0x9207 for this code answers GeneralError when the value is 2 (pressed)
-	ControlCodes []uint16         // optional advertised controls; nil preserves the upstream autofocus-only default
+	Dir             string
+	Sony            bool   // advertise and accept the Sony SDIO operations
+	RefuseInit      bool   // answer InitCommandRequest with InitFail (auth required)
+	NoPartial       bool   // do not support GetPartialObject
+	DropAfter       int64  // close the command connection once after serving this many object bytes (0 = never)
+	ChunkSize       int    // data packet size (default 64 KiB)
+	DateSuffix      string // appended to capture dates, e.g. "Z" or "+0200"; empty = no zone
+	A6700           bool   // emulate a6700 remote mode (implies Sony): storage ops fail until 0x9212(2,1,0); no GetPartialObject; 0x9211 instead; empty ModificationDate
+	IgnoreAfter     bool   // 0x923C always returns the first page (broken paging cursor)
+	NoRemote        bool   // A6700 without 0x923B-0x923D (legacy cameras: only ContentsTransfer mode)
+	CardBusy        bool   // 0x923B-0x923E answer OperationNotSupported (camera refuses card access right now)
+	Model           string // default "ILCE-6700"
+	SerialNumber    string
+	Props           []ptpip.SonyProp // Sony extended properties (0x9209); default: a few small ones
+	AllPropsPayload []byte           // optional opaque 0x9209 reply for captured-payload replay; test service only
+	Preview         []byte           // optional synthetic JPEG for application UI acceptance
+	FailControl     uint16           // 0x9207 for this code answers GeneralError when the value is 2 (pressed)
+	ControlCodes    []uint16         // optional advertised controls; nil preserves the upstream autofocus-only default
 }
 
 // Server is a running fake camera.
@@ -551,6 +552,9 @@ func (s *Server) op(sess *session, op uint16, params []uint32) (uint16, []uint32
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if s.opts.AllPropsPayload != nil {
+			return ptpip.RespOK, nil, append([]byte(nil), s.opts.AllPropsPayload...), nil
+		}
 		return ptpip.RespOK, nil, ptpip.EncodeSonyProps(s.props), nil
 	case ptpip.OpSonyGetExtDeviceProp:
 		if !s.opts.Sony {

@@ -428,13 +428,14 @@ class PhysicalCoreUiAcceptanceTest {
     }
 
     private fun appRoot(): AccessibilityNodeInfo? {
+        val active = automation.rootInActiveWindow?.takeIf { it.packageName == app.packageName } ?: return null
         if (appTouch) {
             automation.windows.sortedByDescending { it.layer }.forEach { window ->
                 if (window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION)
                     window.root?.takeIf { it.packageName == app.packageName }?.let { return it }
             }
         }
-        return automation.rootInActiveWindow?.takeIf { it.packageName == app.packageName }
+        return active
     }
 
     private fun nodes(): List<AccessibilityNodeInfo> {
@@ -480,6 +481,7 @@ class PhysicalCoreUiAcceptanceTest {
     private fun tap(node: AccessibilityNodeInfo) {
         if (appTouch) {
             check(node.packageName == app.packageName)
+            check(automation.rootInActiveWindow?.packageName == app.packageName) { "系统或其他应用遮挡光屿，停止应用内操作" }
             var focused=false
             InstrumentationRegistry.getInstrumentation().runOnMainSync {
                 focused=WindowInspector.getGlobalWindowViews().any { it.hasWindowFocus()&&it.isShown&&it.isAttachedToWindow&&it.context.applicationContext.packageName==app.packageName }

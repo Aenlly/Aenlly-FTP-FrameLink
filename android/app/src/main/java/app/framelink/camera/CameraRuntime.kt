@@ -43,6 +43,7 @@ class CameraRuntime(
     val context: Context,
     val database: LocalDatabase,
     val settings: SecureSettings,
+    val native: NativeCamera = NativeCamera(context),
 ) {
     val scope =
         CoroutineScope(
@@ -57,9 +58,8 @@ class CameraRuntime(
     val reviews = LocalReviewRepository(context, database)
     val batches = SelectionBatchRepository(context, database)
     val photoRemoval = PhotoRemovalRepository(context, database)
-    val native = NativeCamera(context)
     val photos = database.photos().observe().map { rows ->
-        if(rows.any { it.capturedAt<=0&&it.files().any { file->file.fileModifiedAt>0 } })
+        if(rows.any { it.capturedAt<=0&&it.files().any { file->file.fileModifiedAt>0||file.fileCreatedAt>0 } })
             rows.sortedWith(compareByDescending<Photo> { it.browsingTime }.thenBy { it.id })
         else rows
     }
@@ -133,25 +133,30 @@ class CameraRuntime(
             runTasks()
         }
         val manager = context.getSystemService(ConnectivityManager::class.java)
-        manager.registerDefaultNetworkCallback(
-            object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: android.net.Network) {
-                    wakeNetwork()
-                }
+        val defaultNetwork = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                wakeNetwork()
             }
-        )
-        manager.registerNetworkCallback(
-            android.net.NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(),
-            object : ConnectivityManager.NetworkCallback() {
-                override fun onLost(network: android.net.Network) {
-                    scope.launch {
-                        synchronized(this@CameraRuntime) {
-                            if (mutableCamera.value.info != null && native.usesNetwork(network)) disconnect()
-                        }
+        }
+        val cameraNetwork = object : ConnectivityManager.NetworkCallback() {
+            override fun onLost(network: android.net.Network) {
+                scope.launch {
+                    synchronized(this@CameraRuntime) {
+                        if (mutableCamera.value.info != null && native.usesNetwork(network)) disconnect()
                     }
                 }
-            },
+            }
+        }
+        manager.registerDefaultNetworkCallback(defaultNetwork)
+        manager.registerNetworkCallback(
+            android.net.NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(),
+            cameraNetwork,
         )
+        // 独立运行实例结束时释放系统回调，应用级实例则随进程保持运行
+        scope.coroutineContext[Job]?.invokeOnCompletion {
+            runCatching { manager.unregisterNetworkCallback(defaultNetwork) }
+            runCatching { manager.unregisterNetworkCallback(cameraNetwork) }
+        }
     }
 
     /** 从已完成落盘目录恢复任务，覆盖确认后进程或数据库提交意外中断 */

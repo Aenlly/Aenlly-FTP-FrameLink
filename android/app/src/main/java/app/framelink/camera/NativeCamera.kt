@@ -14,14 +14,14 @@ import java.net.InetAddress
 import org.json.JSONObject
 
 /** 只为相机socket绑定局域网，云端保持Android默认互联网路径 */
-class NativeCamera(private val context: Context) {
+class NativeCamera internal constructor(private val context: Context,private val usbOpener:UsbCameraOpener) {
+    constructor(context:Context):this(context,AndroidUsbCameraOpener(context))
     private class Connection(val session:Session=Bridge.newSession()){
         @Volatile var usb:UsbPhotoSession?=null
         @Volatile var identity=""
         fun close(){usb?.close();session.close()}
     }
     private val lock=Any()
-    private val usbOpener=AndroidUsbCameraOpener(context)
     @Volatile private var connection=Connection()
     @Volatile private var boundNetwork:android.net.Network?=null
 

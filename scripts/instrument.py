@@ -19,6 +19,7 @@ classes['live-flow']=prefix+'LiveViewUsabilityAcceptanceTest#cameraWorkflowStays
 classes['live-menu']=prefix+'LiveViewUsabilityAcceptanceTest#compactMenusKeepBodyDefaultAndReadableTargetsAcrossRotation'
 classes['canon']=prefix+'CanonProtocolAcceptanceTest'
 classes['usb']=prefix+'UsbConnectionUiAcceptanceTest'
+classes['usb-workflow']=prefix+'UsbWorkflowAcceptanceTest'
 classes['all']+=','+classes['canon']+','+classes['usb']
 if mode not in classes: raise SystemExit('未知验收模式：'+mode)
 if mode in ['all', 'identity', 'gallery', 'ui']:

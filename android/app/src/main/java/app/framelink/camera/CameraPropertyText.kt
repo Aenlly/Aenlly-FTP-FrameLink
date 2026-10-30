@@ -38,7 +38,8 @@ internal object CameraPropertyText {
     fun label(property: CameraProperty, value: Long = property.value): String? {
         values[property.code]?.let { return it[value] }
         return when (property.code) {
-            0x5007 -> if (value > 0) "f/${decimal(value / 100.0)}" else "自动"
+            // 公开机身输出含有未解释的特殊值，不将其显示为f/655.xx
+            0x5007 -> if(value==0xfffeL||value==0xffffL)null else if (value > 0) "f/${decimal(value / 100.0)}" else "自动"
             0x500F -> if (value in setOf(0L, 0xffffffL, 0xffffffffL)) "自动" else "ISO $value"
             0x5010 -> (if (value > 0) "+" else "") + decimal(value / 1000.0) + " EV"
             0x500D -> {

@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PhotoTimeSourceTest {
+    @Test fun creationOnlyUsbMetadataStaysSeparateAndCanOrderTheGallery(){
+        val file=CameraFile(1,"PHOTO.RAF",fileCreatedAt=7000)
+        val item=Photo("usb:1","usb:1","PHOTO.RAF",PhotoSource.CAMERA.name,0,Json.encode(listOf(file)))
+        assertEquals(0L,item.capturedAt)
+        assertEquals(7000L,item.browsingTime)
+        assertEquals(0L,item.files().first().fileModifiedAt)
+    }
     @Test fun pairedFileDateMatchesTheTimestampUsedForBrowsing(){
         val jpeg=CameraFile(1,"IMG_0001.JPG",fileModifiedAt=1000,fileDay="2026-10-23")
         val raw=CameraFile(2,"IMG_0001.CR3",fileModifiedAt=2000,fileDay="2026-10-24")

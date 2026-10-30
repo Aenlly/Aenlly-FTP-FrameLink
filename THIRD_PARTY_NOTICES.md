@@ -17,6 +17,8 @@ alpha2go本地兼容改动：`SSHConfig`增加可选`DialContext`，供Android�
 
 alpha2go测试工具兼容改动：`ptpiptest.Options`增加JPEG预览、QA设备身份和可选控制能力列表，测试连接可主动断开；模拟器明确声明所模拟的自动对焦与快门能力。未配置时保持原测试默认行为，仅供独立协议验收，不包含在App安装包中
 
+alpha2go夹具回放改动：测试服务增加可选`AllPropsPayload`，原样返回有来源的0x9209属性载荷，验证本App的Session边界；不将属性载荷回放称为完整握手、认证或取景实机测试。原二进制夹具及Apache-2.0署名保持不变
+
 ## 文档中的摄影作品
 
 `docs/images/`中含有摄影作品的运行截图使用授权样片。照片版权与代码的GPL许可分别适用，照片继续按[Unsplash License](https://unsplash.com/license)使用；作者、来源、变换方式和核验记录见[VISUAL_QA.md](docs/VISUAL_QA.md)。样片原文件不随App或源码归档预装

@@ -12,7 +12,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Remove
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,10 +77,82 @@ internal fun GalleryMediaItem(runtime: CameraRuntime, group: List<Photo>, select
     }
 }
 
+private data class PhotoExifReadState(val information:PhotoExif?=null,val loading:Boolean=true)
+
 @Composable
-internal fun PhotoFilesDialog(photo:Photo,onClose:()->Unit) {
+internal fun PhotoFilesDialog(runtime:CameraRuntime,photo:Photo,onPreview:(String)->Unit={},onClose:()->Unit) {
+    val context=LocalContext.current
+    val camera by runtime.camera.collectAsState()
+    val cameraIds by runtime.currentCameraIds.collectAsState()
+    val scope=rememberCoroutineScope()
+    val cached=runtime.cachedOriginalPreview(photo)
+    var fetching by remember(photo.selectionResourceKey()){mutableStateOf(false)}
+    var failure by remember(photo.selectionResourceKey()){mutableStateOf("")}
+    var revision by remember(photo.selectionResourceKey()){mutableIntStateOf(0)}
+    var more by remember(photo.selectionResourceKey()){mutableStateOf(false)}
+    val readState by produceState(PhotoExifReadState(),photo.selectionResourceKey(),photo.filesJson,cached,revision){
+        value=PhotoExifReadState()
+        if(BuildConfig.DEBUG)android.util.Log.d("FrameLinkPhotoInfo","Reading metadata")
+        val information=withContext(Dispatchers.IO){PhotoExifReader.read(runtime.context,photo,cached)}
+        value=PhotoExifReadState(information,false)
+        if(BuildConfig.DEBUG)android.util.Log.d("FrameLinkPhotoInfo","Metadata ready: ${information!=null}")
+    }
+    val exif=readState.information
+    val loading=readState.loading
     AlertDialog(onDismissRequest=onClose,title={Text("原始文件")},text={
-        Column(verticalArrangement=Arrangement.spacedBy(16.dp)) {
+        Column(Modifier.heightIn(max=460.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(16.dp)) {
+            Text(photo.displayTitle(),fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
+            Text("拍摄参数",fontSize=14.sp)
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+                listOf("ISO" to exif?.iso,"快门速度" to exif?.shutter,"光圈" to exif?.aperture).forEach{(label,value)->
+                    Column(Modifier.weight(1f).semantics{contentDescription="$label：${value?:"未提供"}"}){
+                        Text(label,fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(value?:"未提供",fontSize=16.sp,modifier=Modifier.padding(top=5.dp))
+                    }
+                }
+            }
+            Text(if(loading)"正在读取照片信息"else exif?.source?.let{"来自$it"}?:"暂未读取到EXIF拍摄信息",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            listOf("焦距" to exif?.focalLength,"曝光补偿" to exif?.exposureBias,"相机" to exif?.camera,"镜头" to exif?.lens,"拍摄时间" to exif?.takenAt,"像素尺寸" to exif?.dimensions).forEach{(label,value)->
+                if(value!=null)Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                    Text(label,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.width(60.dp))
+                    Text(value,fontSize=12.sp,modifier=Modifier.weight(1f))
+                }
+            }
+            val location=exif?.location
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                Text("位置",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.width(60.dp))
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(5.dp)){
+                    Text(location?.coordinates?:if(loading||exif==null)"尚未读取"else if(exif?.source=="预览副本")"预览未携带位置"else"未记录",fontSize=12.sp)
+                    location?.altitude?.let{Text("海拔 ${PhotoExifText.decimal(it)} m",fontSize=11.sp)}
+                    location?.datum?.let{Text("坐标基准 $it",fontSize=11.sp)}
+                    if(location?.canOpenMap==true)TextButton(onClick={
+                        try{context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,android.net.Uri.parse(location.geoUri())).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))}
+                        catch(_:android.content.ActivityNotFoundException){runtime.notice.value="没有可打开照片坐标的地图应用"}
+                        catch(_:SecurityException){runtime.notice.value="系统未允许打开地图，可直接查看照片坐标"}
+                    }){Text("在地图中查看")}
+                }
+            }
+            val extra=listOf("曝光模式" to exif?.exposureMode,"白平衡" to exif?.whiteBalance,"测光" to exif?.metering,"闪光灯" to exif?.flash,"等效焦距" to exif?.equivalentFocalLength,"处理软件" to exif?.software,"作者" to exif?.artist,"版权" to exif?.copyright).filter{it.second!=null}
+            if(extra.isNotEmpty()){
+                TextButton(onClick={more=!more}){Text(if(more)"收起更多信息"else"更多拍摄信息")}
+                if(more)extra.forEach{(label,value)->Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
+                    Text(label,fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.width(60.dp))
+                    Text(value.orEmpty(),fontSize=12.sp,modifier=Modifier.weight(1f))
+                }}
+            }
+            if(!loading&&(exif?.hasExposure!=true||exif?.source=="预览副本")&&cached==null&&photo.files().any{it.formatTitle()=="JPEG"&&it.savedUri.isBlank()}&&camera.info?.canDownload==true&&photo.id in cameraIds){
+                TextButton(enabled=!fetching,onClick={
+                    fetching=true;failure=""
+                    scope.launch{
+                        try{val path=runtime.ensureOriginalPreview(photo);onPreview(path);revision++}
+                        catch(cancelled:CancellationException){throw cancelled}
+                        catch(error:Exception){failure=error.message?:"拍摄信息读取失败，请重试"}
+                        finally{fetching=false}
+                    }
+                }){Text(if(fetching)"正在读取JPEG…"else"读取JPEG完整信息")}
+            }
+            if(failure.isNotBlank())Text(failure,fontSize=12.sp,color=MaterialTheme.colorScheme.error)
+            HorizontalDivider()
             Text("${photo.formatTitle()} · 同一次拍摄的文件分别保存",fontSize=12.sp)
             photo.files().forEach { file -> Column(verticalArrangement=Arrangement.spacedBy(5.dp)) {
                 Text(file.name,fontSize=14.sp)

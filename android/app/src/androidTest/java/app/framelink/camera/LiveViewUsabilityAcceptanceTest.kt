@@ -41,6 +41,10 @@ class LiveViewUsabilityAcceptanceTest {
             openLive()
             val scene = compose.onNodeWithTag("fullscreen-scene").fetchSemanticsNode().id
             val portrait = compose.onNodeWithTag("live-preview").fetchSemanticsNode().boundsInWindow
+            val portraitAlbum=compose.onNodeWithTag("live-album-control").fetchSemanticsNode().boundsInWindow
+            val portraitShutter=compose.onNodeWithContentDescription("拍摄").fetchSemanticsNode().boundsInWindow
+            val portraitLook=compose.onNodeWithTag("live-look-control").fetchSemanticsNode().boundsInWindow
+            assertTrue("竖屏相册和外观仍在快门左右",portraitAlbum.right<=portraitShutter.left&&portraitLook.left>=portraitShutter.right)
             compose.onNodeWithTag("live-quick-properties").assertDoesNotExist()
             val exposureMode = runtime.properties.value.firstOrNull { it.code == 0x500E }?.value
             compose.onNodeWithContentDescription("专业模式").performClick()
@@ -85,6 +89,11 @@ class LiveViewUsabilityAcceptanceTest {
             compose.onNodeWithContentDescription("关闭参数").performClick()
             compose.onNodeWithContentDescription("拍摄").assertIsDisplayed()
             val shutter = compose.onNodeWithContentDescription("拍摄").fetchSemanticsNode().boundsInWindow
+            val album=compose.onNodeWithTag("live-album-control").fetchSemanticsNode().boundsInWindow
+            val look=compose.onNodeWithTag("live-look-control").fetchSemanticsNode().boundsInWindow
+            assertTrue("横屏相册在快门上方",album.bottom<=shutter.top)
+            assertTrue("横屏外观在快门下方",look.top>=shutter.bottom)
+            assertTrue("横屏三个控件纵向居中对齐",kotlin.math.abs(album.center.x-shutter.center.x)<density&&kotlin.math.abs(look.center.x-shutter.center.x)<density)
             assertTrue("快门位于右侧操作区", shutter.left >= landscape.right && shutter.bottom < window.bottom - 12)
             val quick = compose.onNodeWithTag("live-quick-properties").fetchSemanticsNode().boundsInWindow
             assertTrue(compose.onAllNodesWithTag("live-quick-value", useUnmergedTree = true).fetchSemanticsNodes().all { it.boundsInWindow.bottom <= quick.bottom })

@@ -54,7 +54,7 @@ class PhysicalCoreUiAcceptanceTest {
 
     private fun connect(synchronizeCaptureStorage:Boolean=true) {
         assumeTrue(InstrumentationRegistry.getArguments().getString("allowPhysicalCameraRead") == "true")
-        check(Build.MODEL in setOf("25113PN0EC", "23013RK75C"))
+        check(Build.MODEL in setOf("25113PN0EC", "23013RK75C", "2410CRP4CC"))
         val service = automation.serviceInfo
         service.flags = service.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         automation.serviceInfo = service
@@ -64,7 +64,7 @@ class PhysicalCoreUiAcceptanceTest {
             automation.executeShellCommand("am start -W -n app.framelink.camera/.MainActivity")
         ).use { it.readBytes() }
         waitFor(15000) { appRoot()?.packageName == app.packageName }
-        rotate(UiAutomation.ROTATION_FREEZE_0)
+        if(Build.MODEL!="2410CRP4CC")rotate(UiAutomation.ROTATION_FREEZE_0)
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
                 .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED).forEach {
@@ -327,6 +327,72 @@ class PhysicalCoreUiAcceptanceTest {
                 .put("pendingImportsUnchanged",true).put("importTaskCreated",false)
                 .put("rotationPreservedDetail",true).put("selectionUnchanged",true).put("shutterTriggered",false))
         }finally{touchWindowId=null;rotate(UiAutomation.ROTATION_UNFREEZE);runtime.disconnect()}
+    }
+
+    @Test fun photoExifUiUsesExistingFileWithoutImport(){
+        check(Build.MODEL=="25113PN0EC"){"本轮照片EXIF验收仅允许小米17"}
+        connect(synchronizeCaptureStorage=false)
+        try{
+            clickText("相机照片");waitFor{hasText("相机内")};runtime.selectCameraDay("")
+            waitFor(90000){runtime.currentCameraIds.value.isNotEmpty()&&!runtime.camera.value.loadingPhotos&&!runtime.galleryHasMore.value}
+            val rows=runBlocking{runtime.database.photos().observe().first().filter{it.id in runtime.currentCameraIds.value}}
+            val photo=rows.take(12).first{runtime.cachedOriginalPreview(it)!=null}
+            val metadata=requireNotNull(PhotoExifReader.read(app,photo,runtime.cachedOriginalPreview(photo)))
+            assertTrue("真实文件需包含核心拍摄参数",metadata.hasExposure)
+            val tasks=runBlocking{runtime.database.tasks().all().map{it.id}.toSet()}
+            clickDescription("查看 ${photo.name}");clickDescription("文件信息")
+            waitFor{findDescription("ISO：${metadata.iso}")!=null&&findDescription("快门速度：${metadata.shutter}")!=null&&findDescription("光圈：${metadata.aperture}")!=null}
+            screenshot("physical-photo-exif-exposure")
+            repeat(5){
+                val location=metadata.location?.coordinates?:"未记录"
+                if(!hasText(location))nodes().filter{it.isScrollable}.maxByOrNull{Rect().also(it::getBoundsInScreen).height()}
+                    ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                SystemClock.sleep(150)
+            }
+            assertTrue(hasText(metadata.location?.coordinates?:"未记录"))
+            screenshot("physical-photo-exif-location")
+            assertEquals(photo.filesJson,runBlocking{runtime.database.photos().find(photo.id)!!.filesJson})
+            assertEquals(tasks,runBlocking{runtime.database.tasks().all().map{it.id}.toSet()})
+            report("photo-exif-ui.json",JSONObject().put("file",photo.name).put("source",metadata.source)
+                .put("iso",metadata.iso).put("shutter",metadata.shutter).put("aperture",metadata.aperture)
+                .put("focalLength",metadata.focalLength).put("camera",metadata.camera).put("lens",metadata.lens)
+                .put("takenAt",metadata.takenAt).put("hasLocation",metadata.location!=null)
+                .put("fileStateUnchanged",true).put("importTaskCreated",false).put("shutterTriggered",false))
+            clickText("完成");clickDescription("关闭照片")
+        }finally{runtime.disconnect()}
+    }
+
+    /** 只读核对取景快捷参数的属性、候选与可写状态，不提交机身设置 */
+    @Test fun liveQuickParameterDescriptorsAreReadable(){
+        check(Build.MODEL=="2410CRP4CC"){"本轮参数排查仅允许小米平板7"}
+        connect(synchronizeCaptureStorage=false)
+        try{
+            clickText("取景拍摄")
+            waitFor(30000){runtime.frame.value?.isNotEmpty()==true}
+            dismissFullscreenEducation()
+            clickDescription("专业模式")
+            val relevant=runtime.properties.value.filter{it.code in CameraPropertyText.exposureOrder}
+            report("live-parameter-descriptors.json",JSONObject().put("properties",org.json.JSONArray(relevant.map{
+                JSONObject().put("code",it.code).put("value",it.value).put("writable",it.writable)
+                    .put("rawChoiceCount",it.choices.size).put("recognizedChoiceCount",CameraPropertyText.choices(it).size)
+                    .put("selectedForQuick",it in CameraPropertyText.quick(runtime.properties.value))
+            })))
+            screenshot("physical-tablet-parameters-before")
+            val iso=requireNotNull(findDescription("调整感光度"))
+            val bounds=Rect().also(iso::getBoundsInScreen)
+            touchWindowId=iso.windowId
+            val started=SystemClock.uptimeMillis()
+            for(action in listOf(MotionEvent.ACTION_DOWN,MotionEvent.ACTION_UP)){
+                check(appRoot()?.packageName==app.packageName){"光屿不在前台，停止ISO触控"}
+                val event=MotionEvent.obtain(started,SystemClock.uptimeMillis(),action,bounds.exactCenterX(),bounds.exactCenterY(),0)
+                event.source=android.view.InputDevice.SOURCE_TOUCHSCREEN
+                try{assertTrue(dispatch(event))}finally{event.recycle()}
+                SystemClock.sleep(60)
+            }
+            waitFor{findDescription("关闭参数")!=null}
+            screenshot("physical-tablet-iso-panel")
+            clickDescription("关闭参数")
+        }finally{runtime.disconnect()}
     }
 
     @Test

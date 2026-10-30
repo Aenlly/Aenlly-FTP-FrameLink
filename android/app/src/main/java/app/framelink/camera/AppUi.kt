@@ -102,6 +102,7 @@ import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -330,6 +331,7 @@ fun FrameLink(runtime: CameraRuntime) {
     LaunchedEffect(photos,selection,camera.info?.id){
         if(camera.info==null&&hasRemoteDraft)selectionNeedsCheck=true
     }
+    val viewerUiState=rememberSaveable(viewer,saver=PhotoViewerUiState.Saver){PhotoViewerUiState()}
     val currentPhotoViewer: @Composable (Boolean)->Unit = { embedded ->
             photos
             .find { it.id == viewer }
@@ -337,6 +339,7 @@ fun FrameLink(runtime: CameraRuntime) {
                 PhotoViewer(
                     runtime,
                     photo,
+                    state=viewerUiState,
                     embedded=embedded,
                     onClose = { viewer = null;viewerClientChoices=null },
                     onRemove = { removing = listOf(photo.id) },
@@ -2391,10 +2394,33 @@ private fun SettingsSheet(runtime: CameraRuntime, onClose: () -> Unit, onCloud: 
         )
 }
 
+/** 大图跨单栏窗口与双栏预览共享交互状态，关闭本次查看后清除 */
+@Stable
+private class PhotoViewerUiState{
+    val filesInfo=mutableStateOf(false)
+    val scale=mutableFloatStateOf(1f)
+    val pan=mutableStateOf(Offset.Zero)
+    val controls=mutableStateOf(true)
+    val fitScale=mutableFloatStateOf(0f)
+    companion object{
+        val Saver=androidx.compose.runtime.saveable.listSaver<PhotoViewerUiState,Any>(
+            save={listOf(it.scale.floatValue,it.pan.value.x,it.pan.value.y,it.filesInfo.value,it.controls.value,it.fitScale.floatValue)},
+            restore={values->PhotoViewerUiState().apply{
+                scale.floatValue=((values.getOrNull(0)as?Float)?.takeIf{it.isFinite()}?:1f).coerceIn(1f,6f)
+                pan.value=Offset((values.getOrNull(1)as?Float)?.takeIf{it.isFinite()}?:0f,(values.getOrNull(2)as?Float)?.takeIf{it.isFinite()}?:0f)
+                filesInfo.value=values.getOrNull(3)as?Boolean?:false
+                controls.value=values.getOrNull(4)as?Boolean?:true
+                fitScale.floatValue=(values.getOrNull(5)as?Float)?.takeIf{it.isFinite()&&it>0}?:0f
+            }},
+        )
+    }
+}
+
 @Composable
 private fun PhotoViewer(
     runtime: CameraRuntime,
     photo: Photo,
+    state:PhotoViewerUiState,
     embedded:Boolean=false,
     onClose: () -> Unit,
     onRemove: () -> Unit,
@@ -2418,10 +2444,10 @@ private fun PhotoViewer(
     var model by remember(photo.selectionResourceKey(),original?.savedUri) { mutableStateOf(original?.savedUri ?: fullPreviewPath.ifBlank{photo.displayUri}) }
     var viewerLoading by remember(photo.id) { mutableStateOf(true) }
     var viewerFailure by remember(photo.id) { mutableStateOf("") }
-    var filesInfo by remember { mutableStateOf(false) }
+    var filesInfo by state.filesInfo
     var retryKey by remember(photo.id) { mutableIntStateOf(0) }
-    var scale by remember(photo.id) { mutableFloatStateOf(1f) }
-    var pan by remember(photo.id) { mutableStateOf(Offset.Zero) }
+    var scale by state.scale
+    var pan by state.pan
     var imageBounds by remember(photo.id){mutableStateOf(IntSize.Zero)}
     val decodedSizes=remember{mutableStateMapOf<String,IntSize>()}
     val readyModels=remember{mutableStateMapOf<String,String>()}
@@ -2434,7 +2460,15 @@ private fun PhotoViewer(
         val y=((bounds.height*fit*zoom-imageViewport.height)/2).coerceAtLeast(0f)
         return Offset(position.x.coerceIn(-x,x),position.y.coerceIn(-y,y))
     }
-    var viewerControls by remember { mutableStateOf(true) }
+    LaunchedEffect(imageViewport,imageBounds){
+        if(imageBounds.width>0&&imageBounds.height>0&&imageViewport.width>0&&imageViewport.height>0){
+            val fit=minOf(imageViewport.width.toFloat()/imageBounds.width,imageViewport.height.toFloat()/imageBounds.height)
+            val previous=state.fitScale.floatValue
+            pan=boundedPan(if(previous>0)pan*(fit/previous)else pan,scale)
+            state.fitScale.floatValue=fit
+        }
+    }
+    var viewerControls by state.controls
     var viewerMore by remember { mutableStateOf(false) }
     var importingCurrent by remember { mutableStateOf(false) }
     var loadingOriginal by remember(photo.id) { mutableStateOf(false) }
@@ -2445,13 +2479,14 @@ private fun PhotoViewer(
         if(canLoadMore&&!loadingMore&&pager.settledPage>=neighbors.lastIndex-2)onNeedMore()
     }
     LaunchedEffect(photo.id,model){if(model.isNotBlank()&&readyModels[photo.id]==model){viewerLoading=false;viewerFailure=""}}
-    LaunchedEffect(photo.id){
+    LaunchedEffect(photo.id,neighbors.map{it.id}){
         val index=neighbors.indexOfFirst{it.id==photo.id}.coerceAtLeast(0)
         if(!pager.isScrollInProgress&&pager.settledPage!=index)pager.scrollToPage(index)
         strip.animateScrollToItem(index)
     }
     LaunchedEffect(pager,neighbors.map{it.id},photo.id){
-        snapshotFlow{pager.settledPage}.collect { index -> neighbors.getOrNull(index)?.takeIf{it.id!=photo.id}?.let{onNavigate(it.id)} }
+        // 首次值属于已有翻页状态，不将外部点选或列表更新误判为用户翻页
+        snapshotFlow{pager.settledPage}.drop(1).collect { index -> neighbors.getOrNull(index)?.takeIf{it.id!=photo.id}?.let{onNavigate(it.id)} }
     }
     var edited by remember { mutableStateOf<File?>(null) }
     val edit =
@@ -2517,7 +2552,6 @@ private fun PhotoViewer(
     DarkScene {
         PhotoViewerScene(embedded,onClose) {
             if(!embedded)DarkDialogBars()
-            if (filesInfo) PhotoFilesDialog(photo) { filesInfo = false }
             if(importingCurrent)AlertDialog(onDismissRequest={importingCurrent=false},title={Text("导入当前照片")},text={Column{
                 DownloadFormat.entries.forEach{format->TextButton(enabled=photo.downloadFiles(format).any{it.savedUri.isBlank()},onClick={runtime.enqueueDownload(listOf(photo.id),format);runtime.notice.value="已加入导入队列，可在传输页查看";importingCurrent=false;onClose()}){Text(when(format){DownloadFormat.JPEG->"JPEG / HEIF";DownloadFormat.RAW->"RAW原片";DownloadFormat.ALL->"全部文件"})}}
             }},confirmButton={},dismissButton={TextButton(onClick={importingCurrent=false}){Text("取消")}})
@@ -2651,6 +2685,7 @@ private fun PhotoViewer(
                 }
             }
         }
+        if (filesInfo) PhotoFilesDialog(runtime,photo,onPreview={fullPreviewPath=it;model=it}) { filesInfo = false }
     }
 }
 

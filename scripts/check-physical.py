@@ -14,7 +14,7 @@ parser.add_argument('--allow-camera-parameter-check', action='store_true', requi
 parser.add_argument('--manual-install', action='store_true', help='使用已在手机手动安装的App和诊断组件')
 parser.add_argument('--version', help='手动安装模式核对指定的已冻结版本，不使用开发工作区版本')
 parser.add_argument('--app-touch', action='store_true', help='仅向App自己的窗口分发触控，不验证系统输入注入')
-parser.add_argument('--case', choices=['all', 'gallery', 'detail', 'live', 'focus', 'recover', 'latency', 'creative', 'creative-ui'], default='all')
+parser.add_argument('--case', choices=['all', 'gallery', 'detail', 'exif', 'parameters', 'live', 'focus', 'recover', 'latency', 'creative', 'creative-ui'], default='all')
 parser.add_argument('--focus-near', help='仅对焦验收：前景目标归一化坐标x,y')
 parser.add_argument('--focus-far', help='仅对焦验收：后景目标归一化坐标x,y')
 parser.add_argument('--include-ftp', action='store_true', help='追加本机FTP客户端字节、中文文件名与取消校验')
@@ -53,8 +53,10 @@ def verify_installed_packages():
             raise SystemExit(f'{package}不是本轮构建，停止测试；请先覆盖安装主包和诊断组件')
 
 model = subprocess.check_output(adb + ['shell', 'getprop', 'ro.product.model'], text=True).strip()
-if model not in {'25113PN0EC', '23013RK75C'}:
+if model not in {'25113PN0EC', '23013RK75C', '2410CRP4CC'}:
     raise SystemExit('设备不在本项目已确认的实机验收范围内')
+if model=='2410CRP4CC' and (args.case!='parameters' or args.include_capture or args.include_parameter_write or args.include_ftp):
+    raise SystemExit('平板当前仅开放本轮只读快捷参数验收，禁止沿用手机专用动作')
 sdk = int(subprocess.check_output(adb + ['shell', 'getprop', 'ro.build.version.sdk'], text=True).strip())
 stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
 if args.manual_install:
@@ -73,6 +75,8 @@ if sdk >= 37:
 base_class = 'app.framelink.camera.PhysicalCoreUiAcceptanceTest'
 methods = {'gallery': 'connectedGallerySelectionDownloadBatchAndReconnectWorkOnPhone',
     'detail': 'galleryTotalAndOriginalZoomStayInDetailAcrossRotation',
+    'exif': 'photoExifUiUsesExistingFileWithoutImport',
+    'parameters': 'liveQuickParameterDescriptorsAreReadable',
     'live': 'liveLabelsAndFooterStayVisibleAndApertureRestoresExactly', 'focus': 'focusTargetsDoNotFireShutter',
     'recover': 'recoverPendingFilesWithoutTakingPhoto', 'latency': 'measurePreviewReceptionAndNetworkWithoutCapture',
     'creative': 'readCreativeLookDescriptorsWithoutChangingCameraSettings','creative-ui':'creativeLookUiReadsActualCameraSelectionWithoutWriting'}

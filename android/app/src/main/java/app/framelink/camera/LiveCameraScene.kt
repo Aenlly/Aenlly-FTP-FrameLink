@@ -19,6 +19,8 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -30,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -81,7 +84,7 @@ private fun LiveGlass(state:HazeState,modifier:Modifier=Modifier,light:Boolean=f
 
 /** 拍照界面保持简洁，专业参数按需展开；两种方向共享完整取景与真实机身状态 */
 @Composable
-internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,onGallery:()->Unit) {
+internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,onGallery:()->Unit,deviceOrientation:LiveDeviceOrientation?=null) {
     val frame by runtime.frame.collectAsStateWithLifecycle()
     val camera by runtime.camera.collectAsStateWithLifecycle()
     val properties by runtime.properties.collectAsStateWithLifecycle()
@@ -95,6 +98,9 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
     val albumImage=latest?.displayUri?.takeIf{it.isNotBlank()}?:libraryPhotos.firstOrNull{it.displayUri.isNotBlank()}?.displayUri
     val notice by runtime.notice.collectAsStateWithLifecycle()
     val landscape=LocalConfiguration.current.orientation==Configuration.ORIENTATION_LANDSCAPE
+    val sensedOrientation=rememberLiveDeviceOrientation(paused)
+    val rotation=if(landscape)0 else (deviceOrientation?:sensedOrientation).rotation
+    val contentRotation by animateFloatAsState(rotation.toFloat(),tween(200),label="live-control-direction")
     val scope=rememberCoroutineScope()
     val glass=remember{HazeState()}
     var controls by rememberSaveable{mutableStateOf(true)}
@@ -139,7 +145,7 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
         scope.launch{try{runtime.awaitPhotoWork();runtime.stopLive();onGallery()}finally{openingGallery=false}}
     }
     fun focus(point:Offset){
-        val normalized=liveFocusPoint(point,viewport,dimensions)?:return
+        val normalized=liveFocusPoint(point,viewport,dimensions,rotation)?:return
         if(camera.info?.canFocus!=true){runtime.notice.value="当前相机未开放点按对焦，请在机身调整";return}
         focusPoint=point
         runtime.focusAt(normalized.x,normalized.y)
@@ -150,15 +156,16 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
         focus(point)
     }
     LaunchedEffect(focusPoint,focusing){if(focusPoint!=null&&!focusing){kotlinx.coroutines.delay(1600);focusPoint=null}}
+    LaunchedEffect(rotation){focusPoint=null}
     fun cycleTimer(){timer=when(timer){0->3;3->10;else->0}}
     suspend fun applyParameter(item:CameraProperty,value:Long):Long{
         runtime.setProperty(item,value).join()
         return runtime.properties.value.firstOrNull{it.code==item.code}?.value?:item.value
     }
     @Composable fun Album(modifier:Modifier=Modifier,size:Int=48){
-        Box(modifier.size(size.dp).clip(RoundedCornerShape(12.dp)).background(Color.White.copy(alpha=.08f)).clickable(onClick=::openAlbum),contentAlignment=Alignment.Center){
-            if(albumImage!=null)AsyncImage(albumImage,"查看相机照片",Modifier.fillMaxSize().testTag("live-album-thumbnail"),contentScale=ContentScale.Crop)
-            else Icon(Icons.Outlined.PhotoLibrary,"查看相机照片",tint=Color.White,modifier=Modifier.size(26.dp))
+        Box(modifier.size(size.dp).testTag("live-album-control").clip(RoundedCornerShape(12.dp)).background(Color.White.copy(alpha=.08f)).clickable(onClick=::openAlbum),contentAlignment=Alignment.Center){
+            if(albumImage!=null)AsyncImage(albumImage,"查看相机照片",Modifier.fillMaxSize().graphicsLayer{rotationZ=contentRotation}.testTag("live-album-thumbnail"),contentScale=ContentScale.Crop)
+            else Icon(Icons.Outlined.PhotoLibrary,"查看相机照片",tint=Color.White,modifier=Modifier.size(26.dp).graphicsLayer{rotationZ=contentRotation})
         }
     }
     @Composable fun Modes(modifier:Modifier=Modifier){
@@ -166,7 +173,7 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                 listOf(false to "拍照",true to "专业").forEach{(pro,title)->
                     Column(Modifier.width(56.dp).heightIn(min=44.dp)
                         .clickable{professional=pro;propertyCode=null}.semantics{contentDescription=title+"模式"},horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
-                        Text(title,fontSize=12.sp,color=if(professional==pro)LiveAccent else Color.White.copy(alpha=.7f))
+                        Text(title,Modifier.graphicsLayer{rotationZ=contentRotation},fontSize=12.sp,color=if(professional==pro)LiveAccent else Color.White.copy(alpha=.7f))
                         Spacer(Modifier.height(5.dp))
                         Box(Modifier.width(20.dp).height(1.dp).background(if(professional==pro)LiveAccent else Color.Transparent))
                     }
@@ -175,10 +182,11 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
     }
     @Composable fun Quick(vertical:Boolean,modifier:Modifier=Modifier){
         @Composable fun Item(item:CameraProperty,modifier:Modifier){
-            Column(modifier.clip(RoundedCornerShape(12.dp)).background(if(property?.code==item.code)Color.White.copy(alpha=.12f)else Color.Transparent).clickable(enabled=updating==null&&CameraPropertyText.editable(item)){propertyCode=item.code}.semantics{contentDescription="调整"+CameraPropertyText.name(item)}
-                .padding(horizontal=4.dp,vertical=if(vertical)2.dp else 4.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
+            Box(modifier.clip(RoundedCornerShape(12.dp)).background(if(property?.code==item.code)Color.White.copy(alpha=.12f)else Color.Transparent).clickable(enabled=updating==null){propertyCode=item.code}.semantics{contentDescription="调整"+CameraPropertyText.name(item);stateDescription=if(CameraPropertyText.editable(item))"可调整"else"机身当前不可调"},contentAlignment=Alignment.Center){
+            Column(Modifier.graphicsLayer{rotationZ=contentRotation}.padding(horizontal=4.dp,vertical=if(vertical)2.dp else 4.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){
                 Text(if(updating==item.code)"应用中…" else CameraPropertyText.quickValue(item),Modifier.testTag("live-quick-value"),fontSize=13.sp,lineHeight=16.sp,maxLines=1,color=if(property?.code==item.code)LiveAccent else Color.White)
                 Text(CameraPropertyText.quickCode(item),fontSize=10.sp,lineHeight=12.sp,color=Color.White.copy(alpha=.65f),maxLines=1)
+            }
             }
         }
         GlassSurface(glass,modifier,radius=22.dp,dark=true){
@@ -201,7 +209,14 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
             val modernLook=current.code==CameraPropertyText.CREATIVE_LOOK
             val choiceColumns=if(modernLook&&LocalDensity.current.fontScale<=1.3f)4 else 2
             LiveGlass(glass,modifier.testTag("live-property-picker").pointerInput(Unit){detectTapGestures(onTap={})},radius=22.dp,menu=modernLook){
-                if(numeric&&vertical)Column(Modifier.fillMaxSize().padding(vertical=6.dp),horizontalAlignment=Alignment.CenterHorizontally){
+                if(!adjustable&&updating==null)Column(Modifier.fillMaxSize().padding(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                        Text(CameraPropertyText.name(current),fontSize=12.sp,color=Color.White,modifier=Modifier.weight(1f))
+                        IconButton(onClick={propertyCode=null},modifier=Modifier.size(40.dp)){Icon(Icons.Outlined.Close,"关闭参数",tint=Color.White,modifier=Modifier.size(18.dp))}
+                    }
+                    Text(CameraPropertyText.compact(current),color=LiveAccent,fontSize=16.sp)
+                    Text(if(!current.writable)"相机当前将此参数设为只读，请在机身调整。"else"相机未提供可调档位，请在机身调整。",color=Color.White.copy(alpha=.75f),fontSize=12.sp,lineHeight=17.sp)
+                }else if(numeric&&vertical)Column(Modifier.fillMaxSize().padding(vertical=6.dp),horizontalAlignment=Alignment.CenterHorizontally){
                     Text(CameraPropertyText.name(current),fontSize=10.sp,color=Color.White.copy(alpha=.7f))
                     Text((draftLabel?:CameraPropertyText.quickValue(current)).removePrefix("ISO ").removeSuffix(" 秒").removeSuffix(" EV"),fontSize=12.sp,maxLines=1,color=LiveAccent,modifier=Modifier.padding(vertical=4.dp))
                     CameraParameterRuler(current,true,adjustable,{applyParameter(current,it)},Modifier.weight(1f).fillMaxWidth(),onPreview={draftLabel=it})
@@ -264,31 +279,31 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
     @Composable fun Look(size:Int=48){
         val actual=properties.firstOrNull{it.code==CameraPropertyText.CREATIVE_LOOK}
         val style=actual?.let{CameraPropertyText.label(it)}
-        IconButton(onClick=::openLook,enabled=!lookLoading,modifier=Modifier.size(size.dp).background(Color.Black.copy(alpha=.35f),CircleShape).semantics{contentDescription="创意外观";stateDescription=style?:"读取机身设置"}){
+        IconButton(onClick=::openLook,enabled=!lookLoading,modifier=Modifier.size(size.dp).testTag("live-look-control").background(Color.Black.copy(alpha=.35f),CircleShape).semantics{contentDescription="创意外观";stateDescription=style?:"读取机身设置"}){
             if(lookLoading)CircularProgressIndicator(Modifier.size(18.dp),color=Color.White,strokeWidth=1.5.dp)
-            else if(style!=null)Text(style,color=Color.White,fontSize=13.sp)
-            else Icon(Icons.Outlined.Palette,"创意外观",tint=Color.White,modifier=Modifier.size(if(size<40)20.dp else 25.dp))
+            else if(style!=null)Text(style,Modifier.graphicsLayer{rotationZ=contentRotation},color=Color.White,fontSize=13.sp)
+            else Icon(Icons.Outlined.Palette,"创意外观",tint=Color.White,modifier=Modifier.size(if(size<40)20.dp else 25.dp).graphicsLayer{rotationZ=contentRotation})
         }
     }
     @Composable fun HeaderActions(modifier:Modifier=Modifier){
         LiveGlass(glass,modifier.testTag("live-header-actions"),radius=22.dp){
             Row{
                 IconButton(onClick=::cycleTimer,modifier=Modifier.size(44.dp)){
-                    if(timer==0)Icon(Icons.Outlined.Timer,"无延时",tint=Color.White,modifier=Modifier.size(19.dp))
-                    else Text(timer.toString(),fontSize=14.sp,color=LiveAccent,modifier=Modifier.semantics{contentDescription="$timer 秒延时"})
+                    if(timer==0)Icon(Icons.Outlined.Timer,"无延时",tint=Color.White,modifier=Modifier.size(19.dp).graphicsLayer{rotationZ=contentRotation})
+                    else Text(timer.toString(),fontSize=14.sp,color=LiveAccent,modifier=Modifier.graphicsLayer{rotationZ=contentRotation}.semantics{contentDescription="$timer 秒延时"})
                 }
-                IconButton(onClick={tools=!tools;propertyCode=null},modifier=Modifier.size(44.dp)){CameraMoreIcon()}
+                IconButton(onClick={tools=!tools;propertyCode=null},modifier=Modifier.size(44.dp)){Box(Modifier.graphicsLayer{rotationZ=contentRotation}){CameraMoreIcon()}}
             }
         }
     }
     @Composable fun Header(modifier:Modifier=Modifier,actions:Boolean=true,light:Boolean=false){
         val ink=if(light)Color(0xff151a20)else Color.White
         Row(modifier,verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){
-            LiveGlass(glass,light=light){IconButton(onClick=onClose,modifier=Modifier.size(44.dp)){Icon(Icons.Outlined.ArrowBack,"返回相机",tint=ink,modifier=Modifier.size(21.dp))}}
+            LiveGlass(glass,light=light){IconButton(onClick=onClose,modifier=Modifier.size(44.dp)){Icon(Icons.Outlined.ArrowBack,"返回相机",tint=ink,modifier=Modifier.size(21.dp).graphicsLayer{rotationZ=contentRotation})}}
             LiveGlass(glass,Modifier.testTag("live-status-group"),light=light){Row(verticalAlignment=Alignment.CenterVertically){
             properties.firstOrNull{it.code==0x500E&&CameraPropertyText.label(it)!=null}?.let{mode->
                 Box(Modifier.size(44.dp).clickable(enabled=CameraPropertyText.editable(mode)){propertyCode=mode.code}.semantics{contentDescription="曝光模式"},contentAlignment=Alignment.Center){
-                    Text(when(mode.value){1L->"M";2L->"P";3L->"A";4L->"S";else->CameraPropertyText.compact(mode)},color=ink,fontSize=12.sp)
+                    Text(when(mode.value){1L->"M";2L->"P";3L->"A";4L->"S";else->CameraPropertyText.compact(mode)},Modifier.graphicsLayer{rotationZ=contentRotation},color=ink,fontSize=12.sp)
                 }
                 VerticalDivider(Modifier.height(16.dp),color=ink.copy(alpha=.2f))
             }
@@ -306,16 +321,15 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
             val gestureBottom=WindowInsets.mandatorySystemGestures.asPaddingValues().calculateBottomPadding()
             val cutoutBottom=WindowInsets.displayCutout.asPaddingValues().calculateBottomPadding()
             val safe=PaddingValues(start=windowSafe.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),top=windowSafe.calculateTopPadding(),end=windowSafe.calculateRightPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),bottom=maxOf(gestureBottom,cutoutBottom))
-            BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xff080a0d))){
+            BoxWithConstraints(Modifier.fillMaxSize().background(Color(0xff080a0d)).testTag("live-direction").semantics{stateDescription="控件方向 ${((rotation%360)+360)%360} 度"}){
                 val sceneHeight=maxHeight
                 // 横屏原比例取景后，将剩余宽度集中用于相机控制，模式切换不改变对焦坐标
                 val imageRatio=if(dimensions.height>0)dimensions.width.toFloat()/dimensions.height else 1.5f
                 val cameraSpace=(maxWidth-maxHeight*imageRatio).coerceIn(112.dp,320.dp)
                 val railWidth=minOf(196.dp,cameraSpace-16.dp).coerceAtLeast(96.dp)
-                val wideRail=railWidth>=164.dp
-                val clusterHeight=if(wideRail)148.dp else 246.dp
-                val quickHeight=((sceneHeight-clusterHeight)/2+24.dp-82.dp).coerceIn(0.dp,132.dp)
-                val quickMinimumHeight=56.dp*LocalDensity.current.fontScale+8.dp
+                val railHeight=sceneHeight-safe.calculateTopPadding()-safe.calculateBottomPadding()
+                val compactRail=railHeight<300.dp
+                val landscapeQuickHeight=maxOf(54.dp,44.dp*LocalDensity.current.fontScale)
                 val dockHeight=if(professional)220.dp else 162.dp
                 val panelTop=if(maxHeight-safe.calculateTopPadding()-safe.calculateBottomPadding()<240.dp)12.dp else 66.dp
                 val panelEnd=if(landscape)cameraSpace+12.dp else 14.dp
@@ -343,12 +357,16 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                                 // 深浅控件带滞回，避免随画面轻微变化闪烁
                                 view.headerBrightness=if(controls&&landscape){mean->if(mean>.64f)headerLight=true else if(mean<.52f)headerLight=false}else null
                                 view.zebra=zebra;view.peaking=peak
+                                view.rotation=rotation
                                 frame?.let(view::submit)
                             },modifier=Modifier.fillMaxSize(),onRelease={it.onPause()})
                         }
                         if(grid&&dimensions.width>0)Canvas(Modifier.fillMaxSize()){
-                            val scale=minOf(size.width/dimensions.width,size.height/dimensions.height)
-                            val width=dimensions.width*scale;val height=dimensions.height*scale
+                            val sideways=rotation%180!=0
+                            val imageWidth=if(sideways)dimensions.height else dimensions.width
+                            val imageHeight=if(sideways)dimensions.width else dimensions.height
+                            val scale=minOf(size.width/imageWidth,size.height/imageHeight)
+                            val width=imageWidth*scale;val height=imageHeight*scale
                             val left=(size.width-width)/2;val top=(size.height-height)/2
                             for(i in 1..2){
                                 drawLine(Color.White.copy(alpha=.18f),Offset(left+width*i/3,top),Offset(left+width*i/3,top+height),1f)
@@ -359,15 +377,15 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                             Text(rendererError.ifBlank{"等待相机取景画面"},color=Color.White,fontSize=12.sp)
                             if(rendererError.isNotBlank())TextButton(onClick=::retry){Text("重新打开取景")}
                         }
-                        if(countdown>0)Text(countdown.toString(),color=Color.White,fontSize=64.sp)
+                        if(countdown>0)Text(countdown.toString(),Modifier.graphicsLayer{rotationZ=contentRotation},color=Color.White,fontSize=64.sp)
                         focusPoint?.let{point->Canvas(Modifier.fillMaxSize()){
                             drawRect(Color(0xffffd66b),topLeft=point-Offset(24.dp.toPx(),24.dp.toPx()),size=androidx.compose.ui.geometry.Size(48.dp.toPx(),48.dp.toPx()),style=Stroke(1.5.dp.toPx()))
                         }}
                     }
                 }
                 // HUD不进入hazeSource，菜单展开期间暂时隐藏，保留用户的直方图开关
-                if(controls&&showHistogram&&!tools)Box(Modifier.fillMaxSize().padding(portraitFrame)){
-                    Canvas(Modifier.align(if(landscape)Alignment.BottomStart else Alignment.TopEnd).padding(if(landscape)safe else PaddingValues(top=safe.calculateTopPadding()+64.dp)).padding(12.dp).size(96.dp,44.dp).testTag("live-histogram")
+                if(controls&&showHistogram&&!tools&&!(landscape&&property!=null))Box(Modifier.fillMaxSize().padding(portraitFrame)){
+                    Canvas(Modifier.align(if(landscape)Alignment.BottomStart else Alignment.TopEnd).padding(if(landscape)safe else PaddingValues(top=safe.calculateTopPadding()+64.dp)).padding(bottom=if(landscape&&professional)landscapeQuickHeight+12.dp else 0.dp).padding(12.dp).size(96.dp,44.dp).testTag("live-histogram")
                         .semantics{contentDescription="预览亮度直方图"}.clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha=.48f)).padding(6.dp)){
                         val highest=(histogram.maxOrNull()?:1).coerceAtLeast(1)
                         histogram.forEachIndexed{index,value->val x=index*size.width/histogram.size;drawLine(Color.White.copy(alpha=.85f),Offset(x,size.height),Offset(x,size.height-value.toFloat()/highest*size.height),size.width/histogram.size)}
@@ -376,7 +394,7 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                 }
                 if(!controls)IconButton(onClick={controls=true},modifier=Modifier.align(Alignment.TopEnd).padding(safe).padding(12.dp).background(Color.Black.copy(alpha=.3f),CircleShape)
                     .semantics{stateDescription=if(presented)"取景画面已显示" else "等待取景画面"}){
-                    Icon(Icons.Outlined.Tune,"显示取景控制",tint=Color.White)
+                    Icon(Icons.Outlined.Tune,"显示取景控制",Modifier.graphicsLayer{rotationZ=contentRotation},tint=Color.White)
                 }
                 val inlineParameter=property?.code in CameraPropertyText.exposureOrder
                 if(controls&&!landscape){
@@ -390,28 +408,31 @@ internal fun LiveScreen(runtime:CameraRuntime,onClose:()->Unit,paused:Boolean,on
                         }
                         Modes()
                     }
-                    if(property!=null&&!tools)Parameter(false,Modifier.align(Alignment.BottomCenter).padding(safe).padding(horizontal=14.dp).padding(bottom=dockHeight+12.dp).widthIn(max=360.dp).fillMaxWidth().height(if(inlineParameter)56.dp else 220.dp))
+                    if(property!=null&&!tools)Parameter(false,Modifier.align(Alignment.BottomCenter).padding(safe).padding(horizontal=14.dp).padding(bottom=dockHeight+12.dp).widthIn(max=360.dp).fillMaxWidth().height(if(!CameraPropertyText.editable(property))168.dp else if(inlineParameter)56.dp else 220.dp))
                 }
                 if(controls&&landscape){
                     Header(Modifier.align(Alignment.TopStart).padding(safe).padding(start=12.dp,top=10.dp,end=cameraSpace+12.dp),actions=false,light=headerLight)
-                    Box(Modifier.align(Alignment.CenterEnd).padding(safe).padding(horizontal=8.dp).width(railWidth).fillMaxHeight().testTag("live-shutter-rail")){
-                        HeaderActions(Modifier.align(Alignment.TopCenter).padding(top=10.dp))
-                        if(professional&&quickHeight>=quickMinimumHeight)Quick(true,Modifier.align(Alignment.TopCenter).padding(top=70.dp).fillMaxWidth().height(quickHeight))
-                        Column(Modifier.align(Alignment.Center).offset(y=24.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(16.dp)){
-                            if(wideRail)Row(Modifier.fillMaxWidth().height(88.dp),horizontalArrangement=Arrangement.SpaceEvenly,verticalAlignment=Alignment.CenterVertically){
-                                Album(size=44)
-                                Shutter(68,shooting,countdown,camera.info?.canCapture==true&&!receiving,::shoot)
-                                Look(44)
-                            }else Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)){
-                                Album(size=44);Shutter(64,shooting,countdown,camera.info?.canCapture==true&&!receiving,::shoot);Look(44)
-                            }
-                            Modes()
+                    Column(Modifier.align(Alignment.CenterEnd).padding(safe).padding(horizontal=8.dp).width(railWidth).fillMaxHeight().testTag("live-shutter-rail")
+                        .then(if(compactRail)Modifier.verticalScroll(rememberScrollState())else Modifier),horizontalAlignment=Alignment.CenterHorizontally){
+                        HeaderActions(Modifier.padding(top=10.dp))
+                        if(compactRail)Spacer(Modifier.height(8.dp))else Spacer(Modifier.weight(1f))
+                        // 相册和外观固定在快门上下两侧，拍照与专业模式共用同一操作位置
+                        Column(horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)){
+                            Album(size=44)
+                            Shutter(68,shooting,countdown,camera.info?.canCapture==true&&!receiving,::shoot)
+                            Look(44)
                         }
+                        if(compactRail)Spacer(Modifier.height(8.dp))else Spacer(Modifier.weight(1f))
+                        Modes(Modifier.padding(bottom=4.dp))
                     }
+                    if(professional&&!tools)Quick(false,Modifier.align(Alignment.BottomStart).padding(safe).padding(start=12.dp,end=cameraSpace+12.dp,bottom=12.dp).fillMaxWidth().height(landscapeQuickHeight))
                     Box(Modifier.fillMaxSize().testTag("live-landscape-controls")){
                         if(property!=null&&!tools){
-                            if(inlineParameter&&cameraSpace-railWidth>=72.dp)Parameter(true,Modifier.align(Alignment.CenterEnd).padding(safe).padding(top=77.dp,bottom=24.dp,end=cameraSpace-64.dp).width(64.dp).fillMaxHeight())
-                            else Parameter(false,Modifier.align(if(inlineParameter)Alignment.BottomStart else Alignment.TopEnd).padding(safe).padding(top=if(inlineParameter)0.dp else 66.dp,end=if(inlineParameter)12.dp else cameraSpace+12.dp,bottom=12.dp,start=if(inlineParameter)12.dp else 0.dp).width(if(inlineParameter)280.dp else 235.dp).heightIn(max=sceneHeight-safe.calculateTopPadding()-safe.calculateBottomPadding()-82.dp).height(if(inlineParameter)56.dp else 240.dp))
+                            if(inlineParameter)Box(Modifier.fillMaxSize().padding(end=cameraSpace)){
+                                Parameter(false,Modifier.align(Alignment.BottomCenter).padding(safe).padding(horizontal=12.dp).padding(bottom=if(professional)landscapeQuickHeight+24.dp else 12.dp)
+                                    .widthIn(max=360.dp).fillMaxWidth().height(if(CameraPropertyText.editable(property))56.dp else 168.dp))
+                            }else Parameter(false,Modifier.align(Alignment.TopEnd).padding(safe).padding(top=66.dp,end=cameraSpace+12.dp,bottom=12.dp).width(235.dp)
+                                .heightIn(max=sceneHeight-safe.calculateTopPadding()-safe.calculateBottomPadding()-82.dp).height(if(CameraPropertyText.editable(property))240.dp else 168.dp))
                         }
                     }
                 }

@@ -4,7 +4,7 @@
 
 连接相机、看图选片、按需导入。FrameLink是从Aenlly-FTP继续开发的开源相机助手，保留FTP收发，也提供无线取景、客户现场选片和可选的云端交付。
 
-**Android 0.1.23／iOS 0.1.6 开发预览** · Android 17适配（最低8.0） · iOS 17+工程 · GPL-3.0
+**Android 0.1.24／iOS 0.1.6 开发预览** · Android 17适配（最低8.0） · iOS 17+工程 · GPL-3.0
 
 ## 看看界面
 | 相机 | 图库 | 大图 |
@@ -16,9 +16,10 @@
 ![横屏取景（协议模拟画面）](docs/images/camera-v6/landscape-photo.png)
 
 ## 能做什么
-- **相机**：记住连接，按机身能力提供取景、遥控和创意外观。Android点按画面对焦，拍后自动导入可选，默认关闭。
+- **相机**：记住连接，按机身能力提供取景、遥控和创意外观。Android手机取景控件原位转向，点按画面对焦；拍后自动导入可选，默认关闭。
 - **图库**：RAW＋JPEG合并展示，按日期显示完整总数，后台补齐列表、按需读取缩略图；小／中／大网格和列表可切换，长按滑动多选，大图与网格共用选择。
 - **看图与选片**：翻页、放大、收藏、比较，保存命名批次和图文选片单。“查看原片”临时缓存JPEG，不计入已导入；正式导入时优先复用缓存。缓存上限约2GB，可手动清理，不影响已保存照片和选片记录。
+- **照片信息（Android）**：读取照片EXIF里的ISO、快门、光圈、焦距、镜头、机型、时间和GPS位置。缺失字段明确标注，不用机身当前设置或手机定位补值。
 - **客户选片**：用姓名、手机号或场次记录，独立保存客户选择和留言，可改名、删除、完成后继续修改。
 - **FTP**：手机接收相机上传；客户端浏览、上传、下载和新建目录，支持FTP及显式FTPS。
 - **本地管理**：导入手机和读卡器文件，移出列表或删除App保存的副本，保留相机卡原片。
@@ -49,7 +50,7 @@ sh scripts/build-android.sh
 sh scripts/build-ios.sh
 ```
 
-Android输出：`artifacts/FrameLink-0.1.23-debug.apk`。iOS脚本构建模拟器App，iPhone可通过自签工具安装IPA，见[试装说明](ios/INSTALL.md)。[Android](android/README.md) · [iOS](ios/README.md) · [云服务](cloud/README.md) · [客户网页](web/README.md)
+Android输出：`artifacts/FrameLink-0.1.24-debug.apk`。iOS脚本构建模拟器App，iPhone可通过自签工具安装IPA，见[试装说明](ios/INSTALL.md)。[Android](android/README.md) · [iOS](ios/README.md) · [云服务](cloud/README.md) · [客户网页](web/README.md)
 
 ## 一起开发
 欢迎报告机型兼容、传输问题和不好用的地方。请附手机系统、相机型号与固件、连接方式、复现步骤；不要上传密码或客户原片。

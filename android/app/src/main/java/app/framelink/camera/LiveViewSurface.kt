@@ -28,6 +28,7 @@ class LiveViewSurface(context: Context) : TextureView(context), GLSurfaceView.Re
     private var height = 1
     @Volatile var zebra = false
     @Volatile var peaking = false
+    @Volatile var rotation = 0
     @Volatile var histogram: ((IntArray) -> Unit)? = null
     @Volatile var headerBrightness: ((Float) -> Unit)? = null
     @Volatile var frameSize: ((Int, Int) -> Unit)? = null
@@ -237,9 +238,21 @@ class LiveViewSurface(context: Context) : TextureView(context), GLSurfaceView.Re
             }
         }
         val image = bitmap ?: return
-        val factor = minOf(width.toFloat() / image.width, height.toFloat() / image.height)
-        val vw = (image.width * factor).toInt()
-        val vh = (image.height * factor).toInt()
+        val turn=((rotation%360)+360)%360
+        val sideways=turn==90||turn==270
+        val imageWidth=if(sideways)image.height else image.width
+        val imageHeight=if(sideways)image.width else image.height
+        val factor = minOf(width.toFloat() / imageWidth, height.toFloat() / imageHeight)
+        val vw = (imageWidth * factor).toInt()
+        val vh = (imageHeight * factor).toInt()
+        // 只转纹理坐标，保持同一个TextureView、解码线程和相机会话
+        val uv=when(turn){
+            90->floatArrayOf(1f,1f,1f,0f,0f,1f,0f,0f)
+            180->floatArrayOf(1f,0f,0f,0f,1f,1f,0f,1f)
+            270->floatArrayOf(0f,0f,0f,1f,1f,0f,1f,1f)
+            else->floatArrayOf(0f,1f,1f,1f,0f,0f,1f,0f)
+        }
+        for(index in 0..3){vertices.put(index*4+2,uv[index*2]);vertices.put(index*4+3,uv[index*2+1])}
         GLES20.glViewport((width - vw) / 2, (height - vh) / 2, vw, vh)
         GLES20.glUseProgram(program)
         vertices.position(0)

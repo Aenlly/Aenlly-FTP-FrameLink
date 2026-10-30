@@ -35,6 +35,23 @@ class GalleryInteractionAcceptanceTest {
     private var lastTouch = Offset.Zero
 
     @Test
+    fun filmstripSelectionDoesNotReturnToThePreviousPagerPhoto(){
+        try{
+            val photos=seed(3)
+            gallery()
+            compose.onNodeWithContentDescription("查看 ${photos[0].name}").performClick()
+            compose.onNode(hasContentDescription(photos[1].name)and hasAnyAncestor(hasTestTag("viewer-filmstrip")),useUnmergedTree=true).performClick()
+            compose.waitUntil(10000){compose.onAllNodes(hasText(photos[1].displayTitle(),substring=true)and hasAnyAncestor(hasTestTag("fullscreen-scene"))).fetchSemanticsNodes().size==1}
+            compose.waitForIdle()
+            compose.onNodeWithContentDescription("选择当前照片").performClick()
+            compose.onNodeWithContentDescription("关闭照片").performClick()
+            enterGallerySelection(compose)
+            checkbox(photos[1]).assertIsOn()
+            checkbox(photos[0]).assertIsOff()
+        }finally{cleanup()}
+    }
+
+    @Test
     fun viewerAndGridUseOneSelectionAndLegacyMarksDoNotSelectPhotos() {
         try {
             val photos = seed(2)
@@ -193,7 +210,10 @@ class GalleryInteractionAcceptanceTest {
     }
 
     @Test fun cameraOriginalLoadsWithoutClosingDetail(){
+        check(android.os.Build.HARDWARE in setOf("ranchu","goldfish")){"原片缓存导入用例只允许独立模拟器"}
         runtime.disconnect()
+        var previous:Photo?=null
+        var createdFiles:List<CameraFile> = emptyList()
         try{
             runtime.connect(ConnectionConfig(host="127.0.0.1"))
             compose.waitUntil(30000){runtime.camera.value.info!=null}
@@ -201,11 +221,18 @@ class GalleryInteractionAcceptanceTest {
             compose.onNodeWithText("相机内").performClick()
             compose.waitUntil(30000){runtime.currentCameraIds.value.isNotEmpty()&&!runtime.galleryHasMore.value&&!runtime.camera.value.loadingPhotos}
             val rows=runBlocking{runtime.database.photos().observe().first().filter{it.id in runtime.currentCameraIds.value}}
-            val photo=rows.first{!it.imported&&it.downloadFiles(DownloadFormat.JPEG).isNotEmpty()}
+            val candidate=rows.first{it.downloadFiles(DownloadFormat.JPEG).isNotEmpty()}
+            previous=candidate
+            // 模拟机资源可重复验收；只重置本轮选中记录的JPEG导入路径，结束后恢复
+            val photo=candidate.copy(filesJson=Json.encode(candidate.files().map{if(it.formatTitle()=="JPEG")it.copy(localUri="",originalPath="")else it}))
+            runBlocking{runtime.database.photos().save(photo)}
+            val oldCache=OriginalPreviewCache(runtime.context.cacheDir).target(photo)
+            oldCache.delete();File(oldCache.path+".sha256").delete()
             val beforeTasks=runBlocking{runtime.database.tasks().observe().first().map{it.id}.toSet()}
-            val pending=rows.count{it.hasUnimportedFiles()}
-            compose.onNodeWithTag("gallery-grid").performScrollToIndex(rows.indexOf(photo))
+            val pending=runBlocking{runtime.database.photos().observe().first().filter{it.id in runtime.currentCameraIds.value}.count{it.hasUnimportedFiles()}}
+            compose.onNodeWithTag("gallery-grid").performScrollToIndex(rows.indexOf(candidate))
             compose.onNodeWithContentDescription("查看 ${photo.name}").performClick()
+            compose.waitUntil(10000){compose.onAllNodesWithContentDescription("查看JPEG原片预览").fetchSemanticsNodes().isNotEmpty()}
             compose.onNodeWithContentDescription("查看JPEG原片预览").performClick()
             compose.waitUntil(30000){runtime.cachedOriginalPreview(photo)!=null}
             compose.onNodeWithContentDescription("关闭照片").assertIsDisplayed()
@@ -223,13 +250,21 @@ class GalleryInteractionAcceptanceTest {
             // 关闭相机连接后仍能正式导入，证明命中缓存时未再请求机身原片
             runBlocking{runtime.enqueueDownload(listOf(photo.id),DownloadFormat.JPEG).join()}
             val imported=runBlocking{runtime.database.photos().find(photo.id)!!}
+            createdFiles=imported.files().filter{file->file.savedUri.isNotBlank()&&candidate.files().none{it.originalPath==file.originalPath&&it.localUri==file.localUri}}
             val saved=File(imported.files().first{!it.raw&&it.originalPath.isNotBlank()}.originalPath)
             assertEquals(hash,MediaFiles.digest(saved.inputStream()))
             runBlocking{runtime.cleanupPreviews().join()}
             assertNull(runtime.cachedOriginalPreview(photo))
             assertTrue(saved.isFile)
             assertEquals(hash,MediaFiles.digest(saved.inputStream()))
-        }finally{runtime.disconnect()}
+        }finally{
+            runtime.disconnect()
+            previous?.let{runBlocking{runtime.database.photos().save(it)}}
+            createdFiles.forEach{file->
+                if(file.originalPath.startsWith(runtime.context.filesDir.path+File.separator)&&previous?.files()?.none{it.originalPath==file.originalPath}==true)File(file.originalPath).delete()
+                if(file.localUri.startsWith("content://media/")&&previous?.files()?.none{it.localUri==file.localUri}==true)runCatching{runtime.context.contentResolver.delete(android.net.Uri.parse(file.localUri),null,null)}
+            }
+        }
     }
 
     @Test fun originalDetailDecodesVisiblePixelsAndHonorsAllExifOrientations(){
@@ -286,8 +321,7 @@ class GalleryInteractionAcceptanceTest {
             val request = URI("http://127.0.0.1:16023/drop").toURL().openConnection() as HttpURLConnection
             try { request.requestMethod = "POST"; request.connectTimeout = 3000; request.readTimeout = 3000; assertEquals(204, request.responseCode) }
             finally { request.disconnect() }
-            compose.waitUntil(10000) { runtime.camera.value.info == null }
-            assertTrue(runtime.currentCameraIds.value.isEmpty())
+            compose.waitUntil(10000) { runtime.camera.value.info == null && runtime.currentCameraIds.value.isEmpty() }
             compose.onNodeWithText("相机已断开", substring = false).assertIsDisplayed()
             compose.onNodeWithTag("gallery-grid").assertDoesNotExist()
             compose.onNodeWithText(" · 待核对",substring=false).assertIsDisplayed()

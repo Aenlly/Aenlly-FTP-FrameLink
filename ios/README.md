@@ -19,6 +19,8 @@ SwiftUI原生应用，最低iOS17，适配iPhone与iPad。四个入口为相机�
 
 0.1.9的30项核心测试、App及UI测试工程编译已通过；界面执行受本机CoreSimulator版本限制，iPhone安装、JPEG清晰度与真实相机缓存复用仍待验。[本轮记录](../docs/acceptance/2026-10-31-ios-preview-exif-0.1.9.md)
 
+0.1.10修正慢快门时长、取消后的导入发布，以及同一照片落盘后的参数刷新。缓存复制与原片下载共用发布检查，独立暂存文件在取消后清理，先成功的文件保留。40项核心测试通过，UI与iPhone交互仍待验。[修正记录](../docs/acceptance/2026-10-31-ios-import-publication-0.1.10.md)
+
 ## 构建与运行
 
 准备完整Xcode、iOS SDK和Go工具链。`scripts/bootstrap.py`可准备固定的Go与Android命令行工具，iOS构建不需要安装Android平台SDK或NDK；构建脚本会补齐固定版本的gomobile。

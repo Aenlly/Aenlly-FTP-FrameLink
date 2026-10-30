@@ -12,6 +12,13 @@ func jpegFixture(at url: URL, metadata: [CFString: Any] = [:]) throws {
   XCTAssertTrue(CGImageDestinationFinalize(destination))
 }
 final class PhotoMetadataTests: XCTestCase {
+  func testShutterFormattingPreservesFractionalSlowExposureDurations() {
+    let cases: [(Double, String)] = [(0.8, "0.8 秒"), (0.6, "0.6 秒"), (0.4, "0.4 秒"), (0.3, "0.3 秒"), (1.0 / 125, "1/125 秒"), (0.5, "1/2 秒"), (1.3, "1.3 秒"), (0.008000001, "1/125 秒")]
+    for (seconds, expected) in cases {
+      let value = PhotoMetadataReader.parse([kCGImagePropertyExifDictionary as String: [kCGImagePropertyExifExposureTime as String: seconds]])
+      XCTAssertEqual(value.shutter, expected, "duration=\(seconds)")
+    }
+  }
   func testReadsJPEGSettingsAndLocationWithoutChangingOriginalBytes() throws {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
     defer { try? FileManager.default.removeItem(at: url) }

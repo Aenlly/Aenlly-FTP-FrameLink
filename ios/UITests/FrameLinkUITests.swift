@@ -1,6 +1,15 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  func testOpenPhotoInformationRefreshesWhenSamePhotoGetsLocalOriginal() throws {
+    continueAfterFailure = false
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-metadata-fixture", "--ui-metadata-upgrade-fixture"]; app.launch()
+    app.buttons["图库"].tap(); app.buttons["查看 QA_6.jpg"].tap(); app.buttons["文件信息"].tap()
+    XCTAssertTrue(app.staticTexts["ISO 100"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["0.8 秒"].exists)
+    XCTAssertTrue(app.staticTexts["ISO 400"].waitForExistence(timeout: 8))
+    XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "本机原片")).firstMatch.exists)
+  }
   func testPhotoMetadataUsesFileSettingsAndCacheClearKeepsImportedPhoto() throws {
     continueAfterFailure = false
     let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures", "--ui-metadata-fixture"]; app.launch()

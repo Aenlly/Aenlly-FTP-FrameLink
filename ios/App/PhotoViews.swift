@@ -674,6 +674,7 @@ private struct ZoomPhoto: View {
 
 private struct PhotoMetadataSection: View {
   @EnvironmentObject var model: AppModel
+  @EnvironmentObject var library: LibraryStore
   let photo: Photo
   @State private var metadata = PhotoMetadata()
   @State private var source = ""
@@ -701,9 +702,10 @@ private struct PhotoMetadataSection: View {
         if let value = metadata.altitude { LabeledContent("海拔", value: value) }
         Text(source.isEmpty ? "暂无可读取文件，预览照片或查看JPEG原片后再试。" : "来源：" + source + (metadata.readable ? "" : " · 此格式未读到参数")).font(.caption).foregroundStyle(.secondary)
       }
-    }.task(id: photo.id + String(model.previewRevision)) {
+    }.task(id: PhotoMetadataRefreshKey(photo: sourcePhoto, previewRevision: model.previewRevision)) {
       loading = true; metadata = PhotoMetadata(); source = ""
-      if let file = await model.metadataFile(photo) {
+      if let file = await model.metadataFile(sourcePhoto) {
+        guard !Task.isCancelled else { return }
         let read = await Task.detached(priority: .utility) { PhotoMetadataReader.read(file.0) }.value
         guard !Task.isCancelled else { return }
         metadata = read; source = file.1
@@ -711,4 +713,5 @@ private struct PhotoMetadataSection: View {
       loading = false
     }
   }
+  private var sourcePhoto: Photo { library.photos.first(where: { $0.id == photo.id }) ?? photo }
 }

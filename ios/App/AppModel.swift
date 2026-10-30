@@ -8,6 +8,7 @@ import UIKit
 @MainActor
 final class AppModel: ObservableObject {
   let library: LibraryStore
+  private lazy var importPublication = CameraImportPublication(library: library)
   let vault: CredentialVault
   lazy var connections = ConnectionProfiles(vault: vault)
   private var sessionFTP: [String: FTPProfile] = [:]
@@ -48,6 +49,9 @@ final class AppModel: ObservableObject {
   let previewCache: JPEGPreviewCache?
   private var previewEpoch = UUID()
   private var originalPreviewTasks: [String: Task<Void, Never>] = [:]
+  #if DEBUG
+    private var metadataUpgradeFixtures: [String: String] = [:]
+  #endif
   private var pendingConfig: CameraConfig?
   private var afterConnect: (() -> Void)?
   private var openSettingsAfterFailure = false
@@ -110,7 +114,15 @@ final class AppModel: ObservableObject {
               CGImageDestinationAddImageFromSource(output, input, 0, metadata as CFDictionary)
               _ = CGImageDestinationFinalize(output)
             }
-            _ = try? library.importFile(source)
+            if var imported = try? library.importFile(source), i == 6, ProcessInfo.processInfo.arguments.contains("--ui-metadata-upgrade-fixture"), let path = imported.files.first?.localPath,
+              let input = CGImageSourceCreateWithData(data as CFData, nil), let target = try? library.fileURL("previews/metadata-before-import.jpg"),
+              let output = CGImageDestinationCreateWithURL(target as CFURL, "public.jpeg" as CFString, 1, nil) {
+              CGImageDestinationAddImageFromSource(output, input, 0, [kCGImagePropertyExifDictionary: [kCGImagePropertyExifISOSpeedRatings: [100], kCGImagePropertyExifExposureTime: 0.8]] as CFDictionary)
+              if CGImageDestinationFinalize(output) {
+                imported.source = .capture; imported.previewPath = "previews/metadata-before-import.jpg"; imported.files[0].localPath = nil
+                try? library.update(imported); metadataUpgradeFixtures[imported.id] = path
+              }
+            }
             try? FileManager.default.removeItem(at: source)
           }
         }
@@ -375,16 +387,17 @@ final class AppModel: ObservableObject {
     } catch { notice = "缓存清除未完成，请检查可用空间或稍后重试" }
   }
   func metadataFile(_ photo: Photo) async -> (URL, String)? {
-    for file in photo.files where !file.isRaw {
-      if let path = file.localPath, let url = try? library.fileURL(path), FileManager.default.fileExists(atPath: url.path) { return (url, file.name + " · 本机原片") }
-    }
-    if let file = photo.files.first(where: { $0.formatTitle == "JPEG" }),
-      let cached = try? await previewCache?.lookup(JPEGPreviewResource(photo: photo, file: file)) { return (cached.url, file.name + " · 临时JPEG原片") }
-    for file in photo.files where file.isRaw {
-      if let path = file.localPath, let url = try? library.fileURL(path), FileManager.default.fileExists(atPath: url.path) { return (url, file.name + " · 本机原片") }
-    }
-    if let path = photo.previewPath, let url = try? library.fileURL(path), FileManager.default.fileExists(atPath: url.path) { return (url, "相机预览 · 参数可能不全") }
-    return nil
+    #if DEBUG
+      if let path = metadataUpgradeFixtures.removeValue(forKey: photo.id) {
+        Task {
+          try? await Task.sleep(nanoseconds: 2_000_000_000)
+          guard var current = library.photos.first(where: { $0.id == photo.id }), current.files[0].localPath == nil else { return }
+          current.files[0].localPath = path; try? library.update(current)
+        }
+      }
+    #endif
+    guard let file = await PhotoMetadataSource.available(photo: photo, library: library, cache: previewCache) else { return nil }
+    return (file.url, file.description)
   }
   func removePhotos(_ ids: Set<String>, deleteFiles: Bool) {
     do { try library.remove(ids, deleteFiles: deleteFiles) } catch { notice = error.localizedDescription; return }
@@ -498,6 +511,7 @@ final class AppModel: ObservableObject {
         var task = original
         task.state = .running
         try? library.upsertTask(task)
+        let operation = importPublication.begin(taskID: task.id)
         do {
           if task.kind == "camera-download" {
             guard cameraInfo != nil else { throw URLError(.notConnectedToInternet) }
@@ -525,43 +539,23 @@ final class AppModel: ObservableObject {
                   || (format == "raw" ? photo.files[i].isRaw : !photo.files[i].isRaw))
               {
                 let file = photo.files[i]
-                let relative = "media/camera/\(SHAKey(photo.id))/\(file.fileId)_\(file.name)"
-                let target = try library.fileURL(relative)
-                try FileManager.default.createDirectory(
-                  at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 let progressTask = task
                 let baseDone = task.done
-                let reused = try await previewCache?.copyForImport(JPEGPreviewResource(photo: photo, file: file), to: target)
-                let savedBytes: Int64
-                if let reused { savedBytes = reused.size }
-                else {
-                  let receipt = try await camera.download(
+                let result = try await importPublication.transferAndPublish(operation, photo: photo, file: file, copy: { target in
+                  try await self.previewCache?.copyForImport(JPEGPreviewResource(photo: photo, file: file), to: target)?.size
+                }, download: { target in
+                  let receipt = try await self.camera.download(
                     photo, file: file, target: target,
                     update: { done, total in
                       Task { @MainActor in
-                        guard
-                          self.library.tasks.first(where: { $0.id == progressTask.id })?.state
-                            == .running
-                        else { return }
-                        var progress = progressTask
-                        progress.done = baseDone + done
-                        progress.total = max(progressTask.total, baseDone + total)
-                        try? self.library.upsertTask(progress)
+                        try? self.importPublication.advance(operation, done: baseDone + done, total: max(progressTask.total, baseDone + total))
                       }
                     })
-                  savedBytes = receipt.size
-                }
-                task.done = baseDone + savedBytes
-                if var latest = library.photos.first(where: { $0.id == photo.id }),
-                  let index = latest.files.firstIndex(where: {
-                    $0.fileId == file.fileId && $0.name == file.name && $0.size == file.size
-                  })
-                {
-                  latest.files[index].localPath = relative
-                  latest.hidden = false
-                  try library.update(latest)
-                  photo = latest
-                }
+                  return receipt.size
+                })
+                task.done = baseDone + result.bytes
+                photo = result.photo
+                try importPublication.advance(operation, done: task.done, total: task.total)
               }
             }
           } else if task.kind == "ftp-download" {
@@ -584,6 +578,7 @@ final class AppModel: ObservableObject {
               }
             }
             let receipt = try NativeTransport.decode(rawReceipt, as: FileReceipt.self)
+            try importPublication.check(operation)
             try library.receive(
               ReceiveReceiptValue(
                 id: task.id, name: name, path: receipt.path, size: receipt.size,
@@ -603,13 +598,9 @@ final class AppModel: ObservableObject {
                 task.payload["remote"]!, source: task.payload["source"]!, progress: nil)
             }
           }
-          task.state = .complete
-          task.done = task.total
-          try library.upsertTask(task)
+          try importPublication.complete(operation, task: task)
         } catch {
-          task.state = Task.isCancelled ? .cancelled : .failed
-          task.error = error.localizedDescription
-          try? library.upsertTask(task)
+          importPublication.fail(operation, error: error)
         }
       }
     }
@@ -623,6 +614,7 @@ final class AppModel: ObservableObject {
   }
   func cancelQueue() {
     queueTask?.cancel()
+    importPublication.cancel()
     camera.cancelTransfer()
     activeFTP?.close()
   }

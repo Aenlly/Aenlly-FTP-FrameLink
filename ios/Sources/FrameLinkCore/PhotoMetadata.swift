@@ -45,7 +45,13 @@ public enum PhotoMetadataReader {
     if let iso, iso.isFinite, iso > 0 { result.iso = decimal(iso) }
     if let seconds = number(exif, kCGImagePropertyExifExposureTime), seconds > 0 {
       let reciprocal = 1 / seconds
-      result.shutter = seconds < 1 && reciprocal.isFinite ? String(format: "1/%.0f 秒", locale: Locale(identifier: "en_US_POSIX"), reciprocal) : decimal(seconds) + " 秒"
+      let denominator = reciprocal.rounded()
+      // Only use reciprocal notation when it represents the recorded duration within floating-point tolerance.
+      if seconds < 1, denominator >= 2, denominator.isFinite, abs(1 / denominator - seconds) <= seconds * 0.000001 {
+        result.shutter = String(format: "1/%.0f 秒", locale: Locale(identifier: "en_US_POSIX"), denominator)
+      } else {
+        result.shutter = String(format: "%.6g 秒", locale: Locale(identifier: "en_US_POSIX"), seconds)
+      }
     }
     if let aperture = number(exif, kCGImagePropertyExifFNumber), aperture > 0 { result.aperture = "f/" + decimal(aperture) }
     result.camera = text(tiff, kCGImagePropertyTIFFModel)

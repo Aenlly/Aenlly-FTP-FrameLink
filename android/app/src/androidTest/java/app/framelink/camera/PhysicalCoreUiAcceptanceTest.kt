@@ -392,6 +392,47 @@ class PhysicalCoreUiAcceptanceTest {
         }finally{probe.close()}
     }
 
+    /** 真实机身切换后必须读回并恢复原值，不触发快门或更改风格细调 */
+    @Test fun creativeLookSwitchReadsBackAndRestoresOriginal(){
+        assumeTrue(InstrumentationRegistry.getArguments().getString("allowPhysicalCreativeLookWrite")=="true")
+        check(Build.MODEL=="25113PN0EC"){"本轮创意外观写入验收仅允许小米17"}
+        connect(synchronizeCaptureStorage=false)
+        var original:CameraProperty?=null
+        var attempted=false
+        try{
+            val before=runtime.properties.value.first{it.code==CameraPropertyText.CREATIVE_LOOK}
+            original=before
+            assertTrue("机身当前须允许设置创意外观",CameraPropertyText.editable(before))
+            val candidates=CameraPropertyText.choices(before).filter{it.value!=before.value}
+            val target=candidates.firstOrNull{it.label=="BW"}?:candidates.first()
+            report("creative-look-write-before.json",JSONObject().put("original",before.value).put("target",target.value))
+            clickText("取景拍摄")
+            waitFor(30000){runtime.frame.value?.isNotEmpty()==true}
+            dismissFullscreenEducation()
+            File(app.getExternalFilesDir(null),"physical-read/creative-look-before.jpg").writeBytes(runtime.frame.value!!)
+            clickDescription("创意外观")
+            waitFor{hasText("标准")&&hasText("胶片")}
+            screenshot("physical-creative-look-chinese")
+            attempted=true
+            clickText(target.label)
+            waitFor(15000){runtime.parameterUpdating.value==null&&runtime.properties.value.first{it.code==before.code}.value==target.value}
+            assertEquals(target.value,runtime.native.properties().first{it.code==before.code}.value)
+            SystemClock.sleep(1000)
+            File(app.getExternalFilesDir(null),"physical-read/creative-look-changed.jpg").writeBytes(runtime.frame.value!!)
+            screenshot("physical-creative-look-changed")
+            report("creative-look-write-result.json",JSONObject().put("original",before.value).put("target",target.value)
+                .put("readback",target.value).put("chineseDisplayed",true).put("shutterTriggered",false))
+        }finally{
+            try{
+                if(attempted)original?.let{before->
+                    runtime.native.setProperty(before.code,before.value)
+                    waitFor(10000){runtime.native.properties().first{it.code==before.code}.value==before.value}
+                    report("creative-look-write-restored.json",JSONObject().put("original",before.value).put("restored",true))
+                }
+            }finally{runtime.stopLive();runtime.disconnect()}
+        }
+    }
+
     @Test fun measurePreviewReceptionAndNetworkWithoutCapture() {
         connect()
         try {

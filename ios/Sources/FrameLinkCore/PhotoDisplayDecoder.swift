@@ -20,7 +20,7 @@ private final class PhotoDecodeCancellation: @unchecked Sendable {
   var cancelled: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
 }
 
-/// The actual App detail decoder: one ImageIO decode at a time, no full UIImage/file decode.
+/// Bounded ImageIO decoding; each detail/thumbnail lane serializes its own requests.
 public final class PhotoDisplayDecoder: @unchecked Sendable {
   public static let shared = PhotoDisplayDecoder()
   public static let thumbnails = PhotoDisplayDecoder(limit: 720)
@@ -28,7 +28,7 @@ public final class PhotoDisplayDecoder: @unchecked Sendable {
   private let lock = NSLock()
   private var stats = PhotoDecodeStatistics()
   private let limit: Int
-  public init() { limit = 4096; lane = DispatchQueue(label: "app.framelink.photo-detail.decode", qos: .userInitiated) }
+  public init() { limit = 8192; lane = DispatchQueue(label: "app.framelink.photo-detail.decode", qos: .userInitiated) }
   private init(limit: Int) { self.limit = limit; lane = DispatchQueue(label: "app.framelink.photo-thumbnail.decode", qos: .utility) }
   public func statistics() -> PhotoDecodeStatistics { lock.lock(); defer { lock.unlock() }; return stats }
   public func decode(_ url: URL, maxPixel: Int) async -> PhotoDecodedImage? {

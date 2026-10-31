@@ -1,6 +1,23 @@
 import XCTest
 
 final class FrameLinkUITests: XCTestCase {
+  func testPhotoGalleryDetailsStayInsideFavoriteFilterAfterRotationAndCompare() throws {
+    continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait
+    let app = XCUIApplication(); app.launchArguments = ["--ui-acceptance", "--reset-ui-fixtures"]; app.launch()
+    app.buttons["图库"].tap()
+    for name in ["QA_6.jpg", "QA_4.jpg"] {
+      app.buttons["查看 " + name].tap(); app.buttons["照片操作"].tap(); app.buttons["photo-toggle-favorite"].tap(); app.buttons["关闭照片"].tap()
+    }
+    app.buttons["收藏"].tap(); app.buttons["查看 QA_6.jpg"].tap(); app.buttons["下一张照片"].tap()
+    let current = app.images.matching(NSPredicate(format: "label == %@", "QA_4.jpg")).firstMatch
+    XCTAssertTrue(current.waitForExistence(timeout: 10))
+    XCUIDevice.shared.orientation = .landscapeLeft; XCTAssertTrue(current.waitForExistence(timeout: 5))
+    app.buttons["照片操作"].tap(); app.buttons["与下一张对比"].tap()
+    XCTAssertTrue(app.images.matching(NSPredicate(format: "label == %@", "QA_6.jpg")).firstMatch.waitForExistence(timeout: 10))
+    XCTAssertFalse(app.images.matching(NSPredicate(format: "label == %@", "QA_5.jpg")).firstMatch.exists)
+    app.buttons["结束对比"].tap(); XCTAssertTrue(current.waitForExistence(timeout: 5))
+    captureBoundaryEvidence(app, name: "gallery-filtered-detail-context")
+  }
   /// Prepared for an isolated iPad QA simulator; system split-window interaction remains a separate gate.
   func testPhotoWorkspaceKeepsPhotoZoomAndSelectionAcrossRotationAndComparison() throws {
     continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait

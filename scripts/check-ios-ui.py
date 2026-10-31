@@ -53,6 +53,7 @@ def boundaries():
         tests = ['testCameraIndexShowsRangeTotalAndFillsWithoutScrollingBeforeSelectAll']
     elif args.suite == 'gallery-window':
         tests = ['testPhotoWorkspaceKeepsPhotoZoomAndSelectionAcrossRotationAndComparison',
+                 'testPhotoGalleryDetailsStayInsideFavoriteFilterAfterRotationAndCompare',
                  'testOpenPhotoInformationRefreshesWhenSamePhotoGetsLocalOriginal',
                  'testGalleryLayoutsPreservePairedFormatInformation']
     def capture(command):

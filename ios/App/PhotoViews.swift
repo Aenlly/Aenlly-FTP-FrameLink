@@ -303,12 +303,11 @@ struct GalleryView: View {
       }
   }
   private var photos: [Photo] {
-    candidates.filter {
-      filter == 0 || (filter == 1 && library.selection.contains($0.id))
-        || (filter == 2 && $0.favorite) || (filter == 3 && $0.hasUnimportedFiles)
-        || (filter == 4 && $0.files.contains(where: { $0.isRaw }))
-    }
+    let active = GalleryPhotoFilter(rawValue: filter) ?? .all
+    return candidates.filter { active.matches($0, selection: library.selection) }
   }
+  private var detailPhotos: [Photo] { workspace.detailIDs.compactMap { id in candidates.first { $0.id == id } } }
+  private func reconcileBrowseContext() { workspace.reconcile(scope: scopeKey, available: Set(candidates.map(\.id)), browsing: photos.map(\.id)) }
   private var allSelected: Bool {
     !photos.isEmpty && photos.allSatisfy { library.selection.contains($0.id) }
       && !(source == 1 && model.cameraHasMore)
@@ -351,7 +350,7 @@ struct GalleryView: View {
         HStack(spacing: 8) {
           ForEach(Array(["全部", "已选", "收藏", "未导入", "RAW"].enumerated()), id: \.offset) {
             index, title in
-            Button(title) { filter = index }.font(.subheadline).buttonStyle(.bordered).tint(
+            Button(title) { filter = index; reconcileBrowseContext() }.font(.subheadline).buttonStyle(.bordered).tint(
               filter == index ? Palette.accent : .gray)
           }
         }.padding(.horizontal, 16)
@@ -395,7 +394,7 @@ struct GalleryView: View {
           scrollAnchor: $workspace.gridAnchor,
           onDragging: { dragging = $0 },
           onNearEnd: { if source == 1 && model.cameraIndexState.error == nil && model.cameraHasMore { Task { await model.loadCamera(intent: .automatic) } } }
-        ) { workspace.open($0.id) }
+        ) { reconcileBrowseContext(); workspace.open($0.id) }
       }
       if source == 1 && model.cameraInfo != nil && model.cameraHasMore {
         if let error = model.cameraIndexState.error {
@@ -411,8 +410,8 @@ struct GalleryView: View {
               Button("已选 \(library.selection.count) ×") { library.selection = [] }.frame(minHeight: 44)
               Spacer()
               if source == 1 { Button("导入") { format = true }.frame(minHeight: 44) }
-              Button("对比") { workspace.startComparison(candidates.filter { library.selection.contains($0.id) }.map(\.id)) }
-                .disabled(candidates.filter { library.selection.contains($0.id) }.count != 2)
+              Button("对比") { reconcileBrowseContext(); workspace.startComparison(photos.filter { library.selection.contains($0.id) }.map(\.id)) }
+                .disabled(photos.filter { library.selection.contains($0.id) }.count != 2)
                 .accessibilityLabel("对比所选照片")
               Menu {
                 Button("保存这一批") { naming = .batch }
@@ -437,12 +436,13 @@ struct GalleryView: View {
           if window.split { Spacer(minLength: 0) }
         }.frame(maxWidth: .infinity, alignment: .leading)
         if workspace.isOpen {
-          PhotoDetailWorkspace(photos: candidates, workspace: workspace).frame(width: window.detailWidth)
+          PhotoDetailWorkspace(photos: detailPhotos, workspace: workspace).frame(width: window.detailWidth)
             .clipShape(RoundedRectangle(cornerRadius: window.split ? 20 : 0, style: .continuous))
         }
-      }.onAppear { workspace.reconcile(scope: scopeKey, available: Set(candidates.map(\.id))) }
-        .onChange(of: scopeKey) { _, value in workspace.reconcile(scope: value, available: Set(candidates.map(\.id))) }
-        .onChange(of: candidates.map(\.id)) { _, ids in workspace.reconcile(scope: scopeKey, available: Set(ids)) }
+      }.onAppear { reconcileBrowseContext() }
+        .onChange(of: scopeKey) { _, _ in reconcileBrowseContext() }
+        .onChange(of: candidates.map(\.id)) { _, _ in reconcileBrowseContext() }
+        .onChange(of: photos.map(\.id)) { _, _ in reconcileBrowseContext() }
         .toolbar(window.hideNavigation ? .hidden : .visible, for: .navigationBar, .tabBar)
     }.accessibilityIdentifier("gallery-workspace").background(Palette.background).navigationTitle("图库").navigationBarTitleDisplayMode(.inline)
       .toolbar {
@@ -566,11 +566,11 @@ struct PhotoViewer: View {
   var body: some View {
     PhotoDetailWorkspace(photos: photos, workspace: workspace)
       .onAppear {
-        workspace.reconcile(scope: "record-viewer", available: Set(photos.map(\.id)))
+        workspace.reconcile(scope: "record-viewer", available: Set(photos.map(\.id)), browsing: photos.map(\.id))
         if workspace.currentID == nil { workspace.open(initial) }
       }
       .onChange(of: workspace.isOpen) { _, open in if !open { dismiss() } }
-      .onChange(of: photos.map(\.id)) { _, ids in workspace.reconcile(scope: "record-viewer", available: Set(ids)) }
+      .onChange(of: photos.map(\.id)) { _, ids in workspace.reconcile(scope: "record-viewer", available: Set(ids), browsing: ids) }
   }
 }
 
@@ -651,6 +651,7 @@ struct PhotoDetailWorkspace: View {
         List {
           if let selected {
             PhotoMetadataSection(photo: selected)
+            Text("显示精度：普通预览长边最多4096；非RAW本机原片或临时JPEG原片单图最多8192；双图每幅最多2048。缩放不保证源像素1:1，也不会自动下载RAW。").font(.caption).foregroundStyle(.secondary)
             Text(selected.importTitle).font(.footnote)
             ForEach(Array(selected.files.enumerated()), id: \.offset) { _, file in
               VStack(alignment: .leading, spacing: 6) {
@@ -672,10 +673,11 @@ struct PhotoDetailWorkspace: View {
       VStack(spacing: 3) {
         Text(selected?.displayTitle ?? "照片").font(.subheadline).lineLimit(1)
         Text(previewStatus).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+        if workspace.comparison.isEmpty && workspace.currentOutsideFilter { Text("当前图已不符合筛选，暂时保留").font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1) }
       }.frame(maxWidth: .infinity)
       Button { workspace.filesInfo = true } label: { Image(systemName: "doc.text").frame(width: 44, height: 44) }.accessibilityLabel("文件信息")
       Menu {
-        if let selected { Button(selected.favorite ? "取消收藏" : "收藏") { try? library.favorite(selected.id) } }
+        if let selected { Button(selected.favorite ? "取消收藏" : "收藏") { try? library.favorite(selected.id) }.accessibilityIdentifier("photo-toggle-favorite") }
         if !urls.isEmpty { Button("分享原片") { shared = SharedFiles(urls: urls) } }
         if workspace.comparison.count == 2 { Button("结束对比") { workspace.endComparison() } }
         else {
@@ -734,6 +736,7 @@ private struct PhotoGlassChrome: ViewModifier {
 
 private struct ZoomPhoto: View {
   @EnvironmentObject var model: AppModel
+  @EnvironmentObject var library: LibraryStore
   let photo: Photo
   let identity: PhotoResourceIdentity
   @ObservedObject var record: PhotoViewportRecord
@@ -743,6 +746,8 @@ private struct ZoomPhoto: View {
   var navigate: (Int) -> Void
   @State private var image: UIImage?
   @State private var loading = true
+  @State private var sourceURL: URL?
+  @State private var displaySource = PhotoDisplaySource.preview
   private var representation: String {
     PhotoRepresentationRevision.key(photo: photo, cacheEpoch: model.previewRevision)
   }
@@ -754,17 +759,25 @@ private struct ZoomPhoto: View {
       } else if loading { ProgressView().tint(.white) }
       else { Text(photo.source == .camera && model.cameraInfo == nil ? "相机未连接，预览尚未缓存" : "此格式暂不能预览，可在照片操作中分享原片").font(.caption).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center).padding(20) }
     }
-    .task(id: representation + ":\(PhotoDecodePolicy.maxPixel(comparing: comparing))") {
-      image = nil; loading = true
+    .task(id: representation) {
+      sourceURL = nil; displaySource = .preview; image = nil; loading = true
       let url = await resolver.resolve(identity: identity, representation: representation) { await model.previewURL(photo, large: true) }
       guard !Task.isCancelled else { return }
       if let url {
-        let decoded = await PhotoDisplayDecoder.shared.decode(url, maxPixel: PhotoDecodePolicy.maxPixel(comparing: comparing))
-        guard !Task.isCancelled else { return }
-        image = decoded.map { UIImage(cgImage: $0.image) }
-      }
+        displaySource = PhotoDisplaySource.classify(photo: photo, resolved: url, fileURL: { try? library.fileURL($0) }, verifiedTemporaryJPEG: model.originalPreviews[photo.id])
+        sourceURL = url
+      } else { loading = false }
+    }
+    .task(id: (sourceURL?.absoluteString ?? "") + ":\(PhotoDecodePolicy.maxPixel(comparing: comparing, source: displaySource))") {
+      image = nil
+      guard let url = sourceURL else { return }
+      loading = true
+      let decoded = await PhotoDisplayDecoder.shared.decode(url, maxPixel: PhotoDecodePolicy.maxPixel(comparing: comparing, source: displaySource))
+      guard !Task.isCancelled else { return }
+      image = decoded.map { UIImage(cgImage: $0.image) }
       loading = false
     }
+    .onDisappear { image = nil; sourceURL = nil; loading = true }
   }
 }
 

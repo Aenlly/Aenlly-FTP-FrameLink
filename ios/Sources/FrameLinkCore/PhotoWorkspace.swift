@@ -88,39 +88,52 @@ public struct PhotoViewportPresentation: Equatable, Sendable {
   @Published public private(set) var isOpen = false
   @Published public private(set) var comparison: [String] = []
   @Published public private(set) var focusedSide = 0
+  @Published public private(set) var browsingIDs: [String] = []
   @Published public var toolsVisible = true
   @Published public var filesInfo = false
   @Published public var gridAnchor: String?
   private var viewports: [PhotoResourceIdentity: PhotoViewportRecord] = [:]
   private var resourceByPhoto: [String: PhotoResourceIdentity] = [:]
   private var available = Set<String>()
+  private var explicitBrowsing = false
   public init() {}
   public var visibleIDs: [String] { comparison.count == 2 ? comparison : currentID.map { [$0] } ?? [] }
   public var focusedID: String? { comparison.count == 2 ? comparison[min(1, max(0, focusedSide))] : currentID }
-  public func reconcile(scope: String, available: Set<String>) {
+  /// A current photo that stops matching is temporarily pinned; no other unfiltered photo is added.
+  public var detailIDs: [String] {
+    if isOpen, let currentID, available.contains(currentID), !browsingIDs.contains(currentID) { return [currentID] + browsingIDs }
+    return browsingIDs
+  }
+  public var currentOutsideFilter: Bool { currentID.map { !browsingIDs.contains($0) } ?? false }
+  public func reconcile(scope: String, available: Set<String>, browsing: [String]? = nil) {
     self.available = available
+    explicitBrowsing = browsing != nil
+    var seen = Set<String>()
+    let order = (browsing ?? available.sorted()).filter { available.contains($0) && seen.insert($0).inserted }
+    if browsingIDs != order { browsingIDs = order }
     if self.scope != scope {
       self.scope = scope; currentID = nil; isOpen = false; comparison = []; focusedSide = 0
       filesInfo = false; toolsVisible = true; gridAnchor = nil; viewports = [:]; resourceByPhoto = [:]
     }
     if let id = currentID, !available.contains(id) { close(); currentID = nil }
-    if comparison.contains(where: { !available.contains($0) }) { endComparison() }
+    if comparison.contains(where: { !detailIDs.contains($0) }) { endComparison() }
     if let anchor = gridAnchor, !available.contains(anchor) { gridAnchor = nil }
     viewports = viewports.filter { available.contains($0.key.photoID) }
     resourceByPhoto = resourceByPhoto.filter { available.contains($0.key) }
   }
-  public func open(_ id: String) { guard available.contains(id) else { return }; currentID = id; isOpen = true; comparison = [] }
+  public func open(_ id: String) { guard browsingIDs.contains(id) else { return }; currentID = id; isOpen = true; comparison = [] }
   public func close() { isOpen = false; comparison = []; filesInfo = false }
   public func startComparison(_ ids: [String]) {
-    var seen = Set<String>(); let pair = ids.filter { available.contains($0) && seen.insert($0).inserted }
+    let allowed = Set(detailIDs)
+    var seen = Set<String>(); let pair = ids.filter { allowed.contains($0) && seen.insert($0).inserted }
     guard pair.count >= 2 else { return }
-    if currentID == nil { currentID = pair[0] }
+    if !isOpen || currentID == nil { currentID = pair[0] }
     comparison = Array(pair.prefix(2)); focusedSide = 0; isOpen = true
   }
   public func endComparison() { comparison = []; focusedSide = 0 }
   public func focus(_ side: Int) { focusedSide = min(1, max(0, side)) }
   public func tapThumbnail(_ id: String) {
-    guard available.contains(id) else { return }
+    guard detailIDs.contains(id) else { return }
     if comparison.count == 2 {
       let other = 1 - focusedSide
       if comparison[other] == id { comparison.swapAt(0, 1) }
@@ -128,8 +141,10 @@ public struct PhotoViewportPresentation: Equatable, Sendable {
     } else { currentID = id }
   }
   public func step(_ delta: Int, orderedIDs: [String]) {
-    guard comparison.isEmpty, let id = currentID, let index = orderedIDs.firstIndex(of: id), !orderedIDs.isEmpty else { return }
-    currentID = orderedIDs[min(orderedIDs.count - 1, max(0, index + delta))]
+    let supplied = Set(orderedIDs)
+    let order = explicitBrowsing ? detailIDs.filter { supplied.contains($0) } : orderedIDs.filter { available.contains($0) }
+    guard comparison.isEmpty, let id = currentID, let index = order.firstIndex(of: id), !order.isEmpty else { return }
+    currentID = order[min(order.count - 1, max(0, index + delta))]
   }
   public func viewport(for identity: PhotoResourceIdentity) -> PhotoViewport { viewports[identity]?.value ?? PhotoViewport() }
   public func record(for identity: PhotoResourceIdentity) -> PhotoViewportRecord {
@@ -149,7 +164,7 @@ public struct PhotoViewportPresentation: Equatable, Sendable {
 
 /// At most two visible panes; image decoding is separately serialized by the App renderer.
 public enum PhotoDecodePolicy {
-  public static func maxPixel(comparing: Bool) -> Int { comparing ? 2048 : 4096 }
+  public static func maxPixel(comparing: Bool, source: PhotoDisplaySource = .preview) -> Int { comparing ? 2048 : source == .preview ? 4096 : 8192 }
   public static let concurrentDecodes = 1
   public static func thumbnailPixel(width: Double, height: Double, displayScale: Double, large: Bool) -> Int {
     let edge = max(width, height) * max(1, displayScale)

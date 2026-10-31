@@ -46,4 +46,20 @@ class ConnectionBookTest{
         assertTrue(runCatching{ConnectionBook(store).entries()}.isFailure)
         assertTrue(store.contains("camera.config"));assertEquals("broken",store.get("camera.connections.v1"))
     }
+    @Test fun fujiCamerasUsingTheSameHotspotAddressDoNotSharePairingOrConnections(){
+        val store=MemoryStore();val book=ConnectionBook(store)
+        val a=ConnectionConfig(host="192.168.0.1",port=55740,protocol=CameraProtocols.FUJI_PHONE,bluetoothAddress="00:11:22:33:44:55")
+        val b=a.copy(bluetoothAddress="00:11:22:33:44:66")
+        book.completed(a,"one",true);book.completed(b,"two",true)
+        val vault=SecureCameraPairingStore(store)
+        vault.saveToken(a.protocol,a.bluetoothAddress,byteArrayOf(1,2,3,4))
+        vault.saveToken(b.protocol,b.bluetoothAddress,byteArrayOf(5,6,7,8))
+        assertEquals(2,book.entries().size)
+        book.forget(book.entries().first{it.identity=="one"}.id)
+        assertNull(vault.loadToken(a.protocol,a.bluetoothAddress))
+        assertArrayEquals(byteArrayOf(5,6,7,8),vault.loadToken(b.protocol,b.bluetoothAddress))
+        book.completed(b,"two",false)
+        assertNull(vault.loadToken(b.protocol,b.bluetoothAddress))
+        assertTrue(book.entries().isEmpty())
+    }
 }

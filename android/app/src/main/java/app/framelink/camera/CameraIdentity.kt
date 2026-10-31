@@ -23,6 +23,11 @@ internal fun sameCameraFingerprint(expected: String, observed: String): Boolean 
 internal fun cameraConnectionMessage(error: Exception,protocol:String=CameraProtocols.SONY): String {
     val detail = error.message.orEmpty()
     if(protocol==CameraProtocols.USB)return detail.ifBlank{"USB连接未完成，请检查OTG、授权和机身读卡模式"}
+    if(protocol==CameraProtocols.FUJI_PHONE)return when{
+        "connection refused" in detail->"相机尚未开放手机图库连接，请确认蓝牙配对、Wi-Fi交接和机身访问提示；不要选择PC AutoSave"
+        "timeout" in detail||"deadline exceeded" in detail->"富士连接超时，请在机身确认手机访问，并核对系统Wi-Fi提示"
+        else->detail.ifBlank{"富士手机无线连接未完成，请检查配对与机身共享状态"}
+    }
     if(protocol==CameraProtocols.CANON)return when{
         "connection refused" in detail->"机身未接受CCAPI连接，请核对IP、HTTP端口并确认相机已启用CCAPI"
         "timeout" in detail||"deadline exceeded" in detail->"CCAPI连接超时，请确认相机未休眠、手机与相机在同一网络，且机身HTTP服务已开启"

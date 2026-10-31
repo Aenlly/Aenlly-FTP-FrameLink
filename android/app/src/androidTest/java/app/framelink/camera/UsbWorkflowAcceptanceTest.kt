@@ -32,7 +32,7 @@ class UsbWorkflowAcceptanceTest {
     @get:Rule(order=0)val compose=createAndroidComposeRule<MainActivity>()
     @get:Rule(order=1)val notifications=GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
 
-    private class Device(val serial:String,val creationOnly:Boolean=false){
+    private class Device(val serial:String,val creationOnly:Boolean=false,val manufacturer:String="FUJIFILM",val model:String="X-T30 II"){
         val jpeg=ByteArrayOutputStream().also{out->
             val image=Bitmap.createBitmap(96,64,Bitmap.Config.ARGB_8888)
             try{image.eraseColor(android.graphics.Color.rgb(60,110,140));image.compress(Bitmap.CompressFormat.JPEG,90,out)}finally{image.recycle()}
@@ -46,7 +46,7 @@ class UsbWorkflowAcceptanceTest {
     }
     private class Access(private val device:Device):UsbPhotoAccess{
         private val live=AtomicBoolean(true)
-        override val descriptor=UsbPhotoDescriptor("FUJIFILM","X-T30 II",device.serial,"SDK-FAKE",
+        override val descriptor=UsbPhotoDescriptor(device.manufacturer,device.model,device.serial,"SDK-FAKE",
             setOf(UsbPhotoOperations.STORAGES,UsbPhotoOperations.HANDLES,UsbPhotoOperations.INFO,UsbPhotoOperations.OBJECT,UsbPhotoOperations.THUMBNAIL,UsbPhotoOperations.PARTIAL))
         override fun connected()=live.get()
         override fun storages()=intArrayOf(1)
@@ -83,7 +83,7 @@ class UsbWorkflowAcceptanceTest {
         }
         private fun Device.descriptorName()="SDK fake X-T30 II"
     }
-    private inner class Harness(creationOnly:Boolean=false) {
+    private inner class Harness(creationOnly:Boolean=false,manufacturer:String="FUJIFILM",model:String="X-T30 II") {
         val token=UUID.randomUUID().toString()
         val app=ApplicationProvider.getApplicationContext<CameraApp>()
         val directory=File(app.cacheDir,"qa-usb-workflow-"+token).apply{mkdirs()}
@@ -93,7 +93,7 @@ class UsbWorkflowAcceptanceTest {
             override fun getSharedPreferences(name:String,mode:Int):SharedPreferences=app.getSharedPreferences("qa-usb-"+token+"-"+name,mode)
         }
         val database=Room.inMemoryDatabaseBuilder(app,LocalDatabase::class.java).build()
-        val device=Device(token,creationOnly)
+        val device=Device(token,creationOnly,manufacturer,model)
         val camera=NativeCamera(context,Opener(device))
         val runtime=CameraRuntime(context,database,SecureSettings(context),camera)
         val config=ConnectionConfig(host="qa-usb",port=0,protocol=CameraProtocols.USB)
@@ -120,6 +120,25 @@ class UsbWorkflowAcceptanceTest {
             database.close()
             directory.deleteRecursively()
             app.deleteSharedPreferences("qa-usb-"+token+"-framelink.settings")
+        }
+    }
+
+    @Test fun registryRoutesSonyAndFujiThroughTheSameUsbAndRejectsUnknownWithoutDisconnecting(){
+        for((manufacturer,model)in listOf("FUJIFILM" to "X-T30 II","Sony" to "ILCE-7CM2")){
+            val h=Harness(manufacturer=manufacturer,model=model)
+            try{
+                h.connect()
+                val before=h.runtime.camera.value.info
+                assertEquals(model,before!!.model)
+                assertTrue(h.camera.connected())
+                assertThrows(IllegalArgumentException::class.java){h.camera.connect(h.config.copy(protocol="unknown-protocol"))}
+                assertTrue(h.camera.connected())
+                runBlocking{h.runtime.connect(h.config.copy(protocol="unknown-protocol")).join()}
+                assertEquals(before,h.runtime.camera.value.info)
+                assertTrue(h.camera.connected())
+                assertFalse(before.canCapture||before.canFocus||before.canLiveView)
+                assertEquals(1,h.camera.newestPage(1,"",0).items.size)
+            }finally{h.close()}
         }
     }
 

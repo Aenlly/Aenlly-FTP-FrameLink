@@ -4,7 +4,7 @@
 
 Connect a camera, review photos, and import the ones you want. FrameLink builds on Aenlly-FTP, keeping FTP transfers while adding wireless live view, local client selections, and optional cloud delivery.
 
-**Android 0.1.26 / iOS 0.1.18 source candidate (device package: 0.1.10)** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
+**Android 0.1.29 / iOS 0.1.18 source candidate (device package: 0.1.10)** · Android 17 support (Android 8.0+) · iOS 17+ project · GPL-3.0
 
 Fuji PC AutoSave is an opt-in pending-batch receiver in the source candidate. Hardware, iOS broadcast permission and signing remain unverified; no new IPA is available.
 
@@ -36,6 +36,7 @@ Local features need no account. Originals retain their bytes; previews and compr
 - **Sony network**: enable PC Remote and required authentication, then enter the address and confirm the fingerprint. Capabilities depend on the body, firmware, and negotiation. A7C II hardware checks are recorded; other targets still need hardware testing.
 - **Canon CCAPI, experimental**: enable CCAPI and enter the HTTP address, port, and optional credentials. EOS 850D is a hardware-test target; current evidence comes from an independent service and Android integration tests.
 - **USB reader, experimental**: use phone OTG to browse and import from PTP/MTP devices. This is read-only media access, not remote shooting. X-T30 II hardware testing remains pending; Fujifilm wireless control is not implemented. Use local import for system-mounted storage.
+- **Fujifilm mobile wireless, experimental**: Bluetooth pairing hands off to camera Wi-Fi for shared-media browsing, temporary previews and selected imports. Android and protocol simulations are implemented; hardware pairing remains unverified. Fujifilm live view and remote shooting are not available yet.
 
 CCAPI has Android software support and a read-only iOS source candidate, with no corresponding IPA yet. USB remains Android-only. [Connection guide](android/README.md#连接相机) · [Transport and validation matrix](docs/CAMERA_BACKENDS.md)
 

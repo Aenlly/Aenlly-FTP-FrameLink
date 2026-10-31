@@ -26,6 +26,7 @@ classes['canon']=prefix+'CanonProtocolAcceptanceTest'
 classes['usb']=prefix+'UsbConnectionUiAcceptanceTest'
 classes['usb-workflow']=prefix+'UsbWorkflowAcceptanceTest'
 classes['fuji-autosave']=prefix+'FujiAutoSaveAcceptanceTest'
+classes['camera-registry']=','.join([prefix+'UsbWorkflowAcceptanceTest',prefix+'FujiPhoneAcceptanceTest',prefix+'FujiAutoSaveAcceptanceTest'])
 classes['protocol-targeted']=','.join(classes[key] for key in ['fuji-autosave','usb-workflow','native'])
 classes['creative-look']=prefix+'CreativeLookAcceptanceTest'
 classes['exif']=prefix+'PhotoExifAcceptanceTest'
@@ -34,6 +35,11 @@ classes['gallery-transitions']=','.join([
     prefix+'GalleryInteractionAcceptanceTest#filmstripSelectionDoesNotReturnToThePreviousPagerPhoto',
     prefix+'GalleryInteractionAcceptanceTest#viewerAndGridUseOneSelectionAndLegacyMarksDoNotSelectPhotos',
     prefix+'GalleryInteractionAcceptanceTest#browseModeKeepsSelectionVisibleInGridAndListWithoutSelectingOtherPhotos',
+    prefix+'GalleryInteractionAcceptanceTest#swipingToAnotherPhotoKeepsDoubleTapZoomBoundToTheVisiblePage',
+])
+classes['camera-foundations']=','.join([
+    classes['camera-registry'],classes['gallery-transitions'],
+    prefix+'ConnectionAndHistoryAcceptanceTest#pairingVaultEncryptsTokensAndSeparatesProtocolNamespaces',
 ])
 classes['foundations']=','.join(prefix+x for x in ['ConnectionAndHistoryAcceptanceTest','ConnectionHistoryUiAcceptanceTest'])
 classes['live-direction']=prefix+'LiveDeviceOrientationAcceptanceTest'

@@ -4,6 +4,12 @@ import java.util.Locale
 
 internal val SelectionAccent = androidx.compose.ui.graphics.Color(0xff287af3)
 
+internal fun CameraInfo.mediaScopeTitle():String?=when(mediaScope){
+    "FUJI_PHONE_EXPOSED_MEDIA"->"机身共享范围"
+    "AUTOSAVE_PENDING_BATCH"->"本次待传批次"
+    else->null
+}
+
 /** 相机总数来自当前日期索引，筛选未结束时仅将已匹配数量作为进度 */
 internal fun galleryCountText(camera:Boolean,filtered:Boolean,loaded:Int,total:Int?,hasMore:Boolean):String = when {
     !camera -> "$loaded 张"
@@ -36,17 +42,16 @@ internal fun Photo.hasUnimportedFiles(): Boolean = files().any { it.image && it.
 /** 文件日期与浏览排序采用同一份文件时间，RAW/JPEG跨日写入也不会错分日期 */
 internal fun List<CameraFile>.fileTimeDay():String = maxByOrNull { it.fileModifiedAt.takeIf { time->time>0 }?:it.fileCreatedAt }?.fileDay.orEmpty()
 
-internal fun CameraInfo.displayName(): String = when (model) {
-    "ILCE-7CM2" -> "Sony α7C II"
-    "ILCE-7M4" -> "Sony α7 IV"
-    "ILCE-7M5" -> "Sony α7 V"
-    "ILCE-6700" -> "Sony α6700"
-    else -> model.ifBlank { manufacturer.ifBlank { "相机" } }
+internal fun CameraInfo.displayName(): String {
+    val profile=app.framelink.camera.support.CameraSupportRegistry.standard().match(
+        app.framelink.camera.support.CameraSupportRegistry.Family.SONY_ALPHA,model,firmware).profile
+    return profile?.displayName?.takeIf{it.isNotBlank()}?:model.ifBlank{manufacturer.ifBlank{"相机"}}
 }
 
 internal fun ConnectionConfig.canReconnectDirectly(): Boolean = host.isNotBlank() && when(protocol){
     CameraProtocols.USB->usbIdentity.isNotBlank()
     CameraProtocols.CANON->port in 1..65535&&(user.isBlank()||password.isNotBlank())
+    CameraProtocols.FUJI_PHONE->port in 1..65535
     CameraProtocols.SONY->port in 1..65535&&(user.isBlank()||(password.isNotBlank()&&fingerprint.isNotBlank()))
     else->false
 }

@@ -45,7 +45,7 @@ class CameraRuntime(
     val context: Context,
     val database: LocalDatabase,
     val settings: SecureSettings,
-    val native: NativeCamera = NativeCamera(context),
+    val native: NativeCamera = NativeCamera(context,AndroidUsbCameraOpener(context),SecureCameraPairingStore(settings)),
 ) {
     val scope =
         CoroutineScope(
@@ -218,6 +218,10 @@ class CameraRuntime(
     /** 只读检查可跳过机身拍摄保存策略同步，普通连接保持原有同步行为 */
     @Synchronized
     fun connect(input: ConnectionConfig, synchronizeCaptureStorage:Boolean=true,rememberCredentials:Boolean?=null): Job {
+        val registered=try{registeredConnection(input)}catch(error:IllegalArgumentException){
+            notice.value=error.message?:"当前连接配置无效"
+            return scope.launch{}
+        }
         val remember=rememberCredentials?:runCatching{connections.saved(input)}.getOrDefault(false)
         val borrowed=input.fingerprint.isNotBlank()||runCatching{connections.saved(input)}.getOrDefault(false)
         connectionMonitor?.cancel()
@@ -235,7 +239,7 @@ class CameraRuntime(
                         }
                     }
                 settings.put("camera.guid", guid)
-                var config = input.copy(guid = guid)
+                var config = registered.copy(guid = guid)
                 if (config.protocol==CameraProtocols.SONY && config.user.isNotBlank()) {
                     mutableCamera.value = CameraStatus(connecting = true, message = "正在读取相机身份")
                     val identity = native.inspectIdentity(config.host)
@@ -255,6 +259,7 @@ class CameraRuntime(
                     config = config.copy(fingerprint = identity.fingerprint)
                 }
                 val info = native.connect(config)
+                config=native.completedConnection()?:config
                 if(config.protocol==CameraProtocols.USB)config=config.copy(usbIdentity=info.id)
                 val choices = native.properties()
                 if (info.canCapture&&synchronizeCaptureStorage) runCatching {
@@ -264,6 +269,7 @@ class CameraRuntime(
                 synchronized(this@CameraRuntime) {
                     if (connectionGeneration.get() != generation) return@launch
                     if (!config.experimentalFuji) connections.completed(config,config.fingerprint.ifBlank{info.id},remember)
+                    if(remember)native.rememberFujiPairing(info.id)
                     currentCameraIds.value = emptySet()
                     galleryHasMore.value = false
                     galleryTotalCount.value = null

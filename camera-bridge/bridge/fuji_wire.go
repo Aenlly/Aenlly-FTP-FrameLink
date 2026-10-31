@@ -1,6 +1,6 @@
 package bridge
 
-// Fuji PC AutoSave uses USB-style PTP containers on TCP, not Sony PTP/IP.
+// Fuji手机无线与PC AutoSave共用TCP上的USB式PTP封包，握手和媒体范围分别实现
 // Protocol sources and independent implementation boundaries: docs/FUJIFILM_WIRELESS_RESEARCH.md.
 import (
 	"context"
@@ -69,7 +69,7 @@ func fujiWriteAll(w io.Writer, data []byte) error {
 
 func fujiInit(name string) ([]byte, error) {
 	if !fujiImporterName(name) {
-		return nil, errors.New("AutoSave接收名称需为1至24个ASCII字母、数字、空格或短横线")
+		return nil, errors.New("富士设备名称需为1至24个ASCII字母、数字、空格或短横线")
 	}
 	b := make([]byte, 82)
 	for i, value := range []uint32{82, 1, 0x8f53e4f2, 0x5d48a5ad, 0x0b7fb287, 0xd0ded5d3, 0} {
@@ -132,7 +132,7 @@ func (w *fujiWire) init(ctx context.Context, name string) (model string, err err
 		return "", err
 	}
 	if kind != 2 || len(b) < 20 {
-		return "", errors.New("Fuji未接受AutoSave初始化")
+		return "", errors.New("Fuji未接受相机会话初始化")
 	}
 	// libfuji parses four words after the 12-byte bulk header, then UTF-16LE model.
 	if len(b[20:])%2 != 0 {
@@ -167,13 +167,17 @@ func (w *fujiWire) call(ctx context.Context, code uint16, params []uint32, send 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if !w.online() {
-		return nil, errors.New("AutoSave会话已结束，请在相机重新发起传输")
+		return nil, errors.New("富士会话已结束，请在相机重新允许访问")
 	}
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
-	if len(params) > 5 || limit < 0 || limit > fujiChunk {
-		return nil, errors.New("AutoSave命令读取范围无效")
+	maximum := fujiChunk
+	if code == 0x100a || code == 0x9055 {
+		maximum = fujiPhonePreviewLimit
+	}
+	if len(params) > 5 || limit < 0 || limit > maximum {
+		return nil, errors.New("富士命令读取范围无效")
 	}
 	defer w.deadline(ctx)()
 	// A partial or cancelled response cannot safely be followed by another command.
@@ -207,14 +211,14 @@ func (w *fujiWire) call(ctx context.Context, code uint16, params []uint32, send 
 		kind := binary.LittleEndian.Uint16(head[4:])
 		reply := binary.LittleEndian.Uint16(head[6:])
 		if size < 12 || binary.LittleEndian.Uint32(head[8:]) != tx {
-			return nil, errors.New("AutoSave容器长度或事务编号不匹配")
+			return nil, errors.New("富士容器长度或事务编号不匹配")
 		}
 		bound := limit
 		if kind == 3 {
 			bound = 20
 		}
 		if size-12 > uint32(bound) {
-			return nil, errors.New("AutoSave响应超过命令读取上限")
+			return nil, errors.New("富士响应超过命令读取上限")
 		}
 		payload := make([]byte, int(size)-12)
 		if _, err = io.ReadFull(w.conn, payload); err != nil {
@@ -223,7 +227,7 @@ func (w *fujiWire) call(ctx context.Context, code uint16, params []uint32, send 
 		switch kind {
 		case 2:
 			if seenData || reply != code || send != nil {
-				return nil, errors.New("AutoSave数据响应顺序无效")
+				return nil, errors.New("富士数据响应顺序无效")
 			}
 			data = payload
 			seenData = true
@@ -233,10 +237,10 @@ func (w *fujiWire) call(ctx context.Context, code uint16, params []uint32, send 
 			}
 			return data, nil
 		default:
-			return nil, errors.New("AutoSave返回未知容器类型")
+			return nil, errors.New("富士返回未知容器类型")
 		}
 	}
-	return nil, errors.New("AutoSave数据缺少完成响应")
+	return nil, errors.New("富士数据缺少完成响应")
 }
 
 func (w *fujiWire) property(ctx context.Context, code uint16) ([]byte, error) {

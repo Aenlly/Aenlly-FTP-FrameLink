@@ -8,6 +8,8 @@ class CameraIdentityTest {
         val refused=Exception("dial tcp 192.168.1.2:8080: connect: connection refused")
         assertTrue(cameraConnectionMessage(refused,CameraProtocols.CANON).contains("CCAPI"))
         assertFalse(cameraConnectionMessage(refused,CameraProtocols.CANON).contains("电脑遥控"))
+        assertTrue(cameraConnectionMessage(refused,CameraProtocols.FUJI_PHONE).contains("蓝牙配对"))
+        assertFalse(cameraConnectionMessage(refused,CameraProtocols.FUJI_PHONE).contains("电脑遥控"))
         assertEquals("USB授权未完成",cameraConnectionMessage(Exception("USB授权未完成"),CameraProtocols.USB))
     }
     @Test

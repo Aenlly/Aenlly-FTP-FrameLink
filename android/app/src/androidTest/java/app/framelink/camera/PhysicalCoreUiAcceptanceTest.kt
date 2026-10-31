@@ -52,6 +52,75 @@ class PhysicalCoreUiAcceptanceTest {
         rotate(UiAutomation.ROTATION_UNFREEZE)
     }
 
+    @Test fun localGallerySelectionAndPagingDoNotRequireCameraOrSystemTouchInjection(){
+        assumeTrue(InstrumentationRegistry.getArguments().getString("allowPhysicalGallery") == "true")
+        check(Build.MODEL in setOf("25113PN0EC","23013RK75C"))
+        check(appTouch){"本地图库实机验收只允许应用内触控"}
+        val service=automation.serviceInfo
+        service.flags=service.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        automation.serviceInfo=service
+        check(!app.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked){"设备锁屏，停止验收"}
+        val foreground=automation.rootInActiveWindow?.packageName?.toString()
+        check(foreground==app.packageName||foreground=="com.miui.home"){"其他应用位于前台，停止验收"}
+        if(foreground!=app.packageName){
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("am start -W -n app.framelink.camera/.MainActivity")).use{it.readBytes()}
+            waitFor{appRoot()?.packageName==app.packageName}
+        }
+        val connectedBefore=runtime.camera.value.info?.id
+        var name:String?=null
+        var restoreSelection=false
+        try{
+            clickDescription("图库")
+            clickText("已导入")
+            waitFor{nodes().any{it.contentDescription?.startsWith("查看 ")==true}}
+            name=nodes().first{it.contentDescription?.startsWith("查看 ")==true}.contentDescription.toString().removePrefix("查看 ")
+            clickDescription("查看 $name")
+            waitFor{findDescription("选择当前照片")!=null}
+            if(findDescription("选择当前照片")?.isChecked!=true){
+                clickDescription("选择当前照片")
+                restoreSelection=true
+            }
+            waitFor{findDescription("选择当前照片")?.isChecked==true}
+            screenshot("local-gallery-detail-selected")
+            clickDescription("关闭照片")
+            waitFor{findDescription("选择 $name")?.isChecked==true}
+            screenshot("local-gallery-browse-selected")
+            clickDescription("查看 $name")
+            waitFor{findDescription("选择当前照片")?.isChecked==true}
+            val image=nodes().filter{it.contentDescription?.toString()==name}.maxByOrNull{
+                Rect().apply{it.getBoundsInScreen(this)}.let{bounds->bounds.width().toLong()*bounds.height()}
+            }?:error("大图未显示")
+            val bounds=Rect().also(image::getBoundsInScreen)
+            touchWindowId=image.windowId
+            if(runBlocking{runtime.database.photos().all().count{it.inLibrary}}>1){
+                swipe(bounds.left+bounds.width()*.8f,bounds.exactCenterY(),bounds.left+bounds.width()*.2f,bounds.exactCenterY())
+                SystemClock.sleep(500)
+                swipe(bounds.left+bounds.width()*.2f,bounds.exactCenterY(),bounds.left+bounds.width()*.8f,bounds.exactCenterY())
+                waitFor{nodes().any{it.contentDescription?.toString()==name}&&findDescription("选择当前照片")?.isChecked==true}
+            }
+            rotate(UiAutomation.ROTATION_FREEZE_90)
+            waitFor{app.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE}
+            waitFor{findDescription("选择当前照片")?.isChecked==true}
+            screenshot("local-gallery-landscape")
+            rotate(UiAutomation.ROTATION_FREEZE_0)
+            waitFor{app.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_PORTRAIT}
+            waitFor{findDescription("选择当前照片")?.isChecked==true}
+            assertEquals(connectedBefore,runtime.camera.value.info?.id)
+        }finally{
+            if(restoreSelection&&name!=null){
+                check(appRoot()?.packageName==app.packageName){"前台变化，停止恢复测试选择"}
+                if(findDescription("关闭照片")!=null)clickDescription("关闭照片")
+                clickDescription("查看 $name")
+                waitFor{findDescription("选择当前照片")!=null}
+                if(findDescription("选择当前照片")?.isChecked==true)clickDescription("选择当前照片")
+                waitFor{findDescription("选择当前照片")?.isChecked==false}
+            }
+            if(findDescription("关闭照片")!=null)clickDescription("关闭照片")
+        }
+        report("local-gallery-result.json",JSONObject().put("passed",true).put("model",Build.MODEL)
+            .put("version",BuildConfig.VERSION_NAME).put("cameraSessionPreserved",true))
+    }
+
     private fun connect(synchronizeCaptureStorage:Boolean=true) {
         assumeTrue(InstrumentationRegistry.getArguments().getString("allowPhysicalCameraRead") == "true")
         check(Build.MODEL in setOf("25113PN0EC", "23013RK75C", "2410CRP4CC"))

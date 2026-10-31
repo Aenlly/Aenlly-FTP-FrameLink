@@ -1,6 +1,25 @@
 # 富士无线通道与待采数据
 
-USB读卡、手机无线传图和PC AutoSave是三条不同的路线。当前已实现USB读卡，并新增默认关闭的PC AutoSave实验后端。普通连接界面尚不提供这个实验入口；公开实现、协议模拟与富士机身实测分别记录。
+USB读卡、手机无线传图和PC AutoSave是三条不同的路线。当前Android源码新增独立手机无线入口、蓝牙配对与Wi-Fi交接，以及Go手机媒体后端；USB和默认关闭的AutoSave实验后端保留。公开实现、协议模拟、安装验证与机身实测分别记录。
+
+## 本轮手机无线实现
+
+- `FujiPhoneLink.kt`从机身已公布的配对服务区分legacy/secure路径，经系统蓝牙确认和专用Wi-Fi请求交接；仅为相机socket绑定网络，不切换云访问的默认路由
+- `FujiGattProtocol.java`限定配对和Wi-Fi启动写入，客户端名为FrameLink；不写快门、时钟、GPS、备份或设置恢复特征。热点密码仅内存使用；token只在用户保存连接后进入本机加密仓库
+- `protocol=fuji-phone`走`fuji_phone.go`，不需要AutoSave发现所得DSCNAME，也不能接受AutoSave机身状态；按实际公布的手机版本字段选择图库流程，不根据“固件2.06”字符串猜测模式
+- `mediaScope=FUJI_PHONE_EXPOSED_MEDIA`只表示机身向手机开放的范围，UI标明“机身共享范围”。RAF仅在该范围实际返回时出现，不用AutoSave代取或假装全卡支持
+- 独立手机端点覆盖两类版本协商、JPEG/RAF实际公布差异、安全缩略图、原字节、半包不发布、无序列号时会话隔离及空图库。Android另经真实Go/JNI、Room、2GB临时缓存与导入队列验证；不是机身抓包或真机通过
+- 蓝牙与系统Wi-Fi交接已进入可构建代码，仍需富士机身实测；iOS没有接入此手机交接入口。本轮不开放富士取景、参数、对焦、快门或胶片模拟写入
+
+机身操作参考[官方手机连接说明](https://fujifilm-dsc.com/en/manual/x-t30-2/connections/wireless/index.html)：拍摄信息界面按DISP/BACK，选择Bluetooth→PAIRING；系统/机身确认不能由“读到IP”替代。以下AutoSave研究与API继续单独适用。
+
+### 0.1.29发现规则修正
+
+真机0.1.28扫描有系统回调但未列出机身。源码确认旧逻辑在解析厂商数据前先检查名称与GATT服务，会漏掉部分无名称广播；这不是对真实机身广播内容的推测性定论。0.1.29改为生产使用的Java规则，厂商字段先验证，再处理可选名称和广告服务；实时去重结果，采用有界低延迟扫描，错误在连接页内呈现。
+
+协议来源锁定[gkoh/furble 0cac22a的Fujifilm.h](https://github.com/gkoh/furble/blob/0cac22aacc3d9ef250be40849118af78a5f39f27/lib/furble/Fujifilm.h)及同版本的`FujifilmBasic.cpp`、`FujifilmSecure.cpp`：companyID为`0x04d8`；Android将两字节companyID与载荷分离，basic的type2加四字节token共五字节；secure的六字节载荷不作为basic token。广告服务与GATT配对服务分别处理。仅参考这些协议字段，未引入遥控、GPS、时钟同步或其日志输出代码。
+
+用例覆盖无名称且无service的合法结构、其他厂商同形数据、短包/非法长度、secure载荷、已配对名称缓存、重复回调、名称后到、关闭/撤权后的晚回调和调用方修改缓冲区。测试数据按已核来源合成，不称作机身抓包。真实机身匹配结构只在本机记录长度/type等脱敏信息；系统回调数量不等于设备数量，XApp识别成功也不等于光屿识别成功。
 
 ## 已找到的实现
 

@@ -19,6 +19,28 @@ import org.junit.Test
 /** 仅在独立模拟器使用隔离数据库、合成文件及加密偏好域，不清理用户历史 */
 class ConnectionAndHistoryAcceptanceTest{
     private fun guard(){check(Build.HARDWARE in setOf("ranchu","goldfish"))}
+    @Test fun pairingVaultEncryptsTokensAndSeparatesProtocolNamespaces(){
+        guard()
+        val app=ApplicationProvider.getApplicationContext<Context>()
+        val name="qa-pairing-"+UUID.randomUUID()
+        val isolated=object:ContextWrapper(app){override fun getSharedPreferences(key:String,mode:Int)=app.getSharedPreferences(name,mode)}
+        val store=SecureSettings(isolated)
+        val vault=SecureCameraPairingStore(store)
+        val address="00:11:22:33:44:55"
+        try{
+            vault.saveToken(CameraProtocols.FUJI_PHONE,address,byteArrayOf(1,2,3,4))
+            vault.saveToken(CameraProtocols.SONY,address,byteArrayOf(5,6,7,8))
+            val recreated=SecureCameraPairingStore(SecureSettings(isolated))
+            assertArrayEquals(byteArrayOf(1,2,3,4),recreated.loadToken(CameraProtocols.FUJI_PHONE,address))
+            assertArrayEquals(byteArrayOf(5,6,7,8),recreated.loadToken(CameraProtocols.SONY,address))
+            val raw=app.getSharedPreferences(name,Context.MODE_PRIVATE).all.values.joinToString()
+            assertFalse(raw.contains("01020304"));assertFalse(raw.contains("05060708"))
+            recreated.forget(CameraProtocols.FUJI_PHONE,address)
+            assertNull(recreated.loadToken(CameraProtocols.FUJI_PHONE,address))
+            assertArrayEquals(byteArrayOf(5,6,7,8),recreated.loadToken(CameraProtocols.SONY,address))
+        }finally{app.deleteSharedPreferences(name)}
+    }
+
     @Test fun encryptedBookPersistsOnlyChosenProfilesAndNoSaveSurvivesRecreation(){
         guard();val context=ApplicationProvider.getApplicationContext<Context>();val token="qa-book-"+UUID.randomUUID();val settings=SecureSettings(context)
         val book=ConnectionBook(settings,token,legacy={null},clearLegacy={})

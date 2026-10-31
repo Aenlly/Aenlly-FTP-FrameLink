@@ -155,9 +155,10 @@ internal object CameraTimeSource {
 }
 
 internal object CameraProtocols {
-    const val SONY = "sony-ptpip"
-    const val CANON = "canon-ccapi"
-    const val USB = "usb-mtp"
+    const val SONY = app.framelink.camera.support.CameraSupportRegistry.SONY
+    const val CANON = app.framelink.camera.support.CameraSupportRegistry.CANON
+    const val USB = app.framelink.camera.support.CameraSupportRegistry.USB
+    const val FUJI_PHONE = app.framelink.camera.support.CameraSupportRegistry.FUJI_PHONE
 }
 
 internal object CameraConnectionKinds {
@@ -216,6 +217,7 @@ data class ConnectionConfig(
     val usbIdentity: String = "",
     val experimentalFuji: Boolean = false,
     val fujiDeviceName: String = "",
+    val bluetoothAddress: String = "",
 )
 
 data class CameraStatus(

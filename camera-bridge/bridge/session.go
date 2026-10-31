@@ -86,7 +86,8 @@ func decodeConfig(raw string) (connectionConfig, error) {
 	if cfg.Protocol == "" {
 		cfg.Protocol = protocolSony
 	}
-	if cfg.Protocol != protocolSony && cfg.Protocol != protocolCanon && cfg.Protocol != protocolFujiAutoSave {
+	_, registered := networkBackends[cfg.Protocol]
+	if cfg.Protocol != protocolSony && !registered {
 		return cfg, errors.New("当前连接协议尚未适配")
 	}
 	if cfg.Protocol == protocolFujiAutoSave && (!cfg.ExperimentalFuji || !validFujiDeviceName(cfg.FujiDeviceName)) {
@@ -96,10 +97,8 @@ func decodeConfig(raw string) (connectionConfig, error) {
 		return cfg, errors.New("Fuji AutoSave实验通道只接受当前局域网IPv4地址")
 	}
 	if cfg.Port == 0 {
-		if cfg.Protocol == protocolCanon {
-			cfg.Port = 8080
-		} else if cfg.Protocol == protocolFujiAutoSave {
-			cfg.Port = fujiCommandPort
+		if registration, ok := networkBackends[cfg.Protocol]; ok {
+			cfg.Port = registration.defaultPort
 		} else {
 			cfg.Port = 15740
 		}
@@ -141,8 +140,8 @@ func (s *Session) Connect(raw string) (string, error) {
 		}
 	}
 	opts.DialContext = dialer.DialContext
-	if cfg.Protocol == protocolFujiAutoSave {
-		backend, info, err := connectFujiAutoSave(ctx, cfg, dialer.DialContext)
+	if registration, ok := networkBackends[cfg.Protocol]; ok {
+		connected, err := registration.connect(ctx, cfg, dialer.DialContext)
 		if err != nil {
 			cancel()
 			return "", err
@@ -150,28 +149,12 @@ func (s *Session) Connect(raw string) (string, error) {
 		s.mu.Lock()
 		if s.ctx != ctx || ctx.Err() != nil {
 			s.mu.Unlock()
-			backend.Close()
+			connected.backend.Close()
 			return "", errors.New("连接已取消")
 		}
-		s.backend, s.identity = backend, backend.identity
+		s.backend, s.identity = connected.backend, connected.identity
 		s.mu.Unlock()
-		return info, nil
-	}
-	if cfg.Protocol == protocolCanon {
-		backend, info, err := connectCanon(ctx, cfg, dialer.DialContext)
-		if err != nil {
-			cancel()
-			return "", err
-		}
-		s.mu.Lock()
-		if s.ctx != ctx || ctx.Err() != nil {
-			s.mu.Unlock()
-			backend.Close()
-			return "", errors.New("连接已取消")
-		}
-		s.backend, s.identity = backend, backend.identity
-		s.mu.Unlock()
-		return info, nil
+		return connected.info, nil
 	}
 	if cfg.GUID != "" {
 		b, _ := hex.DecodeString(cfg.GUID)

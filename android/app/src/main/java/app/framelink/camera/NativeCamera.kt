@@ -12,18 +12,67 @@ import java.io.File
 import java.net.Inet4Address
 import java.net.InetAddress
 import org.json.JSONObject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.Job
+import app.framelink.camera.support.CameraPairingStore
 
 /** 只为相机socket绑定局域网，云端保持Android默认互联网路径 */
-class NativeCamera internal constructor(private val context: Context,private val usbOpener:UsbCameraOpener) {
+class NativeCamera internal constructor(private val context: Context,private val usbOpener:UsbCameraOpener,
+    private val pairings:CameraPairingStore=SecureCameraPairingStore(SecureSettings(context))) {
     constructor(context:Context):this(context,AndroidUsbCameraOpener(context))
     private class Connection(val session:Session=Bridge.newSession()){
         @Volatile var usb:UsbPhotoSession?=null
         @Volatile var identity=""
-        fun close(){usb?.close();session.close()}
+        @Volatile var fuji:FujiPhoneLink?=null
+        @Volatile var config:ConnectionConfig?=null
+        fun close(){usb?.close();session.close();fuji?.close()}
     }
     private val lock=Any()
     @Volatile private var connection=Connection()
     @Volatile private var boundNetwork:android.net.Network?=null
+    internal val connectionPhase=MutableStateFlow("")
+    internal val fujiDevices=MutableStateFlow<List<FujiNearbyDevice>>(emptyList())
+    private val advertisements=mutableMapOf<String,FujiNearbyDevice>()
+    private var discoveryEpoch=0L
+    private var discoveryJob:Job?=null
+
+    internal suspend fun discoverFuji():List<FujiNearbyDevice>{
+        val owner=currentCoroutineContext()[Job]
+        val ticket=synchronized(lock){
+            advertisements.values.forEach{it.token?.fill(0)};advertisements.clear();fujiDevices.value=emptyList()
+            discoveryJob=owner
+            ++discoveryEpoch
+        }
+        try{
+            val found=FujiPhoneLink.discover(context){publishFujiDevices(ticket,it,false)}
+            publishFujiDevices(ticket,found,true)
+            return found
+        }catch(error:Exception){
+            synchronized(lock){if(discoveryEpoch==ticket){discoveryEpoch++;discoveryJob=null;advertisements.values.forEach{it.token?.fill(0)};advertisements.clear();fujiDevices.value=emptyList()}}
+            throw error
+        }
+    }
+
+    private fun publishFujiDevices(ticket:Long,devices:List<FujiNearbyDevice>,complete:Boolean)=synchronized(lock){
+        if(discoveryEpoch!=ticket)return@synchronized
+        if(complete){discoveryEpoch++;discoveryJob=null}
+        devices.forEach{advertisements[it.address]=it}
+        fujiDevices.value=devices
+    }
+
+    internal fun completedConnection():ConnectionConfig?=current().config
+
+    internal fun rememberFujiPairing(identity:String){
+        val active=current()
+        if(active.identity!=identity)return
+        val address=active.config?.bluetoothAddress?.takeIf{it.isNotBlank()}?:return
+        active.fuji?.tokenToRemember()?.let{token->
+            pairings.saveToken(CameraProtocols.FUJI_PHONE,address,token)
+            token.fill(0)
+        }
+    }
 
     private fun current(photo:Photo?=null):Connection=synchronized(lock){
         val value=connection
@@ -42,12 +91,16 @@ class NativeCamera internal constructor(private val context: Context,private val
     fun usesNetwork(network:android.net.Network)=boundNetwork==network
     internal fun usbTargets()=usbOpener.targets()
 
-    fun connect(config:ConnectionConfig):CameraInfo{
+    fun connect(input:ConnectionConfig):CameraInfo{
+        var config=registeredConnection(input)
         val next=Connection()
         val (previous,ticket)=synchronized(lock){
             val old=connection
             connection=next
             boundNetwork=null
+            connectionPhase.value=""
+            discoveryEpoch++
+            discoveryJob?.cancel();discoveryJob=null
             old to usbOpener.begin()
         }
         previous.close()
@@ -61,13 +114,26 @@ class NativeCamera internal constructor(private val context: Context,private val
                 }
                 reader.info
             }else{
-                val (network,binder)=cameraNetwork(config.host)
+                val link=if(config.protocol==CameraProtocols.FUJI_PHONE&&config.bluetoothAddress.isNotBlank()){
+                    synchronized(lock){
+                        check(connection===next){"连接已取消"}
+                        FujiPhoneLink(context){message->synchronized(lock){if(connection===next)connectionPhase.value=message}}.also{next.fuji=it}
+                    }
+                }else null
+                val (network,binder)=if(link!=null){
+                    val device=synchronized(lock){advertisements[config.bluetoothAddress]}?:FujiNearbyDevice(config.bluetoothAddress,"富士相机",null)
+                    val token=pairings.loadToken(CameraProtocols.FUJI_PHONE,config.bluetoothAddress)?.takeIf{it.size==4}
+                    val result=try{runBlocking{link.connect(device,token)}}finally{token?.fill(0)}
+                    config=config.copy(host=result.second)
+                    result.first to networkBinder(result.first)
+                }else cameraNetwork(config.host)
                 synchronized(lock){check(connection===next){"连接已取消"};boundNetwork=network}
                 next.session.setNetworkBinder(binder)
                 Json.decode<CameraInfo>(next.session.connect(Json.encode(config)))
             }
-            synchronized(lock){check(connection===next){"连接已取消"};next.identity=info.id}
-            return info
+            synchronized(lock){check(connection===next){"连接已取消"};next.identity=info.id;next.config=config;connectionPhase.value=""}
+            val firmware=next.fuji?.firmware.orEmpty()
+            return (if(info.firmware.isBlank()&&firmware.isNotBlank())info.copy(firmware=firmware)else info).withSupport(config.protocol)
         }catch(error:Exception){next.close();throw error}
     }
 
@@ -99,15 +165,15 @@ class NativeCamera internal constructor(private val context: Context,private val
                     }
                 }
         }
-        val binder=network?.let{
+        return network to network?.let(::networkBinder)
+    }
+
+    private fun networkBinder(network:android.net.Network):NetworkBinder=
             object:NetworkBinder{
                 override fun bindSocket(fd:Long){
-                    ParcelFileDescriptor.fromFd(fd.toInt()).use{copy->it.bindSocket(copy.fileDescriptor)}
+                    ParcelFileDescriptor.fromFd(fd.toInt()).use{copy->network.bindSocket(copy.fileDescriptor)}
                 }
             }
-        }
-        return network to binder
-    }
 
     fun page(slot:Int,cursor:Long):CameraPage=current().let{
         it.usb?.page(slot,"",cursor)?:Json.decode(it.session.listPage(slot.toLong(),cursor))
@@ -143,6 +209,10 @@ class NativeCamera internal constructor(private val context: Context,private val
             val old=connection
             connection=Connection()
             boundNetwork=null
+            connectionPhase.value=""
+            discoveryEpoch++
+            discoveryJob?.cancel();discoveryJob=null
+            advertisements.values.forEach{it.token?.fill(0)};advertisements.clear();fujiDevices.value=emptyList()
             usbOpener.begin()
             old
         }

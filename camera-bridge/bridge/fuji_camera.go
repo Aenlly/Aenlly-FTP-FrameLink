@@ -49,6 +49,29 @@ type fujiCamera struct {
 	photos    []fujiPhoto
 	indexed   bool
 	pagingDay string
+	mode      fujiMediaMode
+}
+
+type fujiMediaMode uint8
+
+const (
+	fujiAutoSaveMedia fujiMediaMode = iota
+	fujiClassicPhoneMedia
+	fujiXAppPhoneMedia
+)
+
+func (c *fujiCamera) mediaState(state int) bool {
+	if c.mode == fujiAutoSaveMedia {
+		return state == 3
+	}
+	return state == 2 || state == 6
+}
+
+func (c *fujiCamera) mediaScope() string {
+	if c.mode == fujiAutoSaveMedia {
+		return "AUTOSAVE_PENDING_BATCH"
+	}
+	return "FUJI_PHONE_EXPOSED_MEDIA"
 }
 
 func connectFujiAutoSave(parent context.Context, cfg connectionConfig, dial func(context.Context, string, string) (net.Conn, error)) (*fujiCamera, string, error) {
@@ -190,7 +213,7 @@ func (c *fujiCamera) watch() {
 				c.indexed = false
 			}
 			c.op.Unlock()
-			if err != nil || state != 3 {
+			if err != nil || !c.mediaState(state) {
 				c.Close()
 				return
 			}
@@ -258,14 +281,19 @@ func (c *fujiCamera) object(ctx context.Context, handle uint32) (fujiObject, err
 	return fujiObject{handle: handle, storage: storage, parent: parent, name: name, captured: captured, modified: modified, size: size, format: format}, nil
 }
 
-func (c *fujiCamera) snapshot(ctx context.Context) error {
+func (c *fujiCamera) snapshot(ctx context.Context) (err error) {
 	state, count, err := c.events(ctx)
 	if err != nil {
 		return err
 	}
-	if state != 3 || count < 0 {
-		return errors.New("AutoSave批次已结束，请在机身重新发起")
+	if !c.mediaState(state) || count < 0 {
+		return errors.New("富士媒体会话已结束，请在机身重新允许访问")
 	}
+	restore, err := c.originalSize(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, restore()) }()
 	groups := map[string]int{}
 	var photos []fujiPhoto
 	for handle := 1; handle <= count; handle++ {
@@ -398,10 +426,10 @@ func (c *fujiCamera) ListNewestPage(slot int, day string, offset int64) (string,
 	if until == int64(len(photos)) {
 		next = 0
 	}
-	return marshal(map[string]any{"items": rows, "nextCursor": next, "totalCount": len(photos), "mediaScope": "AUTOSAVE_PENDING_BATCH"})
+	return marshal(map[string]any{"items": rows, "nextCursor": next, "totalCount": len(photos), "mediaScope": c.mediaScope()})
 }
 
-func (c *fujiCamera) Download(raw, target string, progress Progress) (string, error) {
+func (c *fujiCamera) Download(raw, target string, progress Progress) (result string, err error) {
 	var req downloadRequest
 	if err := json.Unmarshal([]byte(raw), &req); err != nil {
 		return "", err
@@ -423,6 +451,18 @@ func (c *fujiCamera) Download(raw, target string, progress Progress) (string, er
 	}
 	ctx, stop := context.WithTimeout(c.ctx, 5*time.Minute)
 	defer stop()
+	restore, err := c.originalSize(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if restore != nil {
+			err = errors.Join(err, restore())
+			if err != nil {
+				result = ""
+			}
+		}
+	}()
 	before, err := c.object(ctx, selected.handle)
 	if err != nil {
 		return "", err
@@ -477,6 +517,11 @@ func (c *fujiCamera) Download(raw, target string, progress Progress) (string, er
 	if after != before {
 		return "", errors.New("AutoSave原片在接收时变化，未发布文件")
 	}
+	if err = restore(); err != nil {
+		restore = nil
+		return "", err
+	}
+	restore = nil
 	if err = ctx.Err(); err != nil {
 		return "", err
 	}
@@ -493,6 +538,31 @@ func (c *fujiCamera) Download(raw, target string, progress Progress) (string, er
 		return "", err
 	}
 	return marshal(map[string]any{"path": target, "size": done, "sha256": hex.EncodeToString(hash.Sum(nil))})
+}
+
+// 手机副本的传输尺寸必须明确请求原始字节，不能把缩放后的JPEG作为原片发布
+func (c *fujiCamera) originalSize(ctx context.Context) (func() error, error) {
+	if c.mode == fujiAutoSaveMedia {
+		return func() error { return nil }, nil
+	}
+	if c.mode == fujiXAppPhoneMedia {
+		if err := c.wire.set16(ctx, 0xd226, 2); err != nil {
+			return nil, err
+		}
+		return func() error { return nil }, nil
+	}
+	if err := c.wire.set16(ctx, fujiCorrectFileSize, 1); err != nil {
+		return nil, err
+	}
+	return func() error {
+		cleanup, stop := context.WithTimeout(c.ctx, 3*time.Second)
+		defer stop()
+		if err := c.wire.set16(cleanup, fujiCorrectFileSize, 0); err != nil {
+			c.Close()
+			return err
+		}
+		return nil
+	}, nil
 }
 
 // AutoSave is media-only. No preview call may silently fetch a full RAF.

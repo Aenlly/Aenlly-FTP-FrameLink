@@ -10,6 +10,15 @@ import java.net.InetAddress
 
 /** 在相机Wi-Fi中发现Sony设备，不改变应用默认互联网网络 */
 object CameraDiscovery {
+    /** 热点网关仅作为候选，连接成功仍须由富士协议确认机身身份 */
+    fun phoneGateways(context:Context):List<String>{
+        val manager=context.getSystemService(ConnectivityManager::class.java)
+        return manager.allNetworks.filter{manager.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)==true}
+            .flatMap{manager.getLinkProperties(it)?.routes.orEmpty()}
+            .mapNotNull{it.gateway as? java.net.Inet4Address}.filter{!it.isAnyLocalAddress&&!it.isLoopbackAddress}
+            .mapNotNull{it.hostAddress}.distinct()
+    }
+
     fun discover(context: Context): List<String> {
         val manager = context.getSystemService(ConnectivityManager::class.java)
         val networks =

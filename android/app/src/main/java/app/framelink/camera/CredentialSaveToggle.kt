@@ -15,11 +15,11 @@ import androidx.compose.ui.unit.sp
 
 /** 整行可点选，账号与密码保存由用户明确选择 */
 @Composable
-internal fun CredentialSaveToggle(checked:Boolean,onChange:(Boolean)->Unit,enabled:Boolean=true){
+internal fun CredentialSaveToggle(checked:Boolean,onChange:(Boolean)->Unit,enabled:Boolean=true,label:String="保存此连接的账号和密码"){
     Row(Modifier.fillMaxWidth().heightIn(min=44.dp).toggleable(checked,enabled=enabled,role=Role.Checkbox,onValueChange=onChange)
-        .semantics{contentDescription="保存此连接的账号和密码"},verticalAlignment=Alignment.CenterVertically){
+        .semantics{contentDescription=label},verticalAlignment=Alignment.CenterVertically){
         Checkbox(checked,null,enabled=enabled)
         Spacer(Modifier.width(8.dp))
-        Text("保存此连接的账号和密码",fontSize=13.sp)
+        Text(label,fontSize=13.sp)
     }
 }

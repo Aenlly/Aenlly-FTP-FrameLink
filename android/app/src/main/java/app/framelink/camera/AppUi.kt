@@ -982,7 +982,7 @@ private fun Gallery(
                 Column(Modifier.weight(1f)){
                     Text(if(selecting)"选择照片" else "图库",fontSize=26.sp,fontWeight=FontWeight.SemiBold,color=Ink)
                     Text(if(selecting)"本次已选 "+selection.size+" 张 · "+photos.count{it.id in selectionSet}+" 张在当前范围"
-                        else if(source=="local")"原片保存在手机" else camera.info?.displayName()?.plus(" · 已连接")?:"相机未连接",
+                        else if(source=="local")"原片保存在手机" else camera.info?.let{it.displayName()+" · "+(it.mediaScopeTitle()?:"已连接")}?:"相机未连接",
                         modifier=Modifier.testTag("gallery-selection-count"),fontSize=12.sp,color=Muted,maxLines=1,overflow=TextOverflow.Ellipsis)
                 }
                 TextButton(onClick={onSelecting(!selecting)},modifier=Modifier.semantics{contentDescription=if(selecting)"完成选择" else "选择照片"}){
@@ -1318,8 +1318,10 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
     val keyboard = LocalSoftwareKeyboardController.current
     val saved = remember { runtime.savedConnection() }
     var protocol by rememberSaveable { mutableStateOf(saved.protocol) }
+    val adapter=runCatching{app.framelink.camera.support.CameraSupportRegistry.standard().requireProtocol(protocol)}.getOrNull()
     var port by rememberSaveable { mutableStateOf(saved.port.toString()) }
     var host by rememberSaveable { mutableStateOf(saved.host) }
+    var fujiAddress by rememberSaveable { mutableStateOf(saved.bluetoothAddress) }
     var profiles by remember{mutableStateOf(runCatching{runtime.connections.entries()}.getOrDefault(emptyList()))}
     var selectedProfile by rememberSaveable{mutableStateOf(profiles.firstOrNull{it.config==saved}?.id.orEmpty())}
     val selected=profiles.firstOrNull{it.id==selectedProfile&&it.config.host==host&&it.config.port.toString()==port&&it.config.protocol==protocol}?.config
@@ -1330,13 +1332,38 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
     var authenticate by rememberSaveable { mutableStateOf(saved.host.isBlank() || saved.user.isNotBlank()||runtime.cameraRequiresCredentials()) }
     var rememberCredentials by rememberSaveable{mutableStateOf(selected!=null)}
     var fingerprint by rememberSaveable{mutableStateOf(selected?.fingerprint.orEmpty())}
+    var validationError by remember{mutableStateOf("")}
     val credentialReset by runtime.cameraCredentialReset.collectAsStateWithLifecycle()
     LaunchedEffect(credentialReset){if(credentialReset>0){user="";password="";rememberCredentials=false;selectedProfile="";fingerprint="";runtime.cameraCredentialReset.value=0}}
-    fun endpointChanged(){selectedProfile="";user="";password="";fingerprint="";rememberCredentials=false}
+    fun endpointChanged(){selectedProfile="";user="";password="";fingerprint="";rememberCredentials=false;fujiAddress="";validationError=""}
     var submitted by remember { mutableStateOf(false) }
     val status by runtime.camera.collectAsStateWithLifecycle()
     val identityPrompt by runtime.cameraIdentityPrompt.collectAsStateWithLifecycle()
     var scanning by remember { mutableStateOf(false) }
+    val fujiDevices by runtime.native.fujiDevices.collectAsStateWithLifecycle()
+    var fujiScanMessage by remember { mutableStateOf("") }
+    var fujiScanJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val fujiPermissionNames=remember{buildList{
+        if(Build.VERSION.SDK_INT>=31){add(Manifest.permission.BLUETOOTH_SCAN);add(Manifest.permission.BLUETOOTH_CONNECT)}
+        else add(Manifest.permission.ACCESS_FINE_LOCATION)
+        if(Build.VERSION.SDK_INT>=33)add(Manifest.permission.NEARBY_WIFI_DEVICES)
+    }}
+    val connectionPhase by runtime.native.connectionPhase.collectAsStateWithLifecycle()
+    fun scanFuji(){
+        scanning=true;fujiScanMessage="正在查找附近的富士相机"
+        fujiScanJob=scope.launch{
+            try{
+                val found=runtime.native.discoverFuji()
+                fujiScanMessage=if(found.isEmpty())"未发现机身，请确认相机蓝牙开启后重试"else"已找到 ${found.size} 台相机"
+            }catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}
+            catch(error:Exception){fujiScanMessage=error.message?:"蓝牙扫描未完成"}
+            finally{scanning=false}
+        }
+    }
+    val fujiPermissions=rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){
+        if(fujiPermissionNames.all{permission->androidx.core.content.ContextCompat.checkSelfPermission(context,permission)==android.content.pm.PackageManager.PERMISSION_GRANTED})scanFuji()
+        else runtime.notice.value="需要附近设备权限才能配对相机并交接Wi-Fi"
+    }
     var found by remember { mutableStateOf<List<String>>(emptyList()) }
     var usbDevices by remember { mutableStateOf<List<UsbCameraTarget>>(emptyList()) }
     LaunchedEffect(protocol){
@@ -1355,17 +1382,21 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
     }
     ModalSheet("连接相机", ::closeConnection, footer = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if(validationError.isNotBlank())Text(validationError,color=MaterialTheme.colorScheme.error,fontSize=13.sp)
             if (!submitted && initialFailure.isNotBlank()) Text("未能直接重连：$initialFailure", color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
             if (submitted && status.info == null && identityPrompt == null) {
-                Text(status.message, color = if (status.connecting) Brand else MaterialTheme.colorScheme.error, fontSize = 13.sp)
+                Text(if(status.connecting&&connectionPhase.isNotBlank())connectionPhase else status.message, color = if (status.connecting) Brand else MaterialTheme.colorScheme.error, fontSize = 13.sp)
             }
             Button(
-                onClick = {
+                onClick = connect@{
                     keyboard?.hide()
+                    val config=try{registeredConnection(ConnectionConfig(host = host.trim(), port=if(protocol==CameraProtocols.USB)0 else port.toIntOrNull()?:0, user = if (adapter?.accessCredentials==true&&authenticate) user.trim() else "", password = if (adapter?.accessCredentials==true&&authenticate) password else "",protocol=protocol,fingerprint=fingerprint,bluetoothAddress=if(protocol==CameraProtocols.FUJI_PHONE)fujiAddress else""))}
+                    catch(error:IllegalArgumentException){validationError=error.message?:"连接配置无效";return@connect}
+                    validationError=""
                     submitted = true
-                    runtime.connect(ConnectionConfig(host = host.trim(), port=if(protocol==CameraProtocols.USB)0 else port.toIntOrNull()?:0, user = if (protocol!=CameraProtocols.USB&&authenticate) user.trim() else "", password = if (protocol!=CameraProtocols.USB&&authenticate) password else "",protocol=protocol,fingerprint=fingerprint),rememberCredentials=rememberCredentials)
+                    runtime.connect(config,rememberCredentials=rememberCredentials)
                 },
-                enabled = (if(protocol==CameraProtocols.USB)usbDevices.any{it.key==host}else host.isNotBlank() && (port.toIntOrNull()?:0) in 1..65535 && (!authenticate || (user.isNotBlank() && password.isNotBlank()))) && !status.connecting && identityPrompt == null,
+                enabled = adapter!=null && (if(protocol==CameraProtocols.USB)usbDevices.any{it.key==host}else (host.isNotBlank()||protocol==CameraProtocols.FUJI_PHONE&&fujiAddress.isNotBlank()) && (port.toIntOrNull()?:0) in 1..65535 && (adapter.accessCredentials!=true || !authenticate || (user.isNotBlank() && password.isNotBlank()))) && !status.connecting && identityPrompt == null,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("camera-connect-action"),
                 shape = UiTokens.control,
                 colors = ButtonDefaults.buttonColors(containerColor = Brand),
@@ -1380,19 +1411,23 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
         if(profiles.isNotEmpty())Panel{
             Text("已保存的连接",fontSize=13.sp)
             profiles.forEach{record->Row(verticalAlignment=Alignment.CenterVertically){
-                TextButton(enabled=!status.connecting&&identityPrompt==null,onClick={val value=record.config;protocol=value.protocol;host=value.host;port=value.port.toString();user=value.user;password=value.password;fingerprint=value.fingerprint;authenticate=value.user.isNotBlank();selectedProfile=record.id;rememberCredentials=true},modifier=Modifier.weight(1f)){
+                TextButton(enabled=!status.connecting&&identityPrompt==null,onClick={val value=record.config;protocol=value.protocol;host=value.host;fujiAddress=value.bluetoothAddress;port=value.port.toString();user=value.user;password=value.password;fingerprint=value.fingerprint;authenticate=value.user.isNotBlank();selectedProfile=record.id;rememberCredentials=true},modifier=Modifier.weight(1f)){
                     Text(record.config.host+":"+record.config.port+" · "+record.config.user, maxLines=1,overflow=TextOverflow.Ellipsis)
                 }
                 IconButton(enabled=!status.connecting&&identityPrompt==null,onClick={runtime.connections.forget(record.id);profiles=runtime.connections.entries();if(selectedProfile==record.id){selectedProfile="";user="";password="";fingerprint="";rememberCredentials=false}}){Icon(Icons.Outlined.Close,"忘记连接 "+record.config.host)}
             }}
         }
         FlowRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            listOf(CameraProtocols.SONY to "Sony 网络",CameraProtocols.CANON to "佳能 CCAPI",CameraProtocols.USB to "USB读卡").forEach{(value,title)->
+            app.framelink.camera.support.CameraSupportRegistry.standard().connectionOptions().forEach{adapter->
+                val value=adapter.id
+                val title=adapter.title
                 FilterChip(selected=protocol==value,onClick={
                     if(protocol!=value){
+                        fujiScanJob?.cancel();fujiScanMessage=""
                         protocol=value
-                        port=if(value==saved.protocol)saved.port.toString()else if(value==CameraProtocols.CANON)"8080"else"15740"
+                        port=if(value==saved.protocol)saved.port.toString()else adapter.defaultPort.toString()
                         host=if(value==saved.protocol)saved.host else""
+                        fujiAddress=if(value==saved.protocol)saved.bluetoothAddress else""
                         user="";password="";fingerprint="";selectedProfile="";rememberCredentials=false
                         authenticate=value==CameraProtocols.SONY
                         found=emptyList()
@@ -1408,15 +1443,25 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
             }
             Info("连接时请允许系统USB访问提示。首次连接及目标机型兼容性仍需真机核对。")
         }else{
-        Info(if(protocol==CameraProtocols.CANON)"CCAPI测试适配 · 先在机身启用CCAPI，再将手机和相机连到同一网络。功能由机身实际公布的端点决定，目标机型仍待实测。"else"Sony 网络浏览与遥控 · 同一Wi-Fi或相机热点。其他具备FTP上传功能的相机可使用首页“FTP接收”。")
+        Info(adapter?.connectionHint()?:"此连接的协议尚未适配，请先选择连接方式")
+        if(protocol==CameraProtocols.FUJI_PHONE){
+            OutlinedButton(onClick={
+                if(fujiPermissionNames.all{androidx.core.content.ContextCompat.checkSelfPermission(context,it)==android.content.pm.PackageManager.PERMISSION_GRANTED})scanFuji()
+                else fujiPermissions.launch(fujiPermissionNames.toTypedArray())
+            },enabled=!scanning&&!status.connecting){Text(if(scanning)"正在寻找相机…"else"蓝牙发现相机")}
+            if(fujiScanMessage.isNotBlank())Text(if(scanning&&fujiDevices.isNotEmpty())"已找到 ${fujiDevices.size} 台相机"else fujiScanMessage,fontSize=12.sp,color=Muted)
+            fujiDevices.forEach{device->FilterChip(selected=fujiAddress==device.address,onClick={endpointChanged();fujiAddress=device.address},label={Text(device.name)},enabled=!status.connecting,
+                modifier=Modifier.semantics{contentDescription="富士相机 "+device.name})}
+            if(fujiAddress.isNotBlank())Text("已选择蓝牙相机 · 连接时由系统确认Wi-Fi",fontSize=12.sp,color=Brand)
+        }
         Panel {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.CameraAlt, null, tint = Brand, modifier = Modifier.size(22.dp))
-                Text(if(protocol==CameraProtocols.CANON)"启用机身CCAPI"else"开启电脑遥控与访问身份验证", Modifier.weight(1f).padding(start = 10.dp), fontSize = 13.sp)
+                Text(adapter?.preparationTitle()?:"选择连接方式", Modifier.weight(1f).padding(start = 10.dp), fontSize = 13.sp)
                 TextButton(onClick = { showPreparation = !showPreparation }) { Text(if (showPreparation) "收起" else "设置步骤", fontSize = 12.sp) }
             }
             androidx.compose.animation.AnimatedVisibility(showPreparation) {
-                Info(if(protocol==CameraProtocols.CANON)"① 按Canon官方说明确认机型、固件和CCAPI启用条件\n② 在机身CCAPI连接设置读取HTTP地址及端口\n③ 填写地址；机身设置了HTTP认证时，再启用下方账号密码\n首次启用可能需要Canon官方工具；已启用后可直接连接。"else"① 网络 → 连接/电脑遥控 → 电脑遥控 → 开\n② 网络 → 网络选项 → 访问身份验证信息\n③ 首次填写相机地址、用户名和密码，指纹自动读取后确认\n连接前请断开其他控制App的相机会话。")
+                Info(adapter?.preparationSteps()?:"请从上方选择已适配的相机连接方式")
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -1449,8 +1494,13 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
             ) {
                 Text(if (scanning) "发现中…" else "发现相机", fontSize = 10.sp)
             }
+            if(adapter?.discovery==app.framelink.camera.support.CameraSupportRegistry.Discovery.WIFI_GATEWAY)OutlinedButton(onClick={
+                found=CameraDiscovery.phoneGateways(context)
+                if(found.size==1){endpointChanged();host=found.single()}
+                if(found.isEmpty())runtime.notice.value="未读取到热点地址，请先将手机Wi-Fi连接到相机"
+            },enabled=!status.connecting){Text("读取热点地址",fontSize=10.sp)}
         }
-        if(protocol==CameraProtocols.SONY)found.forEach { address ->
+        found.forEach { address ->
             AssistChip(onClick = { endpointChanged();host = address }, label = { Text(address) })
         }
         OutlinedTextField(
@@ -1467,7 +1517,7 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
         OutlinedTextField(port,{endpointChanged();port=it.filter(Char::isDigit).take(5)},label={Text("相机端口")},singleLine=true,
             enabled=!status.connecting&&identityPrompt==null,
             keyboardOptions=KeyboardOptions(keyboardType=androidx.compose.ui.text.input.KeyboardType.Number),modifier=Modifier.fillMaxWidth())
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if(adapter?.accessCredentials==true)Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("使用相机访问身份验证", Modifier.weight(1f), fontSize = 13.sp)
             Switch(
                 checked = authenticate,
@@ -1476,7 +1526,7 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
                 modifier = Modifier.semantics { contentDescription = "使用相机访问身份验证" },
             )
         }
-        if (authenticate) {
+        if (authenticate&&adapter?.accessCredentials==true) {
             CompositionLocalProvider(androidx.compose.runtime.saveable.LocalSaveableStateRegistry provides null){
             OutlinedTextField(
                 user,
@@ -1507,8 +1557,8 @@ private fun ConnectionSheet(runtime: CameraRuntime, initialFailure: String = "",
         CredentialSaveToggle(rememberCredentials,{checked->
             rememberCredentials=checked
             if(!checked&&selectedProfile.isNotBlank()){runtime.connections.forget(selectedProfile);selectedProfile="";profiles=runtime.connections.entries()}
-        },enabled=!status.connecting&&identityPrompt==null)
-        Info(if(rememberCredentials)"成功连接后加密保存在本机，可从已保存连接切换或忘记。"else"账号密码仅用于本次连接，不保存在本机。")
+        },enabled=!status.connecting&&identityPrompt==null,label=if(adapter?.accessCredentials==true)"保存此连接的账号和密码"else if(fujiAddress.isNotBlank())"保存此相机的配对信息"else"加入已保存连接")
+        if(adapter?.accessCredentials==true)Info(if(rememberCredentials)"成功连接后加密保存在本机，可从已保存连接切换或忘记。"else"账号密码仅用于本次连接，不保存在本机。")
         }
     }
     identityPrompt?.let { prompt ->

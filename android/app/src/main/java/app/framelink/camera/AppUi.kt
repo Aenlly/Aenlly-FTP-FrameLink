@@ -2631,11 +2631,12 @@ private fun PhotoViewer(
                     if (model.isBlank() && viewerFailure.isBlank()) Info("等待预览")
                     else if (model.isNotBlank())
                         key(retryKey){
-                            HorizontalPager(state=pager,userScrollEnabled=scale<=1.01f,modifier=Modifier.fillMaxSize().testTag("photo-viewer-pager")){page->
+                            HorizontalPager(state=pager,key={neighbors[it].selectionResourceKey()},userScrollEnabled=scale<=1.01f,modifier=Modifier.fillMaxSize().testTag("photo-viewer-pager")){page->
                                 val pagePhoto=neighbors[page]
                                 val active=pagePhoto.id==photo.id
-                                AsyncImage(model=ImageRequest.Builder(context).data(if(active)model else pagePhoto.displayUri)
-                                    .size(if(active)4096 else 1280,if(active)4096 else 1280).precision(coil.size.Precision.INEXACT).build(),contentDescription=pagePhoto.name,contentScale=ContentScale.Fit,
+                                val pageModel=if(active)model else runtime.cachedOriginalPreview(pagePhoto)?:pagePhoto.displayUri
+                                RetainedPhotoImage(resourceKey=pagePhoto.selectionResourceKey(),model=pageModel,
+                                    fullSize=active,description=pagePhoto.name,
                                     modifier=Modifier.fillMaxSize().onSizeChanged{if(active)imageViewport=it}
                                         .drawWithContent{
                                             withTransform({translate(if(active)pan.x else 0f,if(active)pan.y else 0f);scale(if(active)scale else 1f,if(active)scale else 1f,center)}){
@@ -2655,14 +2656,14 @@ private fun PhotoViewer(
                                                 }
                                             })
                                         },
-                                    onLoading={if(active){viewerLoading=true;viewerFailure=""}},
+                                    onLoading={retained->if(active){viewerLoading=!retained;viewerFailure=""}},
                                     onSuccess={
                                         val bounds=IntSize(it.result.drawable.intrinsicWidth,it.result.drawable.intrinsicHeight)
                                         decodedSizes[pagePhoto.id]=bounds
-                                        readyModels[pagePhoto.id]=if(active)model else pagePhoto.displayUri
+                                        readyModels[pagePhoto.id]=pageModel
                                         if(active){viewerLoading=false;viewerFailure="";imageBounds=bounds}
                                     },
-                                    onError={if(active){viewerLoading=false;viewerFailure=if(photo.imported)"此格式暂不能显示，原文件仍可在文件信息中查看。" else "预览暂不能显示，请检查连接后重试。"}})
+                                    onError={retained->if(active){viewerLoading=false;viewerFailure=if(retained)""else if(photo.imported)"此格式暂不能显示，原文件仍可在文件信息中查看。" else "预览暂不能显示，请检查连接后重试。"}})
                             }
                         }
                     if((original!=null||fullPreviewPath.isNotBlank())&&scale>1.15f&&!pager.isScrollInProgress)

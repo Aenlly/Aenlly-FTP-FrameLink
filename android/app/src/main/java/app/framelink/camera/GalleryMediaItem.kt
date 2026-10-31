@@ -56,7 +56,7 @@ internal fun GalleryMediaItem(runtime: CameraRuntime, group: List<Photo>, select
             if(group.size>1||photo.files().any{it.raw})Surface(Modifier.align(Alignment.TopStart).padding(5.dp),color=Color.Black.copy(alpha=.52f),shape=RoundedCornerShape(5.dp)) {
                 Text(if(group.size>1) "${photo.formatTitle()} · 连拍 ${group.size}" else photo.formatTitle(),color=Color.White,fontSize=8.sp,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(horizontal=5.dp,vertical=3.dp))
             }
-            if(!list&&selecting) Select(Modifier.align(Alignment.BottomEnd))
+            if(!list&&(selecting||complete||partial)) Select(Modifier.align(Alignment.BottomEnd))
         }
     }
     if(list) {
@@ -68,7 +68,7 @@ internal fun GalleryMediaItem(runtime: CameraRuntime, group: List<Photo>, select
                 Text(photo.importTitle(),fontSize=11.sp,color=Muted,maxLines=2,overflow=TextOverflow.Ellipsis)
                 Text(photo.files().joinToString(" / "){it.name},fontSize=10.sp,color=Muted,maxLines=1,overflow=TextOverflow.Ellipsis)
             }
-            if(selecting)Select()
+            if(selecting||complete||partial)Select()
         }
     } else {
         Box(base.background(if(selecting&&complete)SelectionAccent.copy(alpha=.15f)else Color.Transparent,shape).then(if(previewing&&!selecting)Modifier.border(2.dp,SelectionAccent,shape)else Modifier)) {

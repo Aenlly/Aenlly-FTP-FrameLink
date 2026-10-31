@@ -45,6 +45,9 @@ class GalleryInteractionAcceptanceTest {
             compose.waitForIdle()
             compose.onNodeWithContentDescription("选择当前照片").performClick()
             compose.onNodeWithContentDescription("关闭照片").performClick()
+            // 普通浏览也必须显示大图里刚选中的照片，不能先进入选择模式才能看见
+            checkbox(photos[1]).assertIsDisplayed().assertIsOn()
+            checkbox(photos[0]).assertDoesNotExist()
             enterGallerySelection(compose)
             checkbox(photos[1]).assertIsOn()
             checkbox(photos[0]).assertIsOff()
@@ -67,6 +70,7 @@ class GalleryInteractionAcceptanceTest {
             compose.onNodeWithTag("photo-viewer-pager").performTouchInput { swipeRight() }
             compose.waitUntil(10000){compose.onNodeWithContentDescription("选择当前照片").fetchSemanticsNode().config[SemanticsProperties.ToggleableState]==androidx.compose.ui.state.ToggleableState.On}
             compose.onNodeWithContentDescription("关闭照片").performClick()
+            checkbox(photos[0]).assertIsDisplayed().assertIsOn()
             enterGallerySelection(compose)
             checkbox(photos[0]).assertIsOn()
             assertEquals(1,selectedCount())
@@ -83,6 +87,27 @@ class GalleryInteractionAcceptanceTest {
             checkbox(photos[0]).assertIsOff()
             assertEquals(PhotoMark.PICKED.name, runBlocking { runtime.database.photos().find(photos[0].id)!!.mark })
         } finally { cleanup() }
+    }
+
+    @Test
+    fun browseModeKeepsSelectionVisibleInGridAndListWithoutSelectingOtherPhotos(){
+        try{
+            val photos=seed(2)
+            gallery()
+            compose.onNodeWithContentDescription("查看 ${photos[0].name}").performClick()
+            compose.onNodeWithContentDescription("选择当前照片").performClick()
+            compose.onNodeWithContentDescription("关闭照片").performClick()
+            checkbox(photos[0]).assertIsDisplayed().assertIsOn()
+            checkbox(photos[1]).assertDoesNotExist()
+            compose.onNodeWithContentDescription("显示方式").performClick()
+            compose.onNodeWithText("列表",substring=false).performClick()
+            checkbox(photos[0]).assertIsDisplayed().assertIsOn()
+            checkbox(photos[1]).assertDoesNotExist()
+            checkbox(photos[0]).performClick()
+            checkbox(photos[0]).assertDoesNotExist()
+            compose.onNodeWithContentDescription("查看 ${photos[0].name}").performClick()
+            compose.onNodeWithContentDescription("选择当前照片").assertIsOff()
+        }finally{cleanup()}
     }
 
     @Test

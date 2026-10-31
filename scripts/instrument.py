@@ -29,6 +29,12 @@ classes['fuji-autosave']=prefix+'FujiAutoSaveAcceptanceTest'
 classes['protocol-targeted']=','.join(classes[key] for key in ['fuji-autosave','usb-workflow','native'])
 classes['creative-look']=prefix+'CreativeLookAcceptanceTest'
 classes['exif']=prefix+'PhotoExifAcceptanceTest'
+classes['gallery-transitions']=','.join([
+    prefix+'RetainedPhotoImageAcceptanceTest',
+    prefix+'GalleryInteractionAcceptanceTest#filmstripSelectionDoesNotReturnToThePreviousPagerPhoto',
+    prefix+'GalleryInteractionAcceptanceTest#viewerAndGridUseOneSelectionAndLegacyMarksDoNotSelectPhotos',
+    prefix+'GalleryInteractionAcceptanceTest#browseModeKeepsSelectionVisibleInGridAndListWithoutSelectingOtherPhotos',
+])
 classes['foundations']=','.join(prefix+x for x in ['ConnectionAndHistoryAcceptanceTest','ConnectionHistoryUiAcceptanceTest'])
 classes['live-direction']=prefix+'LiveDeviceOrientationAcceptanceTest'
 classes['all']+=','+classes['canon']+','+classes['usb']

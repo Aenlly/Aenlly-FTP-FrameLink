@@ -30,11 +30,12 @@ internal fun RetainedPhotoImage(
     var highResolution by remember(resourceKey){mutableStateOf(fullSize)}
     SideEffect{if(fullSize)highResolution=true}
     val edge=if(fullSize||highResolution)4096 else 1280
-    val request=remember(context,model,edge){
+    val request=remember(context,resourceKey,model,edge){
         ImageRequest.Builder(context).data(model).size(edge,edge)
+            .memoryCacheKey("viewer:$resourceKey:$model:$edge")
             .precision(coil.size.Precision.INEXACT).crossfade(false).build()
     }
-    AsyncImage(
+    key(resourceKey){AsyncImage(
         model=request,imageLoader=imageLoader,contentDescription=description,
         contentScale=ContentScale.Fit,modifier=modifier,
         transform={state->when(state){
@@ -48,5 +49,5 @@ internal fun RetainedPhotoImage(
             is AsyncImagePainter.State.Error->onError(retained!=null)
             else->Unit
         }},
-    )
+    )}
 }

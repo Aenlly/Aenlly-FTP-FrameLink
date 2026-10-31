@@ -34,6 +34,22 @@ class GalleryInteractionAcceptanceTest {
     private var touchOrigin = Offset.Zero
     private var lastTouch = Offset.Zero
 
+    @Test fun swipingToAnotherPhotoKeepsDoubleTapZoomBoundToTheVisiblePage(){
+        try{
+            val photos=seed(3)
+            gallery()
+            compose.onNodeWithContentDescription("查看 ${photos[0].name}").performClick()
+            compose.onNodeWithTag("photo-viewer-pager").performTouchInput{swipeLeft()}
+            compose.waitUntil(10000){compose.onAllNodes(hasText(photos[1].displayTitle(),substring=true)and hasAnyAncestor(hasTestTag("fullscreen-scene"))).fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithTag("photo-viewer-pager").performTouchInput{doubleClick(center)}
+            compose.onNodeWithText("还原",substring=false).assertIsDisplayed().performClick()
+            compose.onNodeWithTag("photo-viewer-pager").performTouchInput{swipeRight()}
+            compose.waitUntil(10000){compose.onAllNodes(hasText(photos[0].displayTitle(),substring=true)and hasAnyAncestor(hasTestTag("fullscreen-scene"))).fetchSemanticsNodes().isNotEmpty()}
+            compose.onNodeWithTag("photo-viewer-pager").performTouchInput{doubleClick(center)}
+            compose.onNodeWithText("还原",substring=false).assertIsDisplayed()
+        }finally{cleanup()}
+    }
+
     @Test
     fun filmstripSelectionDoesNotReturnToThePreviousPagerPhoto(){
         try{

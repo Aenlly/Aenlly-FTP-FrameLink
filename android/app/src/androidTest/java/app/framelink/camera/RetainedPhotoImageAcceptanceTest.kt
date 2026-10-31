@@ -61,7 +61,7 @@ class RetainedPhotoImageAcceptanceTest{
                 }
             }
             compose.waitUntil(10000){successes==1}
-            compose.runOnIdle{loadingWithImage=null;full=true;if(changeResource)resource="second"}
+            compose.runOnIdle{loadingWithImage=null;if(changeResource)resource="second"else full=true}
             compose.waitUntil(10000){calls.get()>1&&loadingWithImage!=null}
             compose.runOnIdle{assertEquals(!changeResource,loadingWithImage)}
             val pixels=compose.onNodeWithTag("retained-image").captureToImage().toPixelMap()

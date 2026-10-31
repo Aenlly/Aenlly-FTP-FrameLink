@@ -13,7 +13,7 @@ import subprocess
 root = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--device', help='专用测试模拟器的UDID')
-parser.add_argument('--suite', choices=['full', 'boundaries', 'index'], default='full', help='boundaries检查4项既有边界；index只检查合成分页图库')
+parser.add_argument('--suite', choices=['full', 'boundaries', 'index', 'gallery-window'], default='full', help='boundaries检查4项既有边界；index检查合成分页；gallery-window仅检查图库与大图受影响UI')
 args = parser.parse_args()
 inventory = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], text=True))
 devices = [dict(device, runtime=runtime) for runtime, group in inventory['devices'].items() for device in group]
@@ -51,6 +51,10 @@ def boundaries():
              'testOpenPhotoInformationRefreshesWhenSamePhotoGetsLocalOriginal']
     if args.suite == 'index':
         tests = ['testCameraIndexShowsRangeTotalAndFillsWithoutScrollingBeforeSelectAll']
+    elif args.suite == 'gallery-window':
+        tests = ['testPhotoWorkspaceKeepsPhotoZoomAndSelectionAcrossRotationAndComparison',
+                 'testOpenPhotoInformationRefreshesWhenSamePhotoGetsLocalOriginal',
+                 'testGalleryLayoutsPreservePairedFormatInformation']
     def capture(command):
         return subprocess.check_output(command, cwd=root, text=True).strip()
     receipt = {'startedAt': datetime.datetime.now(datetime.timezone.utc).isoformat(),

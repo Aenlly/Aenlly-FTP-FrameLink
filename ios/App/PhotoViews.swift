@@ -39,6 +39,14 @@ struct PhotoThumbnail: View {
   let photo: Photo
   var large = false
   @State private var image: UIImage?
+  @State private var sourceURL: URL?
+  @Environment(\.displayScale) private var displayScale
+  private var resolvedPhoto: Photo { library.photos.first { $0.id == photo.id } ?? photo }
+  private var sourceRevision: String {
+    let logical = PhotoResourceIdentity(scope: "thumbnail", photo: resolvedPhoto).revision
+    let representation = PhotoRepresentationRevision.key(photo: resolvedPhoto, cacheEpoch: model.previewRevision)
+    return "\(logical):\(representation)"
+  }
   var body: some View {
     GeometryReader { geometry in
       ZStack {
@@ -51,17 +59,21 @@ struct PhotoThumbnail: View {
             .foregroundStyle(.secondary)
         }
       }.frame(width: geometry.size.width, height: geometry.size.height).clipped()
+        .task(id: sourceRevision + (sourceURL?.absoluteString ?? "") + ":\(PhotoDecodePolicy.thumbnailPixel(width: geometry.size.width, height: geometry.size.height, displayScale: displayScale, large: large))") {
+          guard let url = sourceURL else { image = nil; return }
+          let target = PhotoDecodePolicy.thumbnailPixel(width: geometry.size.width, height: geometry.size.height, displayScale: displayScale, large: large)
+          let decoded = await (large ? PhotoDisplayDecoder.shared : PhotoDisplayDecoder.thumbnails).decode(url, maxPixel: target)
+          guard !Task.isCancelled else { return }
+          image = decoded.map { UIImage(cgImage: $0.image) }
+        }
     }
     .clipped().task(
-      id: photo.id + String(large) + String(model.previewRevision)
-        + (library.photos.first { $0.id == photo.id } ?? photo).files.compactMap(\.localPath)
-        .joined()
+      id: sourceRevision + String(large)
     ) {
-      if let url = await model.previewURL(photo, large: large) {
-        image = await Task.detached(priority: .utility) {
-          loadPhotoImage(url, maxPixel: large ? 2048 : 720)
-        }.value
-      }
+      sourceURL = nil
+      let url = await model.previewURL(resolvedPhoto, large: large)
+      guard !Task.isCancelled else { return }
+      sourceURL = url
     }
   }
 }
@@ -84,6 +96,7 @@ enum GalleryStyle: String, CaseIterable {
     case .list: return 1
     }
   }
+  var targetWidth: Double { self == .small ? 68 : self == .medium ? 108 : 164 }
 }
 
 private struct CellFrames: PreferenceKey {
@@ -100,6 +113,8 @@ struct SelectablePhotoGrid: View {
   var selectionEnabled = true
   var style: GalleryStyle = .medium
   var contextKey = ""
+  var scrollAnchor: Binding<String?> = .constant(nil)
+  @ScaledMetric(relativeTo: .body) private var tileScale = 1.0
   var onDragging: (Bool) -> Void = { _ in }
   var onNearEnd: () -> Void = {}
   var open: (Photo) -> Void
@@ -116,7 +131,7 @@ struct SelectablePhotoGrid: View {
       ScrollViewReader { proxy in
         ScrollView {
           LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: style == .small ? 2 : 8), count: style.columnCount), spacing: style == .small ? 2 : 16
+            columns: Array(repeating: GridItem(.flexible(), spacing: style == .small ? 2 : 8), count: style == .list ? 1 : PhotoWorkspaceLayout.gridColumns(width: viewport.size.width, target: style.targetWidth * tileScale, spacing: style == .small ? 2 : 8, padding: style == .small ? 2 : 12)), spacing: style == .small ? 2 : 16
           ) {
             ForEach(displayedPhotos) { photo in
               let itemLayout =
@@ -178,8 +193,8 @@ struct SelectablePhotoGrid: View {
                   })
                 .onAppear { if photo.id == displayedPhotos.last?.id { onNearEnd() } }
             }
-          }.padding(style == .small ? 2 : 12)
-        }.coordinateSpace(name: "photo-grid").scrollDisabled(range != nil)
+          }.scrollTargetLayout().padding(style == .small ? 2 : 12)
+        }.scrollPosition(id: scrollAnchor, anchor: .top).coordinateSpace(name: "photo-grid").scrollDisabled(range != nil)
           .onPreferenceChange(CellFrames.self) { frames = $0 }
           .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.35).sequenced(
@@ -271,21 +286,24 @@ struct GalleryView: View {
   @State private var importing = false
   @State private var choosingPhotos = false
   @State private var pickedPhotos: [PhotosPickerItem] = []
-  @State private var viewer: Photo?
+  @StateObject private var workspace = PhotoWorkspace()
+  @ScaledMetric(relativeTo: .body) private var textScale = 1.0
   @State private var naming: NamePurpose?
   @State private var remove = false
   @State private var format = false
   @State private var selectingAll: Task<Void, Never>?
   @AppStorage("gallery.layout") private var layoutKey = "medium"
   private var layout: GalleryStyle { GalleryStyle(rawValue: layoutKey) ?? .medium }
-  private var photos: [Photo] {
-    let candidates =
+  private var scopeKey: String { source == 0 ? "imported" : "camera:\(model.cameraInfo?.id ?? "offline"):\(model.cameraIndexState.scope?.slot ?? 1)" }
+  private var candidates: [Photo] {
       source == 0
       ? library.importedPhotos
       : library.photos.filter { model.cameraIDs.contains($0.id) }.sorted {
         $0.orderingDate > $1.orderingDate
       }
-    return candidates.filter {
+  }
+  private var photos: [Photo] {
+    candidates.filter {
       filter == 0 || (filter == 1 && library.selection.contains($0.id))
         || (filter == 2 && $0.favorite) || (filter == 3 && $0.hasUnimportedFiles)
         || (filter == 4 && $0.files.contains(where: { $0.isRaw }))
@@ -374,9 +392,10 @@ struct GalleryView: View {
         SelectablePhotoGrid(
           photos: photos, selection: $library.selection, style: layout,
           contextKey: "\(source):\(filter):\(layoutKey):\(model.cameraInfo?.id ?? ""):\(model.cameraIndexState.scope?.slot ?? 1):\(model.cameraIndexState.scope?.day ?? "")",
+          scrollAnchor: $workspace.gridAnchor,
           onDragging: { dragging = $0 },
           onNearEnd: { if source == 1 && model.cameraIndexState.error == nil && model.cameraHasMore { Task { await model.loadCamera(intent: .automatic) } } }
-        ) { viewer = $0 }
+        ) { workspace.open($0.id) }
       }
       if source == 1 && model.cameraInfo != nil && model.cameraHasMore {
         if let error = model.cameraIndexState.error {
@@ -384,9 +403,48 @@ struct GalleryView: View {
         } else { Text(model.cameraLoading ? "正在补齐索引" : "正在准备照片列表").font(.footnote).foregroundStyle(.secondary).padding(.bottom, 6) }
       }
     }
+      .safeAreaInset(edge: .bottom) {
+        if !library.selection.isEmpty {
+          GlassCapsule {
+            ScrollView(.horizontal) {
+            HStack(spacing: 18) {
+              Button("已选 \(library.selection.count) ×") { library.selection = [] }.frame(minHeight: 44)
+              Spacer()
+              if source == 1 { Button("导入") { format = true }.frame(minHeight: 44) }
+              Button("对比") { workspace.startComparison(candidates.filter { library.selection.contains($0.id) }.map(\.id)) }
+                .disabled(candidates.filter { library.selection.contains($0.id) }.count != 2)
+                .accessibilityLabel("对比所选照片")
+              Menu {
+                Button("保存这一批") { naming = .batch }
+                Button("客户现场选片") { naming = .customer }
+                if source == 0 { Button("移除", role: .destructive) { remove = true } }
+              } label: {
+                Image(systemName: "ellipsis")
+              }.accessibilityLabel("选片操作")
+            }.font(.subheadline)
+            }.scrollIndicators(.hidden).frame(height: 52 * min(textScale, 1.7))
+          }.padding(12)
+        }
+      }
   }
   var body: some View {
-    galleryContent.background(Palette.background).navigationTitle("图库").navigationBarTitleDisplayMode(.inline)
+    GeometryReader { geometry in
+      let window = PhotoWorkspaceLayout(window: PhotoWindow(width: geometry.size.width, height: geometry.size.height), detailOpen: workspace.isOpen, textScale: textScale)
+      ZStack(alignment: .trailing) {
+        HStack(spacing: 12) {
+          galleryContent.frame(width: window.gridWidth).opacity(workspace.isOpen && !window.split ? 0 : 1)
+            .allowsHitTesting(!workspace.isOpen || window.split).accessibilityHidden(workspace.isOpen && !window.split)
+          if window.split { Spacer(minLength: 0) }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+        if workspace.isOpen {
+          PhotoDetailWorkspace(photos: candidates, workspace: workspace).frame(width: window.detailWidth)
+            .clipShape(RoundedRectangle(cornerRadius: window.split ? 20 : 0, style: .continuous))
+        }
+      }.onAppear { workspace.reconcile(scope: scopeKey, available: Set(candidates.map(\.id))) }
+        .onChange(of: scopeKey) { _, value in workspace.reconcile(scope: value, available: Set(candidates.map(\.id))) }
+        .onChange(of: candidates.map(\.id)) { _, ids in workspace.reconcile(scope: scopeKey, available: Set(ids)) }
+        .toolbar(window.hideNavigation ? .hidden : .visible, for: .navigationBar, .tabBar)
+    }.accessibilityIdentifier("gallery-workspace").background(Palette.background).navigationTitle("图库").navigationBarTitleDisplayMode(.inline)
       .toolbar {
         Menu {
           ForEach(GalleryStyle.allCases, id: \.rawValue) { option in
@@ -408,24 +466,6 @@ struct GalleryView: View {
           Button("从文件或读卡器导入") { importing = true }
         } label: {
           Image(systemName: "photo.badge.plus")
-        }
-      }
-      .safeAreaInset(edge: .bottom) {
-        if !library.selection.isEmpty {
-          GlassCapsule {
-            HStack(spacing: 18) {
-              Button("已选 \(library.selection.count) ×") { library.selection = [] }
-              Spacer()
-              if source == 1 { Button("导入") { format = true } }
-              Menu {
-                Button("保存这一批") { naming = .batch }
-                Button("客户现场选片") { naming = .customer }
-                if source == 0 { Button("移除", role: .destructive) { remove = true } }
-              } label: {
-                Image(systemName: "ellipsis")
-              }.accessibilityLabel("选片操作")
-            }.font(.subheadline)
-          }.padding(12)
         }
       }
       .fileImporter(
@@ -456,7 +496,6 @@ struct GalleryView: View {
       .alert("正在读取全部照片", isPresented: Binding(get: { selectingAll != nil }, set: { if !$0 { selectingAll?.cancel() } })) {
         Button("取消", role: .cancel) { selectingAll?.cancel() }
       } message: { Text("已读取\(model.cameraIDs.count)张，将按当前筛选全选") }
-      .fullScreenCover(item: $viewer) { photo in PhotoViewer(photos: photos, initial: photo.id) }
       .sheet(item: $naming) { purpose in
         NameEditor(title: purpose == .batch ? "保存这一批" : "客户现场选片", initial: "") { name in
           do {
@@ -518,92 +557,96 @@ struct NameEditor: View {
   }
 }
 
+/// Existing record-page entry keeps the same presentation API and persistent workspace.
 struct PhotoViewer: View {
-  @EnvironmentObject var library: LibraryStore
-  @EnvironmentObject var model: AppModel
   @Environment(\.dismiss) private var dismiss
   let photos: [Photo]
   let initial: String
-  @State private var current = ""
-  @State private var shared: SharedFiles?
-  @State private var filesInfo = false
+  @StateObject private var workspace = PhotoWorkspace()
   var body: some View {
-    ZStack {
-      Color.black.ignoresSafeArea()
-      TabView(selection: $current) {
-        ForEach(photos) { photo in
-          ZoomPhoto(photo: library.photos.first { $0.id == photo.id } ?? photo, active: current == photo.id).tag(photo.id)
-        }
-      }.tabViewStyle(.page(indexDisplayMode: .never))
-    }
-    .safeAreaInset(edge: .top) {
-      HStack {
-        Button {
-          dismiss()
-        } label: {
-          Image(systemName: "xmark")
-        }.accessibilityLabel("关闭照片")
-        Spacer()
-        VStack(spacing: 4) {
-          Text(selected?.displayTitle ?? "照片").lineLimit(1)
-          Text(previewStatus).font(.caption)
-            .foregroundStyle(.white.opacity(0.7))
-        }
-        Spacer()
-        Button {
-          filesInfo = true
-        } label: {
-          Image(systemName: "doc.text")
-        }.accessibilityLabel("文件信息")
-        Button {
-          if let selected { try? library.favorite(selected.id) }
-        } label: {
-          Image(systemName: selected?.favorite == true ? "heart.fill" : "heart")
-        }
-        if let selected {
-          let urls = selected.files.compactMap { $0.localPath }.compactMap {
-            try? library.fileURL($0)
-          }.filter { FileManager.default.fileExists(atPath: $0.path) }
-          if !urls.isEmpty {
-            Button {
-              shared = SharedFiles(urls: urls)
-            } label: {
-              Image(systemName: "square.and.arrow.up")
-            }.accessibilityLabel("分享原片")
+    PhotoDetailWorkspace(photos: photos, workspace: workspace)
+      .onAppear {
+        workspace.reconcile(scope: "record-viewer", available: Set(photos.map(\.id)))
+        if workspace.currentID == nil { workspace.open(initial) }
+      }
+      .onChange(of: workspace.isOpen) { _, open in if !open { dismiss() } }
+      .onChange(of: photos.map(\.id)) { _, ids in workspace.reconcile(scope: "record-viewer", available: Set(ids)) }
+  }
+}
+
+struct PhotoDetailWorkspace: View {
+  @EnvironmentObject var library: LibraryStore
+  @EnvironmentObject var model: AppModel
+  let photos: [Photo]
+  @ObservedObject var workspace: PhotoWorkspace
+  @State private var shared: SharedFiles?
+  @ScaledMetric(relativeTo: .body) private var textScale = 1.0
+  private func resolved(_ id: String?) -> Photo? { library.photos.first { $0.id == id } ?? photos.first { $0.id == id } }
+  private var selected: Photo? { resolved(workspace.focusedID) }
+  private var urls: [URL] {
+    selected?.files.compactMap(\.localPath).compactMap { try? library.fileURL($0) }
+      .filter { FileManager.default.fileExists(atPath: $0.path) } ?? []
+  }
+  var body: some View {
+    GeometryReader { outer in
+      let full = PhotoWorkspaceLayout(window: PhotoWindow(width: outer.size.width, height: outer.size.height), detailOpen: false, textScale: textScale)
+      VStack(spacing: 0) {
+        if workspace.toolsVisible { header }
+        GeometryReader { area in
+          let imageLayout = PhotoWorkspaceLayout(window: PhotoWindow(width: area.size.width, height: area.size.height), detailOpen: false, textScale: textScale)
+          let panes = imageLayout.horizontalComparison ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(spacing: 8))
+          ZStack(alignment: .topTrailing) {
+            panes {
+              ForEach(Array(workspace.visibleIDs.enumerated()), id: \.element) { side, id in
+                if let photo = resolved(id) {
+                  let identity = PhotoResourceIdentity(scope: workspace.scope, photo: photo)
+                  VStack(spacing: 0) {
+                    if workspace.comparison.count == 2 && workspace.toolsVisible {
+                      Button {
+                        workspace.focus(side)
+                      } label: {
+                        HStack { Text(imageLayout.horizontalComparison ? (side == 0 ? "左图" : "右图") : (side == 0 ? "上图" : "下图")); Text(photo.displayTitle).lineLimit(1); Spacer() }
+                          .font(.caption).padding(8).frame(minHeight: 44)
+                      }.foregroundStyle(workspace.focusedSide == side ? Color.yellow : Color.white)
+                        .accessibilityLabel(side == 0 ? "查看第一幅照片信息" : "查看第二幅照片信息")
+                    }
+                    ZoomPhoto(photo: photo, identity: identity, record: workspace.record(for: identity),
+                      resolver: workspace.previews, comparing: workspace.comparison.count == 2,
+                      toggleTools: { workspace.toolsVisible.toggle() },
+                      navigate: { workspace.step($0, orderedIDs: photos.map(\.id)) })
+                      .id(identity)
+                  }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+              }
+            }
+            if !workspace.toolsVisible {
+              Button { workspace.toolsVisible = true } label: {
+                Image(systemName: "ellipsis").frame(width: 44, height: 44).background(.ultraThinMaterial, in: Circle())
+              }.accessibilityLabel("显示照片工具").padding(8)
+            }
           }
         }
-      }.foregroundStyle(.white).padding(18).background(.black.opacity(0.7))
-    }
-    .safeAreaInset(edge: .bottom) {
-      HStack {
-        Text("\(photos.firstIndex(where:{$0.id==current}).map{$0+1} ?? 1) / \(photos.count)").font(
-          .caption
-        ).foregroundStyle(.white.opacity(0.7))
-        Spacer()
-        if let selected, selected.files.contains(where: { $0.formatTitle == "JPEG" }), !selected.files.contains(where: { $0.formatTitle == "JPEG" && $0.localPath != nil }) {
-          Button {
-            model.requestOriginalPreview(selected)
-          } label: {
-            if model.originalPreviewRequests.contains(selected.id) { ProgressView().tint(.white) }
-            else { Text(model.originalPreviews[selected.id] == nil ? "查看原片" : "JPEG原片").font(.subheadline) }
-          }.disabled(model.originalPreviewRequests.contains(selected.id) || model.clearingPreviews)
+        if workspace.toolsVisible {
+          controls
+          if full.showsFilmstrip {
+            ScrollView(.horizontal) {
+              LazyHStack(spacing: 8) {
+                ForEach(photos) { photo in
+                  Button { workspace.tapThumbnail(photo.id) } label: {
+                    PhotoThumbnail(photo: photo).frame(width: 52, height: 52)
+                      .clipShape(RoundedRectangle(cornerRadius: 8))
+                      .overlay(RoundedRectangle(cornerRadius: 8).stroke(workspace.focusedID == photo.id ? Color.yellow : .clear, lineWidth: 2))
+                  }.accessibilityLabel("缩略图 " + photo.name)
+                }
+              }.padding(8)
+            }.frame(height: 68).scrollIndicators(.hidden)
+          }
         }
-        Button {
-          library.toggle(current)
-        } label: {
-          Label(
-            library.selection.contains(current) ? "已选择" : "选择这张",
-            systemImage: library.selection.contains(current) ? "checkmark.circle.fill" : "circle"
-          ).font(.headline).padding(.horizontal, 22).padding(.vertical, 13).background(
-            library.selection.contains(current) ? Color.blue : Color.white.opacity(0.15),
-            in: Capsule()
-          ).foregroundStyle(.white)
-        }
-      }.padding(18).background(.black.opacity(0.7))
+      }.background(.black).foregroundStyle(.white)
     }
-    .onAppear { current = initial }
+    .accessibilityIdentifier("photo-detail-workspace")
     .sheet(item: $shared) { ShareSheet(items: $0.urls) }
-    .sheet(isPresented: $filesInfo) {
+    .sheet(isPresented: $workspace.filesInfo) {
       NavigationStack {
         List {
           if let selected {
@@ -612,77 +655,205 @@ struct PhotoViewer: View {
             ForEach(Array(selected.files.enumerated()), id: \.offset) { _, file in
               VStack(alignment: .leading, spacing: 6) {
                 Text(file.name)
-                Text(
-                  file.formatTitle + " · "
-                    + ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file) + " · "
-                    + (file.localPath == nil ? "未导入" : "已导入")
-                ).font(.caption).foregroundStyle(.secondary)
+                Text(file.formatTitle + " · " + ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file) + " · " + (file.localPath == nil ? "未导入" : "已导入")).font(.caption).foregroundStyle(.secondary)
                 if let day = file.fileDay, !day.isEmpty { Text("文件修改日期：" + day + "（非拍摄时间）").font(.caption).foregroundStyle(.secondary) }
               }
             }
           }
         }.navigationTitle("原始文件").navigationBarTitleDisplayMode(.inline).toolbar {
-          Button("完成") { filesInfo = false }
+          Button("完成") { workspace.filesInfo = false }
         }
       }.presentationDetents([.medium, .large])
     }
   }
-  private var selected: Photo? {
-    library.photos.first { $0.id == current } ?? photos.first { $0.id == current }
+  private var header: some View {
+    HStack(spacing: 8) {
+      Button { workspace.close() } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }.accessibilityLabel("关闭照片")
+      VStack(spacing: 3) {
+        Text(selected?.displayTitle ?? "照片").font(.subheadline).lineLimit(1)
+        Text(previewStatus).font(.caption2).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+      }.frame(maxWidth: .infinity)
+      Button { workspace.filesInfo = true } label: { Image(systemName: "doc.text").frame(width: 44, height: 44) }.accessibilityLabel("文件信息")
+      Menu {
+        if let selected { Button(selected.favorite ? "取消收藏" : "收藏") { try? library.favorite(selected.id) } }
+        if !urls.isEmpty { Button("分享原片") { shared = SharedFiles(urls: urls) } }
+        if workspace.comparison.count == 2 { Button("结束对比") { workspace.endComparison() } }
+        else {
+          Button("与下一张对比") {
+            guard let id = workspace.currentID, let index = photos.firstIndex(where: { $0.id == id }), photos.count > 1 else { return }
+            workspace.startComparison([id, photos[(index + 1) % photos.count].id])
+          }.disabled(photos.count < 2)
+        }
+      } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("照片操作")
+    }.padding(6).modifier(PhotoGlassChrome()).padding(6).environment(\.colorScheme, .dark)
+  }
+  private var controls: some View {
+    ScrollView(.horizontal) {
+      HStack(spacing: 14) {
+        if workspace.comparison.isEmpty {
+          Button { workspace.step(-1, orderedIDs: photos.map(\.id)) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }.accessibilityLabel("上一张照片")
+          Button { workspace.step(1, orderedIDs: photos.map(\.id)) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }.accessibilityLabel("下一张照片")
+        } else { Button("结束对比") { workspace.endComparison() }.frame(minHeight: 44) }
+        if let selected {
+          Button { library.toggle(selected.id) } label: {
+            Label(library.selection.contains(selected.id) ? "已选择" : "选择这张", systemImage: library.selection.contains(selected.id) ? "checkmark.circle.fill" : "circle")
+              .padding(.horizontal, 14).frame(minHeight: 44).background(library.selection.contains(selected.id) ? Color.blue : .white.opacity(0.12), in: Capsule())
+          }.accessibilityLabel("选择当前照片").accessibilityValue(library.selection.contains(selected.id) ? "已选择" : "未选择")
+          if selected.files.contains(where: { $0.formatTitle == "JPEG" && $0.localPath == nil }) {
+            Button {
+              model.requestOriginalPreview(selected)
+            } label: {
+              if model.originalPreviewRequests.contains(selected.id) { ProgressView().tint(.white) }
+              else { Text(model.originalPreviews[selected.id] == nil ? "查看原片" : "JPEG原片") }
+            }.frame(minHeight: 44).disabled(model.originalPreviewRequests.contains(selected.id) || model.clearingPreviews)
+          }
+        }
+      }.font(.subheadline).padding(8)
+    }.scrollIndicators(.hidden).frame(height: 64 * min(textScale, 1.7)).modifier(PhotoGlassChrome()).padding(.horizontal, 6).environment(\.colorScheme, .dark)
   }
   private var previewStatus: String {
     guard let selected else { return "照片预览" }
-    if selected.files.contains(where: { !$0.isRaw && $0.localPath != nil }) { return "已导入原片" }
-    if model.originalPreviews[current] != nil { return selected.imported ? "RAW已导入 · 临时JPEG原片未导入" : "临时JPEG原片 · 未导入" }
+    if selected.files.contains(where: { !$0.isRaw && $0.localPath != nil }) { return "已导入原片 · 显示预览" }
+    if model.originalPreviews[selected.id] != nil { return selected.imported ? "RAW已导入 · 临时JPEG原片未导入" : "临时JPEG原片 · 未导入" }
     return selected.imported ? "已导入RAW原片 · 当前显示预览" : "相机预览 · 清晰度不代表原片"
+  }
+}
+
+
+private struct PhotoGlassChrome: ViewModifier {
+  @ViewBuilder func body(content: Content) -> some View {
+    #if compiler(>=6.2)
+      if #available(iOS 26.0, *) {
+        content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+      } else { content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18)) }
+    #else
+      content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+    #endif
   }
 }
 
 private struct ZoomPhoto: View {
   @EnvironmentObject var model: AppModel
   let photo: Photo
-  let active: Bool
+  let identity: PhotoResourceIdentity
+  @ObservedObject var record: PhotoViewportRecord
+  let resolver: PhotoPreviewResolver
+  let comparing: Bool
+  var toggleTools: () -> Void
+  var navigate: (Int) -> Void
   @State private var image: UIImage?
   @State private var loading = true
-  @State private var scale: CGFloat = 1
-  @GestureState private var magnification: CGFloat = 1
+  private var representation: String {
+    PhotoRepresentationRevision.key(photo: photo, cacheEpoch: model.previewRevision)
+  }
   var body: some View {
-    GeometryReader { geometry in
-      ScrollView([.horizontal, .vertical]) {
-        Group {
-          if let image {
-            Image(uiImage: image).resizable().scaledToFit()
-          } else if loading {
-            ProgressView().tint(.white)
-          } else {
-            Text(
-              photo.source == .camera && model.cameraInfo == nil
-                ? "相机未连接，预览尚未缓存" : "此格式暂不能预览，可通过右上角分享原片"
-            ).font(.caption).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center)
-              .padding(24)
-          }
-        }.frame(
-          width: geometry.size.width * min(6, max(1, scale * magnification)),
-          height: geometry.size.height * min(6, max(1, scale * magnification)))
-      }.gesture(
-        MagnifyGesture().updating($magnification) { value, state, _ in state = value.magnification }
-          .onEnded { scale = min(6, max(1, scale * $0.magnification)) }
-      ).onTapGesture(count: 2) {
-        withAnimation(.easeInOut(duration: 0.2)) { scale = scale > 1 ? 1 : 2.5 }
-      }
-    }.task(id: photo.id + photo.files.compactMap(\.localPath).joined() + String(model.previewRevision) + String(active)) {
-      guard active else { image = nil; loading = false; return }
-      loading = true
-      if let url = await model.previewURL(photo, large: true) {
-        let maxPixel = model.originalPreviews[photo.id] != nil || photo.imported ? 8192 : 4096
-        let loaded = await Task.detached(priority: .userInitiated) {
-          loadPhotoImage(url, maxPixel: maxPixel)
-        }
-        .value
+    ZStack {
+      Color.black
+      if let image {
+        PhotoZoomCanvas(image: image, viewport: $record.value, label: photo.name, tap: toggleTools, navigate: comparing ? { _ in } : navigate)
+      } else if loading { ProgressView().tint(.white) }
+      else { Text(photo.source == .camera && model.cameraInfo == nil ? "相机未连接，预览尚未缓存" : "此格式暂不能预览，可在照片操作中分享原片").font(.caption).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center).padding(20) }
+    }
+    .task(id: representation + ":\(PhotoDecodePolicy.maxPixel(comparing: comparing))") {
+      image = nil; loading = true
+      let url = await resolver.resolve(identity: identity, representation: representation) { await model.previewURL(photo, large: true) }
+      guard !Task.isCancelled else { return }
+      if let url {
+        let decoded = await PhotoDisplayDecoder.shared.decode(url, maxPixel: PhotoDecodePolicy.maxPixel(comparing: comparing))
         guard !Task.isCancelled else { return }
-        image = loaded
+        image = decoded.map { UIImage(cgImage: $0.image) }
       }
       loading = false
+    }
+  }
+}
+
+private final class PhotoScrollCanvas: UIScrollView {
+  var resized: ((CGSize) -> Void)?
+  var geometryChanging: ((Bool) -> Void)?
+  private var lastBounds = CGSize.zero
+  override func layoutSubviews() {
+    let changed = lastBounds != bounds.size; lastBounds = bounds.size
+    if changed { geometryChanging?(true) }
+    super.layoutSubviews()
+    if changed { geometryChanging?(false) }
+    if bounds.width > 0 && bounds.height > 0 { resized?(bounds.size) }
+  }
+}
+private struct PhotoZoomCanvas: UIViewRepresentable {
+  let image: UIImage
+  @Binding var viewport: PhotoViewport
+  var label: String
+  var tap: () -> Void
+  var navigate: (Int) -> Void
+  func makeCoordinator() -> Coordinator { Coordinator(self) }
+  func makeUIView(context: Context) -> PhotoScrollCanvas {
+    let scroll = PhotoScrollCanvas()
+    scroll.backgroundColor = .black; scroll.delegate = context.coordinator
+    scroll.minimumZoomScale = 1; scroll.maximumZoomScale = 6
+    scroll.showsHorizontalScrollIndicator = false; scroll.showsVerticalScrollIndicator = false
+    scroll.addSubview(context.coordinator.photo)
+    scroll.resized = { [weak coordinator = context.coordinator, weak scroll] size in if let scroll { coordinator?.apply(scroll, size: size) } }
+    scroll.geometryChanging = { [weak coordinator = context.coordinator] in coordinator?.resizing = $0 }
+    let double = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTap(_:))); double.numberOfTapsRequired = 2
+    let single = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.singleTap)); single.require(toFail: double)
+    scroll.addGestureRecognizer(single); scroll.addGestureRecognizer(double)
+    return scroll
+  }
+  func updateUIView(_ scroll: PhotoScrollCanvas, context: Context) {
+    context.coordinator.parent = self
+    context.coordinator.apply(scroll, size: scroll.bounds.size)
+  }
+  final class Coordinator: NSObject, UIScrollViewDelegate {
+    var parent: PhotoZoomCanvas
+    let photo = UIImageView()
+    private var applying = false
+    var resizing = false
+    private var lastSize = CGSize.zero
+    private var lastValue = PhotoViewport()
+    init(_ parent: PhotoZoomCanvas) { self.parent = parent; super.init(); photo.contentMode = .scaleAspectFit; photo.isAccessibilityElement = true; photo.accessibilityTraits = .image }
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { photo }
+    func apply(_ scroll: UIScrollView, size: CGSize) {
+      guard size.width > 0, size.height > 0, !applying else { return }
+      let imageChanged = photo.image !== parent.image
+      guard imageChanged || size != lastSize || parent.viewport != lastValue else { return }
+      applying = true; defer { applying = false }
+      lastSize = size; lastValue = parent.viewport; photo.image = parent.image; photo.accessibilityLabel = parent.label
+      photo.accessibilityValue = String(format: "缩放%.2f倍", parent.viewport.scale)
+      let presentation = parent.viewport.presentation(image: PhotoWindow(width: parent.image.size.width, height: parent.image.size.height), viewport: PhotoWindow(width: size.width, height: size.height))
+      scroll.setZoomScale(1, animated: false)
+      photo.frame = CGRect(x: 0, y: 0, width: presentation.baseWidth, height: presentation.baseHeight)
+      scroll.contentSize = photo.bounds.size
+      scroll.setZoomScale(parent.viewport.scale, animated: false)
+      scroll.contentInset = UIEdgeInsets(top: presentation.insetY, left: presentation.insetX, bottom: presentation.insetY, right: presentation.insetX)
+      scroll.setContentOffset(CGPoint(x: presentation.offsetX, y: presentation.offsetY), animated: false)
+    }
+    private func record(_ scroll: UIScrollView) {
+      guard !applying, !resizing, scroll.bounds.width > 0, scroll.contentSize.width > 0, scroll.contentSize.height > 0 else { return }
+      let value = PhotoViewport(scale: scroll.zoomScale, centerX: (scroll.contentOffset.x + scroll.bounds.width / 2) / scroll.contentSize.width, centerY: (scroll.contentOffset.y + scroll.bounds.height / 2) / scroll.contentSize.height)
+      lastValue = value
+      photo.accessibilityValue = String(format: "缩放%.2f倍", value.scale)
+      if parent.viewport != value { parent.viewport = value }
+    }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) { if scrollView.isDragging || scrollView.isDecelerating { record(scrollView) } }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+      guard !applying else { return }
+      scrollView.contentInset = UIEdgeInsets(top: max(0, (scrollView.bounds.height - scrollView.contentSize.height) / 2), left: max(0, (scrollView.bounds.width - scrollView.contentSize.width) / 2), bottom: max(0, (scrollView.bounds.height - scrollView.contentSize.height) / 2), right: max(0, (scrollView.bounds.width - scrollView.contentSize.width) / 2))
+      if scrollView.isZooming { record(scrollView) }
+    }
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) { record(scrollView) }
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { record(scrollView) }
+    func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+      if scrollView.zoomScale <= 1.01 && abs(velocity.x) > 0.8 && abs(velocity.x) > abs(velocity.y) { parent.navigate(velocity.x > 0 ? 1 : -1) }
+      else { record(scrollView) }
+    }
+    @objc func singleTap() { parent.tap() }
+    @objc func doubleTap(_ gesture: UITapGestureRecognizer) {
+      if parent.viewport.scale > 1 { parent.viewport = PhotoViewport() }
+      else {
+        let point = gesture.location(in: photo)
+        parent.viewport = PhotoViewport(scale: 2.5, centerX: point.x / max(1, photo.bounds.width), centerY: point.y / max(1, photo.bounds.height))
+      }
     }
   }
 }
